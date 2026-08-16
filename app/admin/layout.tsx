@@ -6,6 +6,9 @@ import { getSessionAdmin } from "@/lib/admin/auth";
 import { adminDeskScopeLabel } from "@/lib/admin/profile";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 
+/** Auth + desk data — never statically prerender (needs Supabase at request time). */
+export const dynamic = "force-dynamic";
+
 export default async function AdminLayout({
   children,
 }: {

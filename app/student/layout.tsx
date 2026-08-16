@@ -4,6 +4,9 @@ import { StudentShell } from "@/components/student/student-shell";
 import { StudentSupportLiveProvider } from "@/components/student/support-live";
 import { getSessionStudent } from "@/lib/student/auth";
 
+/** Auth + desk data — never statically prerender (needs Supabase at request time). */
+export const dynamic = "force-dynamic";
+
 export default async function StudentLayout({
   children,
 }: {

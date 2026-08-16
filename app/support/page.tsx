@@ -11,6 +11,8 @@ export const metadata: Metadata = {
     "Get support from the School of Disciples team in Belfast — enrolment, portal, and general enquiries.",
 };
 
+export const dynamic = "force-dynamic";
+
 const paths = [
   {
     label: "Visit",

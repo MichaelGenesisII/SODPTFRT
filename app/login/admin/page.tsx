@@ -11,6 +11,8 @@ export const metadata: Metadata = {
   description: "Sign in to the School of Disciples admin portal.",
 };
 
+export const dynamic = "force-dynamic";
+
 export default async function AdminLoginPage() {
   const profile = await getSessionAdmin();
   if (profile) {
