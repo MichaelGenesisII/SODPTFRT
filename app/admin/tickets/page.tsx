@@ -34,7 +34,10 @@ export default async function AdminTicketsPage() {
         "id, reference, topic, name, email, message, status, priority, assigned_to, user_id, created_at, updated_at, resolved_at",
       )
       .order("created_at", { ascending: false });
-    ticketData = retry.data;
+    ticketData = (retry.data ?? []).map((row) => ({
+      ...row,
+      intake_source: null,
+    }));
     loadError = retry.error;
   }
 

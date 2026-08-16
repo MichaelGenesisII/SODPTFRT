@@ -30,7 +30,7 @@ export type StudentClassActionResult = {
   message: string;
 };
 
-function fail(error: unknown, fallback?: string): StudentClassActionResult {
+function fail(error: unknown, fallback?: string): { ok: false; message: string } {
   return { ok: false, message: publicActionMessage(error, fallback) };
 }
 

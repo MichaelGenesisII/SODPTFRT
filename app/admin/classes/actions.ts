@@ -72,11 +72,11 @@ export type ClassStudentOption = {
   batch_id: string | null;
 };
 
-function unauthorized(): ClassActionResult {
+function unauthorized(): { ok: false; message: string } {
   return { ok: false, message: "Unauthorized." };
 }
 
-function fail(error: unknown, fallback?: string): ClassActionResult {
+function fail(error: unknown, fallback?: string): { ok: false; message: string } {
   return { ok: false, message: publicActionMessage(error, fallback) };
 }
 

@@ -19,11 +19,11 @@ export type TicketActionResult = {
   message: string;
 };
 
-function unauthorizedResult(): TicketActionResult {
+function unauthorizedResult(): { ok: false; message: string } {
   return { ok: false, message: "Unauthorized." };
 }
 
-function fail(error: unknown, fallback?: string): TicketActionResult {
+function fail(error: unknown, fallback?: string): { ok: false; message: string } {
   return { ok: false, message: publicActionMessage(error, fallback) };
 }
 

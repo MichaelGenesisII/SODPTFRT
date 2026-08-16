@@ -31,11 +31,11 @@ export type RecordActionResult = {
 
 type Supabase = Awaited<ReturnType<typeof createServerSupabaseClient>>;
 
-function unauthorized(): RecordActionResult {
+function unauthorized(): { ok: false; message: string } {
   return { ok: false, message: "Unauthorized." };
 }
 
-function fail(error: unknown, fallback?: string): RecordActionResult {
+function fail(error: unknown, fallback?: string): { ok: false; message: string } {
   return { ok: false, message: publicActionMessage(error, fallback) };
 }
 
