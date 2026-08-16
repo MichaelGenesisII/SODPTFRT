@@ -1,0 +1,362 @@
+@import "tailwindcss";
+
+:root {
+  --pine: #14352c;
+  --mist: #eef3f0;
+  --stone: #d5ddd8;
+  --ink: #1c2420;
+  --celadon: #5f8f7a;
+  --background: var(--mist);
+  --foreground: var(--ink);
+  /* Tweak this to move "Continue the journey." up/down */
+  --hero-content-pt: 5rem;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-pine: var(--pine);
+  --color-mist: var(--mist);
+  --color-stone: var(--stone);
+  --color-ink: var(--ink);
+  --color-celadon: var(--celadon);
+  --font-sans: var(--font-figtree);
+  --font-display: var(--font-newsreader);
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-figtree), system-ui, sans-serif;
+}
+
+.font-display {
+  font-family: var(--font-newsreader), Georgia, serif;
+}
+
+/* Soft grain overlay for atmosphere */
+.grain::after {
+  content: "";
+  pointer-events: none;
+  position: absolute;
+  inset: 0;
+  opacity: 0.35;
+  mix-blend-mode: soft-light;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  background-size: 180px 180px;
+}
+
+@keyframes fade-rise {
+  from {
+    opacity: 0;
+    transform: translateY(1.15rem);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes ken-burns {
+  from {
+    transform: scale(1) translate(0, 0);
+  }
+  to {
+    transform: scale(1.08) translate(-1.5%, -1%);
+  }
+}
+
+.animate-fade-rise {
+  animation: fade-rise 1s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.animate-fade-rise-delay-1 {
+  animation: fade-rise 1s cubic-bezier(0.22, 1, 0.36, 1) 0.12s both;
+}
+
+.animate-fade-rise-delay-2 {
+  animation: fade-rise 1s cubic-bezier(0.22, 1, 0.36, 1) 0.24s both;
+}
+
+.animate-fade-rise-delay-3 {
+  animation: fade-rise 1s cubic-bezier(0.22, 1, 0.36, 1) 0.36s both;
+}
+
+.animate-ken-burns {
+  animation: ken-burns 28s ease-out forwards;
+}
+
+@keyframes draw-line {
+  from {
+    transform: scaleX(0);
+  }
+  to {
+    transform: scaleX(1);
+  }
+}
+
+@keyframes welcome-veil {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes welcome-exit {
+  to {
+    opacity: 0;
+    transform: scale(1.02);
+  }
+}
+
+@keyframes slide-in-left {
+  from {
+    opacity: 0;
+    transform: translateX(-1rem);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes pulse-soft {
+  0%,
+  100% {
+    opacity: 0.45;
+  }
+  50% {
+    opacity: 0.9;
+  }
+}
+
+.animate-draw-line {
+  transform-origin: left center;
+  animation: draw-line 0.9s cubic-bezier(0.22, 1, 0.36, 1) 0.35s both;
+}
+
+.animate-welcome-veil {
+  animation: welcome-veil 0.45s ease-out both;
+}
+
+.animate-welcome-exit {
+  animation: welcome-exit 0.55s cubic-bezier(0.4, 0, 1, 1) forwards;
+}
+
+.animate-slide-in-left {
+  animation: slide-in-left 0.55s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.animate-pulse-soft {
+  animation: pulse-soft 2.4s ease-in-out infinite;
+}
+
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(-0.85rem);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes toast-out {
+  to {
+    opacity: 0;
+    transform: translateY(-0.5rem);
+  }
+}
+
+.animate-toast-in {
+  animation: toast-in 0.35s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.animate-toast-out {
+  animation: toast-out 0.28s ease-in forwards;
+}
+
+@keyframes panel-in {
+  from {
+    opacity: 0;
+    transform: translateY(0.65rem);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-panel-in {
+  animation: panel-in 0.4s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes sheet-up {
+  from {
+    opacity: 0;
+    transform: translateY(2rem);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-sheet-up {
+  animation: sheet-up 0.32s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes disclose {
+  from {
+    opacity: 0;
+    transform: translateY(-0.4rem);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-disclose {
+  animation: disclose 0.26s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes chat-bubble-in {
+  from {
+    opacity: 0;
+    transform: translateY(0.55rem) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.animate-chat-bubble {
+  animation: chat-bubble-in 0.32s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+/* Soft botanical chat wallpaper — pine on mist, not flat white */
+.support-chat-wallpaper {
+  background-color: #e4ece7;
+  background-image:
+    radial-gradient(circle at 18% 22%, rgb(95 143 122 / 0.14), transparent 42%),
+    radial-gradient(circle at 82% 78%, rgb(20 53 44 / 0.07), transparent 48%),
+    url("data:image/svg+xml,%3Csvg width='72' height='72' viewBox='0 0 72 72' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%215f8f7a' fill-opacity='0.09'%3E%3Cpath d='M36 18c-2.2 4.8-6.6 8.2-12 9.2 5.4 1 9.8 4.4 12 9.2 2.2-4.8 6.6-8.2 12-9.2-5.4-1-9.8-4.4-12-9.2z'/%3E%3Ccircle cx='12' cy='48' r='1.4'/%3E%3Ccircle cx='60' cy='24' r='1.2'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E");
+  background-size: auto, auto, 72px 72px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-fade-rise,
+  .animate-fade-rise-delay-1,
+  .animate-fade-rise-delay-2,
+  .animate-fade-rise-delay-3,
+  .animate-ken-burns,
+  .animate-draw-line,
+  .animate-welcome-veil,
+  .animate-welcome-exit,
+  .animate-slide-in-left,
+  .animate-pulse-soft,
+  .animate-toast-in,
+  .animate-toast-out,
+  .animate-panel-in,
+  .animate-sheet-up,
+  .animate-disclose,
+  .animate-chat-bubble {
+    animation: none;
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.nav-link-header {
+  position: relative;
+  display: inline-flex;
+  padding-bottom: 0.2rem;
+  transition: color 0.3s ease;
+}
+
+.nav-link-header::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  height: 1.5px;
+  width: 100%;
+  transform: scaleX(0);
+  transform-origin: left center;
+  background: var(--celadon);
+  transition: transform 0.35s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.nav-link-header:hover,
+.nav-link-header:focus-visible {
+  color: var(--pine);
+}
+
+.nav-link-header:hover::after,
+.nav-link-header:focus-visible::after {
+  transform: scaleX(1);
+}
+
+.nav-link-footer {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+  transition: color 0.3s ease, transform 0.3s ease;
+}
+
+.nav-link-footer::before {
+  content: "";
+  width: 0;
+  height: 1px;
+  background: var(--celadon);
+  transition: width 0.35s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.nav-link-footer:hover,
+.nav-link-footer:focus-visible {
+  color: var(--mist);
+  transform: translateX(0.15rem);
+}
+
+.nav-link-footer:hover::before,
+.nav-link-footer:focus-visible::before {
+  width: 0.85rem;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .nav-link-header::after,
+  .nav-link-footer::before,
+  .nav-link-footer {
+    transition: none;
+  }
+
+  .nav-link-footer:hover,
+  .nav-link-footer:focus-visible {
+    transform: none;
+  }
+}
+
+/* Enrol date field: keep native picker, hide default chrome */
+.date-field-input::-webkit-calendar-picker-indicator {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.date-field-input::-webkit-datetime-edit,
+.date-field-input::-webkit-datetime-edit-fields-wrapper,
+.date-field-input::-webkit-datetime-edit-text,
+.date-field-input::-webkit-datetime-edit-month-field,
+.date-field-input::-webkit-datetime-edit-day-field,
+.date-field-input::-webkit-datetime-edit-year-field {
+  color: transparent;
+}
