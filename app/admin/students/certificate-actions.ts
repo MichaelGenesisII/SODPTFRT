@@ -28,6 +28,17 @@ function unauthorized(): CertificateActionResult {
   return { ok: false, message: "Unauthorized." };
 }
 
+/** Prefer browser MIME; fall back to filename (some browsers send empty type for PDF). */
+function resolveCertificateMime(file: File): string | null {
+  const typed = (file.type || "").toLowerCase();
+  if (isStudentCertificateMime(typed)) return typed;
+  const name = (file.name || "").toLowerCase();
+  if (name.endsWith(".pdf")) return "application/pdf";
+  if (name.endsWith(".png")) return "image/png";
+  if (name.endsWith(".jpg") || name.endsWith(".jpeg")) return "image/jpeg";
+  return null;
+}
+
 function revalidateCertificatePaths() {
   revalidatePath("/admin/students");
   revalidatePath("/admin/records");
@@ -154,8 +165,8 @@ export async function uploadStudentCertificate(
         message: "Certificate must be 10 MB or smaller.",
       };
     }
-    const mime = (file.type || "").toLowerCase();
-    if (!isStudentCertificateMime(mime)) {
+    const mime = resolveCertificateMime(file);
+    if (!mime) {
       return {
         ok: false,
         message: "Use a PDF, JPEG, or PNG certificate file.",
