@@ -165,8 +165,12 @@ export type SendStudentScorecardEmailPayload = {
   issuedAtLabel: string;
   issuedByName: string;
   portalRecordsUrl: string;
+  /** Stable portal page for certificates (optional companion to signed download). */
+  portalCertificatesUrl?: string;
   /** Signed HTTPS URL for the student’s passport photo (optional). */
   passportImageUrl?: string;
+  /** Signed download URL for course certificate — only when on file & appropriate. */
+  certificateDownloadUrl?: string;
 };
 
 export async function sendStudentScorecardViaBackend(

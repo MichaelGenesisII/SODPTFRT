@@ -18,6 +18,7 @@ import {
   type StudentActionResult,
   type StudentPathDetail,
 } from "@/app/admin/students/actions";
+import { StudentCertificateDesk } from "@/components/admin/student-certificate-desk";
 import {
   ENROLMENT_STATUS_META,
   ENROLMENT_STATUSES,
@@ -760,6 +761,11 @@ function ManagePane({
             )}
           </ul>
         </div>
+
+        <StudentCertificateDesk
+          studentId={student.id}
+          studentName={studentFullName(student)}
+        />
 
         {enrol ? (
           <ContactEditor

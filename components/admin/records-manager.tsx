@@ -14,6 +14,7 @@ import {
   updateScorecardDates,
   upsertAttendanceSession,
 } from "@/app/admin/records/actions";
+import { StudentCertificateDesk } from "@/components/admin/student-certificate-desk";
 import { useToast } from "@/components/ui/toast";
 import { isNationalAdmin, type AdminProfile } from "@/lib/admin/profile";
 import type { RecordBundle } from "@/lib/exams/records";
@@ -573,6 +574,14 @@ function Scorecard({
             the course is still in progress.
           </p>
         </form>
+
+        <div className="mt-4">
+          <StudentCertificateDesk
+            studentId={bundle.record.user_id}
+            studentName={bundle.record.student_name}
+            compact
+          />
+        </div>
       </header>
 
       <div className="grid gap-0 lg:grid-cols-2">
@@ -774,7 +783,7 @@ function RecordsInsightGuide({ national }: { national: boolean }) {
     },
     {
       title: "Email scorecard",
-      body: "Use Email scorecard to send a formal certificate-style summary (enrolled / completed dates, attendance, exam scores) to that student’s email only. Set Date completed on the card when the course finishes — otherwise the email shows “In progress”. Delivery uses the portal email service.",
+      body: "Use Email scorecard to send a formal certificate-style summary (enrolled / completed dates, attendance, exam scores) to that student’s email only. When a course certificate file is on file for an active student, the email also includes a download link. Set Date completed on the card when the course finishes — otherwise the email shows “In progress”. Delivery uses the portal email service.",
     },
     {
       title: "Who sees what",

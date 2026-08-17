@@ -20,6 +20,7 @@ import type {
   StudentRecordSession,
 } from "@/lib/exams/types";
 import { signStudentPhotoUrl } from "@/lib/student/photos";
+import { signStudentCertificateUrl } from "@/lib/student/certificates";
 import { publicActionMessage } from "@/lib/safe-action-message";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 
@@ -717,7 +718,9 @@ export async function emailStudentScorecard(
 
     const { data: photoRow } = await access.supabase
       .from("student_profiles")
-      .select("passport_path")
+      .select(
+        "passport_path, certificate_path, is_active",
+      )
       .eq("id", bundle.record.user_id)
       .maybeSingle();
     // Long-lived URL so the emailed scorecard photo still loads days later.
@@ -725,6 +728,16 @@ export async function emailStudentScorecard(
       photoRow?.passport_path,
       60 * 60 * 24 * 7,
     );
+
+    // Certificate download only when on file and the student seat is active.
+    const certificateAppropriate =
+      Boolean(photoRow?.certificate_path) && photoRow?.is_active !== false;
+    const certificateDownloadUrl = certificateAppropriate
+      ? await signStudentCertificateUrl(
+          photoRow?.certificate_path,
+          60 * 60 * 24 * 7,
+        )
+      : null;
 
     const sent = await sendStudentScorecardViaBackend({
       to,
@@ -755,7 +768,9 @@ export async function emailStudentScorecard(
       issuedAtLabel,
       issuedByName: actor.full_name?.trim() || actor.email,
       portalRecordsUrl: `${portalBaseUrl()}/student/records`,
+      portalCertificatesUrl: `${portalBaseUrl()}/student/certificates`,
       passportImageUrl: passportImageUrl ?? undefined,
+      certificateDownloadUrl: certificateDownloadUrl ?? undefined,
     });
 
     if (!sent.ok) {

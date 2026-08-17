@@ -98,6 +98,12 @@ const nav: NavEntry[] = [
         hint: "Attendance & scores",
       },
       {
+        href: "/student/certificates",
+        id: "certificates",
+        label: "Certificates",
+        hint: "Course certificate download",
+      },
+      {
         href: "/student/gallery",
         id: "gallery",
         label: "Gallery",
