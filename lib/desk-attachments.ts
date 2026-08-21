@@ -50,3 +50,16 @@ export function validateDeskAttachmentFile(file: File): string | null {
   }
   return null;
 }
+
+/** Parse attachment id JSON from announcement / campaign form posts. */
+export function parseAttachmentIds(formData: FormData): string[] {
+  const raw = String(formData.get("attachmentIds") ?? "").trim();
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((id): id is string => typeof id === "string");
+  } catch {
+    return [];
+  }
+}

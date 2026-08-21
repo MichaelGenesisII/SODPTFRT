@@ -203,17 +203,3 @@ export async function loadCampaignAttachmentPayload(
   }
   return out;
 }
-
-function parseAttachmentIds(formData: FormData): string[] {
-  const raw = String(formData.get("attachmentIds") ?? "").trim();
-  if (!raw) return [];
-  try {
-    const parsed = JSON.parse(raw) as unknown;
-    if (!Array.isArray(parsed)) return [];
-    return parsed.filter((id): id is string => typeof id === "string");
-  } catch {
-    return [];
-  }
-}
-
-export { parseAttachmentIds };

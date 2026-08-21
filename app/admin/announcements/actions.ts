@@ -16,10 +16,10 @@ import {
   type AnnouncementAudience,
 } from "@/lib/announcements";
 import { publicActionMessage } from "@/lib/safe-action-message";
+import { parseAttachmentIds } from "@/lib/desk-attachments";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import {
   linkAnnouncementAttachments,
-  parseAttachmentIds,
   replaceAnnouncementAttachments,
 } from "@/app/admin/desk-attachments/actions";
 
