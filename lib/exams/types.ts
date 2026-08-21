@@ -150,6 +150,7 @@ export type StudentRecord = {
   batch_year?: number | null;
   /** Signed URL for passport photo (admin desk / email). */
   passport_url?: string | null;
+  graduation_gate_override_note?: string | null;
 };
 
 export type StudentRecordSession = {

@@ -125,11 +125,10 @@ export function InPortalZoom({ session, onLeave }: Props) {
         }
       } catch (error) {
         if (cancelled) return;
+        console.error("[in-portal-zoom]", error);
         setStatus("error");
         setMessage(
-          error instanceof Error
-            ? error.message
-            : "Could not start in-portal Zoom. Use the Zoom app link instead.",
+          "Could not start in-portal Zoom. Use the Zoom app link instead.",
         );
       }
     }

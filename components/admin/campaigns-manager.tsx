@@ -1,12 +1,16 @@
 "use client";
 
-import { useMemo, useState, useTransition } from "react";
+import { useMemo, useState, useTransition, useEffect } from "react";
 import { sendStudentCampaign } from "@/app/admin/campaigns/actions";
 import { useToast } from "@/components/ui/toast";
 import { buildCampaignPreview } from "@/lib/email/campaign-preview";
 import type { CampaignRecipient } from "@/lib/email/campaigns";
 import { isNationalAdmin, type AdminProfile } from "@/lib/admin/profile";
 import { formatBatchLabel, type Batch, type Parish } from "@/lib/parishes";
+import { DeskAttachmentPicker } from "@/components/admin/desk-attachment-picker";
+import { DeskPagination } from "@/lib/ui/desk-pagination";
+
+const CAMPAIGN_PAGE_SIZE = 8;
 
 const fieldClass =
   "mt-1 w-full border border-stone bg-white/70 px-3 py-2 text-sm text-ink outline-none focus:border-pine";
@@ -41,6 +45,10 @@ export function CampaignsManager({
   const [customBody, setCustomBody] = useState("");
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(true);
+  const [recipientPage, setRecipientPage] = useState(1);
+  const [campaignAttachments, setCampaignAttachments] = useState<
+    { id: string; original_name: string; byte_size: number; mime: string }[]
+  >([]);
 
   const preview = useMemo(
     () =>
@@ -89,6 +97,27 @@ export function CampaignsManager({
     });
   }, [recipients, parishFilter, batchFilter, unpaidOnly, query]);
 
+  const recipientTotalPages = Math.max(
+    1,
+    Math.ceil(filtered.length / CAMPAIGN_PAGE_SIZE),
+  );
+  const currentRecipientPage = Math.min(recipientPage, recipientTotalPages);
+  const recipientStart = (currentRecipientPage - 1) * CAMPAIGN_PAGE_SIZE;
+  const pageRecipients = filtered.slice(
+    recipientStart,
+    recipientStart + CAMPAIGN_PAGE_SIZE,
+  );
+
+  useEffect(() => {
+    setRecipientPage(1);
+  }, [parishFilter, batchFilter, unpaidOnly, query]);
+
+  useEffect(() => {
+    if (recipientPage > recipientTotalPages) {
+      setRecipientPage(recipientTotalPages);
+    }
+  }, [recipientPage, recipientTotalPages]);
+
   const selectedInView = filtered.filter((r) => selected.has(r.id));
   const allFilteredSelected =
     filtered.length > 0 && filtered.every((r) => selected.has(r.id));
@@ -127,6 +156,7 @@ export function CampaignsManager({
         parishId: parishFilter || undefined,
         batchId: batchFilter || undefined,
         unpaidOnly: unpaidOnly || undefined,
+        attachmentIds: campaignAttachments.map((item) => item.id),
       });
       if (result.ok) {
         success(result.message, "Campaigns");
@@ -134,6 +164,7 @@ export function CampaignsManager({
           info(`${result.remaining} emails left in this rate window.`, "Quota");
         }
         setSelected(new Set());
+        setCampaignAttachments([]);
       } else {
         error(result.message, "Campaigns");
       }
@@ -191,6 +222,16 @@ export function CampaignsManager({
               placeholder="e.g. Payment due Friday, or Zoom opens at 7:25pm"
             />
           </label>
+          <div>
+            <p className="text-xs text-ink/50">Email attachments</p>
+            <div className="mt-1">
+              <DeskAttachmentPicker
+                value={campaignAttachments}
+                onChange={setCampaignAttachments}
+                disabled={pending}
+              />
+            </div>
+          </div>
         </div>
 
         <div className="mt-5 border border-stone bg-white/70">
@@ -326,7 +367,7 @@ export function CampaignsManager({
               No students match these filters.
             </li>
           ) : (
-            filtered.map((r) => {
+            pageRecipients.map((r) => {
               const checked = selected.has(r.id);
               return (
                 <li key={r.id}>
@@ -353,6 +394,14 @@ export function CampaignsManager({
             })
           )}
         </ul>
+        <DeskPagination
+          page={currentRecipientPage}
+          totalItems={filtered.length}
+          pageSize={CAMPAIGN_PAGE_SIZE}
+          onPageChange={setRecipientPage}
+          className="mt-3"
+          itemLabel="recipients"
+        />
       </section>
 
       {confirmOpen ? (

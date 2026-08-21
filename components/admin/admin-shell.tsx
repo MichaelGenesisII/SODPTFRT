@@ -5,6 +5,7 @@ import Link from "next/link";
 import {
   Suspense,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type ReactNode,
@@ -38,6 +39,7 @@ type NavChild = {
   href: string;
   label: string;
   hint: string;
+  feature?: "parishAdmin";
 };
 
 type NavLink = {
@@ -80,6 +82,16 @@ const nav: NavEntry[] = [
         hint: "Applications & seats",
       },
       {
+        href: "/admin/alumni",
+        label: "Alumni",
+        hint: "Import & re-entry",
+      },
+      {
+        href: "/admin/cohorts",
+        label: "Cohorts",
+        hint: "Year & programme groups",
+      },
+      {
         href: "/admin/payments",
         label: "Payments",
         hint: "Bank proofs",
@@ -88,6 +100,7 @@ const nav: NavEntry[] = [
         href: "/admin/parishes",
         label: "Parishes",
         hint: "Churches & batches",
+        feature: "parishAdmin" as const,
       },
     ],
   },
@@ -123,7 +136,7 @@ const nav: NavEntry[] = [
   {
     kind: "group",
     id: "reach",
-    label: "Reach",
+    label: "Communications",
     hint: "Inbox & outbound",
     icon: CampaignsIcon,
     children: [
@@ -131,6 +144,11 @@ const nav: NavEntry[] = [
         href: "/admin/tickets",
         label: "Desk",
         hint: "Support inbox",
+      },
+      {
+        href: "/admin/community",
+        label: "Community",
+        hint: "National chat room",
       },
       {
         href: "/admin/announcements",
@@ -141,6 +159,11 @@ const nav: NavEntry[] = [
         href: "/admin/campaigns",
         label: "Campaigns",
         hint: "Email & marketing",
+      },
+      {
+        href: "/admin/email-templates",
+        label: "Email templates",
+        hint: "Outbound copy editor",
       },
     ],
   },
@@ -157,8 +180,24 @@ function pathMatches(href: string, pathname: string) {
   return href === "/admin" ? pathname === "/admin" : pathname.startsWith(href);
 }
 
-function findActiveNavLabel(pathname: string): string {
-  for (const entry of nav) {
+function filterNav(entries: NavEntry[], parishAdminsOn: boolean): NavEntry[] {
+  return entries
+    .map((entry) => {
+      if (entry.kind === "link") return entry;
+      const children = entry.children.filter(
+        (child) => child.feature !== "parishAdmin" || parishAdminsOn,
+      );
+      if (children.length === 0) return null;
+      return { ...entry, children };
+    })
+    .filter((entry): entry is NavEntry => entry != null);
+}
+
+function findActiveNavLabel(
+  pathname: string,
+  entries: NavEntry[],
+): string {
+  for (const entry of entries) {
     if (entry.kind === "link" && pathMatches(entry.href, pathname)) {
       return entry.label;
     }
@@ -167,7 +206,7 @@ function findActiveNavLabel(pathname: string): string {
       if (child) return child.label;
     }
   }
-  return "Command";
+  return "Overview";
 }
 
 function groupContainsPath(group: NavGroup, pathname: string) {
@@ -669,12 +708,14 @@ export function AdminShell({
   deskLabel,
   deskPulse: initialPulse,
   paymentsPulse: initialPaymentsPulse,
+  parishAdminEnabled = false,
   children,
 }: {
   profile: AdminProfile;
   deskLabel: string;
   deskPulse: DeskPulse;
   paymentsPulse: PaymentsPulse;
+  parishAdminEnabled?: boolean;
   children: ReactNode;
 }) {
   const pathname = usePathname();
@@ -687,6 +728,10 @@ export function AdminShell({
   const [paymentsPulse, setPaymentsPulse] =
     useState<PaymentsPulse>(initialPaymentsPulse);
   const [openGroupId, setOpenGroupId] = useState<string | null>(null);
+  const visibleNav = useMemo(
+    () => filterNav(nav, parishAdminEnabled),
+    [parishAdminEnabled],
+  );
 
   // Fresh server counts win over the last polled value.
   const [lastServerPulse, setLastServerPulse] = useState(initialPulse);
@@ -701,13 +746,18 @@ export function AdminShell({
     setPaymentsPulse(initialPaymentsPulse);
   }
 
+  // Open the group for the current route on navigation only.
+  // Do not depend on `visibleNav` identity — a fresh array every render was
+  // resetting openGroupId and fighting accordion clicks.
   useEffect(() => {
-    const match = nav.find(
+    const match = visibleNav.find(
       (entry) =>
         entry.kind === "group" && groupContainsPath(entry, pathname),
     );
-    setOpenGroupId(match && match.kind === "group" ? match.id : null);
-  }, [pathname]);
+    if (match?.kind === "group") {
+      setOpenGroupId(match.id);
+    }
+  }, [pathname, visibleNav]);
 
   useEffect(() => {
     const frame = window.requestAnimationFrame(() => {
@@ -905,7 +955,7 @@ export function AdminShell({
     setOpenGroupId((current) => (current === id ? null : id));
   }
 
-  const currentSection = findActiveNavLabel(pathname);
+  const currentSection = findActiveNavLabel(pathname, visibleNav);
 
   return (
     <div className="relative flex min-h-svh flex-col bg-mist text-ink lg:flex-row">
@@ -1058,7 +1108,7 @@ export function AdminShell({
             desktopOpen ? "" : "lg:invisible"
           }`}
         >
-          {nav.map((entry, index) => {
+          {visibleNav.map((entry, index) => {
             if (entry.kind === "link") {
               const active = isActive(entry.href);
               const Icon = entry.icon;

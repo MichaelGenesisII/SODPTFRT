@@ -6,6 +6,10 @@ import { listAdminStudents } from "@/app/admin/students/actions";
 import { StudentsManager } from "@/components/admin/students-manager";
 import type { AdminStudentRecord } from "@/lib/admin/students";
 import { getSessionAdmin, isNationalAdmin } from "@/lib/admin/auth";
+import {
+  publicActionMessage,
+  publicUnavailableMessage,
+} from "@/lib/safe-action-message";
 
 export const metadata: Metadata = {
   title: "Students | School of Disciples Portal",
@@ -21,12 +25,11 @@ export default async function AdminStudentsPage() {
   try {
     students = await listAdminStudents();
   } catch (error) {
-    loadError =
-      error instanceof Error ? error.message : "Could not load students.";
-    if (/relation .* does not exist|Could not find the table/i.test(loadError)) {
-      loadError =
-        "Students are temporarily unavailable. Please try again later.";
-    }
+    console.error("admin students:", error);
+    loadError = publicActionMessage(
+      error,
+      publicUnavailableMessage("Students"),
+    );
   }
 
   const [parishes, batches] = await Promise.all([

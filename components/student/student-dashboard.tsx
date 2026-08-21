@@ -10,7 +10,7 @@ import {
   type ProgrammeFeeKey,
 } from "@/lib/enrol/payment";
 import {
-  APPLICATION_FEE,
+  TUITION_FEE,
   GRADUATION_FEE,
   type FeePaymentStatus,
 } from "@/lib/payments/fees";
@@ -60,7 +60,7 @@ function statusCopy(status: EnrolmentStatus): { title: string; body: string } {
     case "accepted":
       return {
         title: "Accepted",
-        body: "Welcome aboard. Complete payment to secure your place on the course.",
+        body: "Welcome aboard. Application is free — pay tuition when you are ready (in full or by instalment).",
       };
     case "payment_pending":
       return {
@@ -98,9 +98,9 @@ function paymentCopy(status: PaymentStatus | FeePaymentStatus): string {
 
 function effectivePaymentStatus(
   enrolment: StudentEnrolment,
-  applicationFeeStatus: FeePaymentStatus | null,
+  tuitionFeeStatus: FeePaymentStatus | null,
 ): PaymentStatus {
-  if (applicationFeeStatus) return applicationFeeStatus;
+  if (tuitionFeeStatus) return tuitionFeeStatus;
   return enrolment.payment_status;
 }
 
@@ -241,7 +241,8 @@ function readHomeSection(): HomeSection {
 type StudentDashboardProps = {
   profile: StudentProfile;
   enrolment: StudentEnrolment | null;
-  applicationFeeStatus?: FeePaymentStatus | null;
+  tuitionFeeStatus?: FeePaymentStatus | null;
+  passportUnlocked?: boolean;
   notices: Announcement[];
   loadError?: string | null;
 };
@@ -249,7 +250,8 @@ type StudentDashboardProps = {
 export function StudentDashboard({
   profile,
   enrolment,
-  applicationFeeStatus = null,
+  tuitionFeeStatus = null,
+  passportUnlocked = false,
   notices,
   loadError = null,
 }: StudentDashboardProps) {
@@ -271,7 +273,7 @@ export function StudentDashboard({
   const name = studentDisplayName(profile);
   const first = profile.first_name;
   const payment = enrolment
-    ? effectivePaymentStatus(enrolment, applicationFeeStatus)
+    ? effectivePaymentStatus(enrolment, tuitionFeeStatus)
     : "unpaid";
   const journey = buildJourney(enrolment, payment);
   const status = enrolment
@@ -315,7 +317,7 @@ export function StudentDashboard({
           statusTitle={status.title}
           enrolment={enrolment}
           payment={payment}
-          applicationFeePaid={applicationFeeStatus === "paid" || paid}
+          passportUnlocked={passportUnlocked}
           journey={journey}
           notices={notices}
         />
@@ -387,7 +389,7 @@ function OverviewView({
   statusTitle,
   enrolment,
   payment,
-  applicationFeePaid,
+  passportUnlocked,
   journey,
   notices,
 }: {
@@ -397,11 +399,11 @@ function OverviewView({
   statusTitle: string;
   enrolment: StudentEnrolment | null;
   payment: PaymentStatus;
-  applicationFeePaid: boolean;
+  passportUnlocked: boolean;
   journey: JourneyStep[];
   notices: Announcement[];
 }) {
-  const needsPassport = applicationFeePaid && !profile.passport_path;
+  const needsPassport = passportUnlocked && !profile.passport_path;
   const continueTo = overviewContinue(enrolment, payment, needsPassport);
   const featured = notices[0] ?? null;
   const parishBatch = [enrolment?.parish_name, enrolment?.batch_label]
@@ -536,9 +538,9 @@ function OverviewView({
             <p className="text-[0.65rem] uppercase tracking-[0.12em] text-ink/40">
               Photograph on file
             </p>
-          ) : !applicationFeePaid ? (
+          ) : !passportUnlocked ? (
             <p className="max-w-xs text-right text-xs leading-relaxed text-ink/55">
-              Passport unlocks after the application fee.
+              Passport unlocks after your first tuition instalment is confirmed.
             </p>
           ) : null}
         </div>
@@ -830,7 +832,7 @@ function ApplicationView({
                   <p className="mt-3 text-sm leading-relaxed text-mist/70">
                     {proofInReview
                       ? "Your bank proof is under review. Track it from Payments."
-                      : `${APPLICATION_FEE.label} ${formatGbp(fee.amountGbp)} plus ${GRADUATION_FEE.label.toLowerCase()} ${formatGbp(GRADUATION_FEE.amountGbp)}.`}
+                      : `Tuition ${formatGbp(TUITION_FEE.amountGbp)} and ${GRADUATION_FEE.label.toLowerCase()} ${formatGbp(GRADUATION_FEE.amountGbp)} — pay in full or by instalment (minimum ${formatGbp(50)} each time).`}
                   </p>
                   <Link
                     href="/student/payments"

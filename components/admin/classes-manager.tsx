@@ -31,6 +31,8 @@ import {
   type ZoomClassAttendance,
 } from "@/lib/classes/types";
 import { formatBatchLabel, type Batch, type Parish } from "@/lib/parishes";
+import { formatCohortLabel, type Cohort } from "@/lib/cohorts";
+import { DeskPagination } from "@/lib/ui/desk-pagination";
 
 const fieldClass =
   "w-full border border-stone bg-white/70 px-3 py-2 text-sm outline-none focus:border-pine";
@@ -44,6 +46,7 @@ type Props = {
   classes: ZoomClass[];
   parishes: Pick<Parish, "id" | "name">[];
   batches: Batch[];
+  cohorts: Cohort[];
   zoomReady: boolean;
   meetingSdkReady: boolean;
 };
@@ -53,6 +56,7 @@ export function ClassesManager({
   classes,
   parishes,
   batches,
+  cohorts,
   zoomReady,
   meetingSdkReady,
 }: Props) {
@@ -284,6 +288,8 @@ export function ClassesManager({
                               item.audience,
                               item.parish_name,
                               item.batch_name,
+                              item.cohort_name,
+                              item.year,
                             )}
                             {item.present_count != null
                               ? ` · ${item.present_count} present`
@@ -295,29 +301,14 @@ export function ClassesManager({
                   })
                 )}
               </ul>
-              {totalPages > 1 ? (
-                <div className="flex items-center justify-between gap-2 border-t border-stone px-2 py-2">
-                  <button
-                    type="button"
-                    disabled={currentPage <= 1}
-                    onClick={() => setPage((p) => Math.max(1, p - 1))}
-                    className="border border-pine/25 px-2 py-1 text-[0.7rem] text-pine disabled:opacity-40"
-                  >
-                    Prev
-                  </button>
-                  <span className="text-[0.65rem] tabular-nums text-ink/55">
-                    {currentPage}/{totalPages}
-                  </span>
-                  <button
-                    type="button"
-                    disabled={currentPage >= totalPages}
-                    onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-                    className="border border-pine/25 px-2 py-1 text-[0.7rem] text-pine disabled:opacity-40"
-                  >
-                    Next
-                  </button>
-                </div>
-              ) : null}
+              <DeskPagination
+                page={currentPage}
+                totalItems={filtered.length}
+                pageSize={PAGE_SIZE}
+                onPageChange={setPage}
+                className="px-2 pb-2"
+                itemLabel="classes"
+              />
             </aside>
 
             <section
@@ -328,6 +319,7 @@ export function ClassesManager({
                   profile={profile}
                   parishes={parishes}
                   batches={batches}
+                  cohorts={cohorts}
                   national={national}
                   zoomReady={zoomReady}
                   pending={pending}
@@ -432,6 +424,7 @@ function CreateClassForm({
   profile,
   parishes,
   batches,
+  cohorts,
   national,
   zoomReady,
   pending,
@@ -441,6 +434,7 @@ function CreateClassForm({
   profile: AdminProfile;
   parishes: Pick<Parish, "id" | "name">[];
   batches: Batch[];
+  cohorts: Cohort[];
   national: boolean;
   zoomReady: boolean;
   pending: boolean;
@@ -451,6 +445,8 @@ function CreateClassForm({
     audience: ClassAudience;
     parish_id: string | null;
     batch_id: string | null;
+    cohort_id?: string | null;
+    year?: number | null;
     scheduled_start: string;
     scheduled_end: string;
     duration_minutes: number;
@@ -470,6 +466,8 @@ function CreateClassForm({
   );
   const [parishId, setParishId] = useState(profile.parish_id ?? "");
   const [batchId, setBatchId] = useState("");
+  const [cohortId, setCohortId] = useState("");
+  const [programmeYear, setProgrammeYear] = useState("");
   const [startLocal, setStartLocal] = useState("");
   const [endLocal, setEndLocal] = useState("");
   const [duration, setDuration] = useState(90);
@@ -487,6 +485,9 @@ function CreateClassForm({
   const parishBatches = batches.filter((b) =>
     parishId ? b.parish_id === parishId : true,
   );
+  const programmeYears = [
+    ...new Set(cohorts.map((cohort) => cohort.year_start)),
+  ].sort((a, b) => b - a);
 
   function buildPayload() {
     return {
@@ -495,6 +496,8 @@ function CreateClassForm({
       audience,
       parish_id: parishId || null,
       batch_id: batchId || null,
+      cohort_id: cohortId || null,
+      year: programmeYear ? Number(programmeYear) : null,
       scheduled_start: new Date(startLocal).toISOString(),
       scheduled_end: new Date(endLocal).toISOString(),
       duration_minutes: duration,
@@ -521,6 +524,8 @@ function CreateClassForm({
       audience,
       parish_id: parishId || null,
       batch_id: batchId || null,
+      cohort_id: cohortId || null,
+      year: programmeYear ? Number(programmeYear) : null,
     }).then((next) => {
       setPreview(next);
       setPreviewLoading(false);
@@ -582,6 +587,16 @@ function CreateClassForm({
                       label: "Everyone",
                       hint: "All students",
                     },
+                    {
+                      id: "cohort" as const,
+                      label: "Cohort",
+                      hint: "Programme cohort",
+                    },
+                    {
+                      id: "year" as const,
+                      label: "Year",
+                      hint: "Programme year",
+                    },
                   ] as const)
                 : []),
               {
@@ -614,9 +629,18 @@ function CreateClassForm({
                   if (opt.id === "everyone") {
                     setParishId("");
                     setBatchId("");
+                    setCohortId("");
+                    setProgrammeYear("");
                   } else if (opt.id === "parish") {
                     setBatchId("");
+                    setCohortId("");
+                    setProgrammeYear("");
                     if (!national) setParishId(profile.parish_id ?? "");
+                  } else if (opt.id === "cohort" || opt.id === "year") {
+                    setParishId("");
+                    setBatchId("");
+                    setCohortId("");
+                    setProgrammeYear("");
                   }
                 }}
               />
@@ -627,7 +651,9 @@ function CreateClassForm({
         </div>
       </fieldset>
 
-      {audience !== "everyone" ? (
+      {audience !== "everyone" &&
+      audience !== "cohort" &&
+      audience !== "year" ? (
         <div className="grid gap-3 sm:grid-cols-2">
           {(national || audience === "parish") && audience !== "batch" ? (
             <label className="block text-sm">
@@ -692,6 +718,44 @@ function CreateClassForm({
             </>
           ) : null}
         </div>
+      ) : null}
+
+      {audience === "cohort" ? (
+        <label className="block text-sm">
+          Cohort
+          <select
+            required
+            value={cohortId}
+            onChange={(e) => setCohortId(e.target.value)}
+            className={`mt-1 ${fieldClass}`}
+          >
+            <option value="">Select cohort</option>
+            {cohorts.map((cohort) => (
+              <option key={cohort.id} value={cohort.id}>
+                {formatCohortLabel(cohort)}
+              </option>
+            ))}
+          </select>
+        </label>
+      ) : null}
+
+      {audience === "year" ? (
+        <label className="block text-sm">
+          Programme year
+          <select
+            required
+            value={programmeYear}
+            onChange={(e) => setProgrammeYear(e.target.value)}
+            className={`mt-1 ${fieldClass}`}
+          >
+            <option value="">Select year</option>
+            {programmeYears.map((year) => (
+              <option key={year} value={year}>
+                {year}
+              </option>
+            ))}
+          </select>
+        </label>
       ) : null}
 
       <div className="grid gap-3 sm:grid-cols-2">

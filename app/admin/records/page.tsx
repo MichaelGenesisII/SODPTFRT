@@ -20,23 +20,28 @@ export default async function AdminRecordsPage() {
   const profile = await getSessionAdmin();
   if (!profile) redirect("/login/admin");
 
-  let students: Awaited<ReturnType<typeof listRecordStudents>> = [];
+  let students: Awaited<ReturnType<typeof listRecordStudents>>["items"] = [];
   let parishes: Awaited<ReturnType<typeof listParishesForAdmin>> = [];
   let batches: Awaited<ReturnType<typeof listBatchesForAdmin>> = [];
   let loadError: string | null = null;
+  let studentsTotal = 0;
 
   try {
-    [students, parishes, batches] = await Promise.all([
+    const [listed, parishRows, batchRows] = await Promise.all([
       listRecordStudents(
         isNationalAdmin(profile)
-          ? undefined
-          : { parishId: profile.parish_id ?? undefined },
+          ? { page: 1, pageSize: 50 }
+          : { parishId: profile.parish_id ?? undefined, page: 1, pageSize: 50 },
       ),
       listParishesForAdmin(),
       listBatchesForAdmin(
         isNationalAdmin(profile) ? null : profile.parish_id,
       ),
     ]);
+    students = listed.items;
+    studentsTotal = listed.total;
+    parishes = parishRows;
+    batches = batchRows;
   } catch (error) {
     console.error("admin records:", error);
     loadError = publicActionMessage(error, publicUnavailableMessage("Records"));
@@ -70,6 +75,7 @@ export default async function AdminRecordsPage() {
         <RecordsManager
           profile={profile}
           initialStudents={students}
+          initialTotal={studentsTotal}
           parishes={parishes}
           batches={batches}
         />

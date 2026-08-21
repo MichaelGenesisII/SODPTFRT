@@ -1,6 +1,6 @@
 export type ZoomClassStatus = "scheduled" | "live" | "ended" | "cancelled";
 
-export type ClassAudience = "everyone" | "parish" | "batch";
+export type ClassAudience = "everyone" | "parish" | "batch" | "cohort" | "year";
 
 export type AttendanceSource = "zoom" | "code" | "manual";
 
@@ -11,6 +11,8 @@ export type ZoomClass = {
   audience: ClassAudience;
   parish_id: string | null;
   batch_id: string | null;
+  cohort_id: string | null;
+  year: number | null;
   scheduled_start: string;
   scheduled_end: string;
   duration_minutes: number;
@@ -29,6 +31,7 @@ export type ZoomClass = {
   parish_name?: string | null;
   batch_name?: string | null;
   batch_year?: number | null;
+  cohort_name?: string | null;
   present_count?: number;
   matched_count?: number;
   attendance_rows?: number;
@@ -81,8 +84,18 @@ export function audienceLabel(
   audience: ClassAudience,
   parishName?: string | null,
   batchName?: string | null,
+  cohortName?: string | null,
+  year?: number | null,
 ): string {
   if (audience === "everyone") return "Everyone";
-  if (audience === "parish") return parishName ? `Parish · ${parishName}` : "Parish";
+  if (audience === "parish") {
+    return parishName ? `Parish · ${parishName}` : "Parish";
+  }
+  if (audience === "cohort") {
+    return cohortName ? `Cohort · ${cohortName}` : "Cohort";
+  }
+  if (audience === "year") {
+    return year != null ? `Year · ${year}` : "Year";
+  }
   return batchName ? `Batch · ${batchName}` : "Batch";
 }

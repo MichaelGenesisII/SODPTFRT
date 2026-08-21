@@ -26,6 +26,9 @@ export type StudentProfile = {
   selfie_moderated_at?: string | null;
   /** Signed URL for UI avatar (short-lived). */
   passportUrl?: string | null;
+  account_kind?: "student" | "alumni";
+  manuals_status?: "not_sent" | "sent";
+  manuals_sent_at?: string | null;
 };
 
 /** Slim enrolment used across student surfaces. */
@@ -54,6 +57,9 @@ export type StudentEnrolment = {
   parish_name: string | null;
   batch_id: string | null;
   batch_label: string | null;
+  cohort_id: string | null;
+  cohort_label: string | null;
+  legacy_app_com_no: string | null;
   date_of_birth: string | null;
   nationality: string | null;
   created_at: string;

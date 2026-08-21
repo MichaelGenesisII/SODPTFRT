@@ -19,8 +19,10 @@ import {
   FEE_STATUS_META,
   feeDefinition,
   formatGbp,
+  isFeeType,
   type FeeType,
 } from "@/lib/payments/fees";
+import { DeskPagination } from "@/lib/ui/desk-pagination";
 
 type Lane = "pending" | "paid";
 type MobileSurface = "directory" | "workspace";
@@ -72,11 +74,11 @@ function formatWhen(iso: string) {
 }
 
 function feeLabel(type: string) {
-  return isFee(type) ? feeDefinition(type).label : type;
+  return isFeeType(type) ? feeDefinition(type).label : type;
 }
 
 function isFee(value: string): value is FeeType {
-  return value === "application" || value === "graduation";
+  return isFeeType(value);
 }
 
 export function PaymentsManager({
@@ -252,7 +254,7 @@ export function PaymentsManager({
             className="w-full border border-stone bg-white/70 px-2.5 py-1.5 text-sm outline-none focus:border-pine"
           >
             <option value="all">All fees</option>
-            <option value="application">Application</option>
+            <option value="tuition">Tuition</option>
             <option value="graduation">Graduation</option>
           </select>
         </label>
@@ -330,30 +332,14 @@ export function PaymentsManager({
               })
             )}
           </ul>
-          {totalPages > 1 ? (
-            <div className="flex items-center justify-between gap-2 border-t border-stone px-3 py-2.5">
-              <button
-                type="button"
-                disabled={currentPage <= 1}
-                onClick={() => goToPage(currentPage - 1)}
-                className="border border-pine/25 px-2.5 py-1.5 text-xs font-medium text-pine transition-colors hover:border-pine disabled:cursor-not-allowed disabled:opacity-40"
-              >
-                Prev
-              </button>
-              <p className="text-xs tabular-nums text-ink/60">
-                <span className="font-medium text-ink">{currentPage}</span>/
-                {totalPages}
-              </p>
-              <button
-                type="button"
-                disabled={currentPage >= totalPages}
-                onClick={() => goToPage(currentPage + 1)}
-                className="border border-pine/25 px-2.5 py-1.5 text-xs font-medium text-pine transition-colors hover:border-pine disabled:cursor-not-allowed disabled:opacity-40"
-              >
-                Next
-              </button>
-            </div>
-          ) : null}
+          <DeskPagination
+            page={currentPage}
+            totalItems={rows.length}
+            pageSize={PAYMENTS_PAGE_SIZE}
+            onPageChange={goToPage}
+            className="px-3 pb-2.5"
+            itemLabel="payments"
+          />
         </div>
 
         <section

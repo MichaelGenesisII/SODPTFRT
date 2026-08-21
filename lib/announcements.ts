@@ -33,6 +33,15 @@ export type Announcement = {
   hrefLabel?: string;
   source: AnnouncementSource;
   audience?: AnnouncementAudience;
+  attachments?: AnnouncementAttachmentView[];
+};
+
+export type AnnouncementAttachmentView = {
+  id: string;
+  name: string;
+  mime: string;
+  byteSize: number;
+  url: string;
 };
 
 export type AdminAnnouncementRecord = {
@@ -48,6 +57,7 @@ export type AdminAnnouncementRecord = {
   updated_at: string;
   parish_id: string | null;
   batch_id: string | null;
+  attachments?: AnnouncementAttachmentView[];
 };
 
 export const AUDIENCE_META: Record<

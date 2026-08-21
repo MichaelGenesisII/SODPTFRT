@@ -8,9 +8,17 @@ import {
   portalBaseUrl,
   sendCampaignViaBackend,
 } from "@/lib/email/backend";
+import {
+  campaignUnsubscribeOneClickUrl,
+  campaignUnsubscribeUrl,
+} from "@/lib/email/unsubscribe";
+import {
+  loadCampaignAttachmentPayload,
+} from "@/app/admin/desk-attachments/actions";
 import { isNationalAdmin, requireSessionAdmin } from "@/lib/admin/auth";
 import { SOD_SITE } from "@/lib/site-nav";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
+import { createServiceSupabaseClient } from "@/lib/supabase/service";
 import { publicActionMessage } from "@/lib/safe-action-message";
 
 export type CampaignActionResult = {
@@ -51,7 +59,10 @@ export async function listCampaignRecipients(filters?: {
   }
 
   const { data: enrolments, error } = await enrolQ;
-  if (error) throw new Error(error.message);
+  if (error) {
+    console.error("[campaigns] enrolments", error.message);
+    throw new Error(publicActionMessage(error, "Could not load recipients."));
+  }
 
   const latest = new Map<string, (typeof enrolments)[number]>();
   for (const row of enrolments ?? []) {
@@ -66,9 +77,37 @@ export async function listCampaignRecipients(filters?: {
     .select("id, email, first_name, last_name, is_active")
     .in("id", userIds);
 
-  if (profileError) throw new Error(profileError.message);
+  if (profileError) {
+    console.error("[campaigns] profiles", profileError.message);
+    throw new Error(
+      publicActionMessage(profileError, "Could not load recipients."),
+    );
+  }
 
   const profileMap = new Map((profiles ?? []).map((p) => [p.id as string, p]));
+
+  const emails = (profiles ?? [])
+    .map((p) => String(p.email || "").trim().toLowerCase())
+    .filter(Boolean);
+  const unsubscribed = new Set<string>();
+  if (emails.length) {
+    try {
+      const service = createServiceSupabaseClient();
+      const { data: optedOut, error: unsubError } = await service
+        .from("email_campaign_unsubscribes")
+        .select("email")
+        .in("email", emails);
+      if (unsubError) {
+        console.error("[campaigns] unsubscribes", unsubError.message);
+      } else {
+        for (const row of optedOut ?? []) {
+          unsubscribed.add(String(row.email).trim().toLowerCase());
+        }
+      }
+    } catch (error) {
+      console.error("[campaigns] unsubscribes lookup", error);
+    }
+  }
 
   const rows: CampaignRecipient[] = [];
   for (const [userId, enrol] of latest) {
@@ -80,6 +119,7 @@ export async function listCampaignRecipients(filters?: {
     const batch = enrol.batches as { name?: string } | null;
     const email = (profile.email as string)?.trim();
     if (!email) continue;
+    if (unsubscribed.has(email.toLowerCase())) continue;
 
     rows.push({
       id: userId,
@@ -115,6 +155,7 @@ export async function sendStudentCampaign(input: {
   parishId?: string;
   batchId?: string;
   unpaidOnly?: boolean;
+  attachmentIds?: string[];
 }): Promise<CampaignActionResult> {
   try {
     const actor = await requireSessionAdmin();
@@ -164,6 +205,9 @@ export async function sendStudentCampaign(input: {
     }
 
     const portalUrl = `${portalBaseUrl()}/student`;
+    const attachments = await loadCampaignAttachmentPayload(
+      input.attachmentIds ?? [],
+    );
     let sent = 0;
     let failed = 0;
     let remaining: number | undefined;
@@ -184,7 +228,10 @@ export async function sendStudentCampaign(input: {
           to: r.email,
           firstName: r.first_name,
           parishName: r.parish_name ?? undefined,
+          unsubscribeUrl: campaignUnsubscribeUrl(r.email),
+          listUnsubscribeUrl: campaignUnsubscribeOneClickUrl(r.email),
         })),
+        attachments: attachments.length ? attachments : undefined,
       });
 
       if (typeof result.remaining === "number") remaining = result.remaining;

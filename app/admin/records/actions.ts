@@ -23,6 +23,7 @@ import { signStudentPhotoUrl } from "@/lib/student/photos";
 import { signStudentCertificateUrl } from "@/lib/student/certificates";
 import { publicActionMessage } from "@/lib/safe-action-message";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
+import { createServiceSupabaseClient } from "@/lib/supabase/service";
 
 export type RecordActionResult = {
   ok: boolean;
@@ -155,8 +156,10 @@ function revalidateRecords() {
 export async function listRecordStudents(filters?: {
   parishId?: string;
   batchId?: string;
-}): Promise<
-  {
+  page?: number;
+  pageSize?: number;
+}): Promise<{
+  items: {
     user_id: string;
     name: string;
     email: string;
@@ -165,14 +168,19 @@ export async function listRecordStudents(filters?: {
     parish_name: string | null;
     batch_name: string | null;
     record_id: string | null;
-  }[]
-> {
+  }[];
+  total: number;
+  page: number;
+  pageSize: number;
+}> {
   const actor = await requireSessionAdmin();
   const supabase = await createServerSupabaseClient();
 
   let parishFilter = filters?.parishId ?? "";
   if (!isNationalAdmin(actor)) {
-    if (!actor.parish_id) return [];
+    if (!actor.parish_id) {
+      return { items: [], total: 0, page: 1, pageSize: filters?.pageSize ?? 50 };
+    }
     parishFilter = actor.parish_id;
   }
 
@@ -181,8 +189,7 @@ export async function listRecordStudents(filters?: {
     .select(
       "id, user_id, first_name, middle_name, last_name, email, parish_id, batch_id, parishes(name), batches(name), created_at",
     )
-    .order("created_at", { ascending: false })
-    .limit(500);
+    .order("created_at", { ascending: false });
 
   if (parishFilter) enrolQ = enrolQ.eq("parish_id", parishFilter);
   if (filters?.batchId) enrolQ = enrolQ.eq("batch_id", filters.batchId);
@@ -198,7 +205,28 @@ export async function listRecordStudents(filters?: {
     if (!latest.has(row.user_id)) latest.set(row.user_id, row);
   }
 
-  const userIds = [...latest.keys()];
+  const allStudents = [...latest.values()].map((e) => {
+    const parish = e.parishes as { name?: string } | null;
+    const batch = e.batches as { name?: string } | null;
+    return {
+      user_id: e.user_id,
+      name: [e.first_name, e.middle_name, e.last_name].filter(Boolean).join(" "),
+      email: e.email,
+      parish_id: e.parish_id,
+      batch_id: e.batch_id,
+      parish_name: parish?.name ?? null,
+      batch_name: batch?.name ?? null,
+      record_id: null as string | null,
+    };
+  });
+
+  const pageSize = Math.min(Math.max(filters?.pageSize ?? 50, 1), 100);
+  const page = Math.max(filters?.page ?? 1, 1);
+  const total = allStudents.length;
+  const pageStart = (page - 1) * pageSize;
+  const pageRows = allStudents.slice(pageStart, pageStart + pageSize);
+
+  const userIds = pageRows.map((row) => row.user_id);
   const recordMap = new Map<string, string>();
   if (userIds.length) {
     const { data: records } = await supabase
@@ -213,20 +241,12 @@ export async function listRecordStudents(filters?: {
     }
   }
 
-  return [...latest.values()].map((e) => {
-    const parish = e.parishes as { name?: string } | null;
-    const batch = e.batches as { name?: string } | null;
-    return {
-      user_id: e.user_id,
-      name: [e.first_name, e.middle_name, e.last_name].filter(Boolean).join(" "),
-      email: e.email,
-      parish_id: e.parish_id,
-      batch_id: e.batch_id,
-      parish_name: parish?.name ?? null,
-      batch_name: batch?.name ?? null,
-      record_id: recordMap.get(e.user_id) ?? null,
-    };
-  });
+  const items = pageRows.map((row) => ({
+    ...row,
+    record_id: recordMap.get(row.user_id) ?? null,
+  }));
+
+  return { items, total, page, pageSize };
 }
 
 export async function ensureStudentRecord(
@@ -320,7 +340,9 @@ export async function getRecordBundle(
 
   const { data: profile } = await supabase
     .from("student_profiles")
-    .select("email, first_name, middle_name, last_name, passport_path")
+    .select(
+      "email, first_name, middle_name, last_name, passport_path, graduation_gate_override_note",
+    )
     .eq("id", record.user_id)
     .maybeSingle();
 
@@ -370,6 +392,8 @@ export async function getRecordBundle(
     batch_name: batch?.name ?? null,
     batch_year: batch?.year ?? null,
     passport_url: passportUrl,
+    graduation_gate_override_note:
+      (profile?.graduation_gate_override_note as string | null) ?? null,
   };
 
   // If enrolled_at never set, prefer enrolment created_at for display.
@@ -789,6 +813,87 @@ export async function emailStudentScorecard(
       message: `Scorecard emailed to ${to}.`,
       recordId,
     };
+  } catch (error) {
+    if (error instanceof Error && error.message === "Unauthorized") {
+      return unauthorized();
+    }
+    return fail(error);
+  }
+}
+
+export async function setGraduationGateOverride(input: {
+  userId: string;
+  note: string;
+}): Promise<RecordActionResult> {
+  try {
+    const actor = await requireSessionAdmin();
+    const note = input.note.trim();
+    if (!input.userId) {
+      return { ok: false, message: "Student is required." };
+    }
+    if (note.length < 4) {
+      return { ok: false, message: "Add a short reason for the override." };
+    }
+
+    const access = await requireAccessibleEnrolmentUser(input.userId);
+    if (!access.ok) return { ok: false, message: access.message };
+
+    const service = createServiceSupabaseClient();
+    const { error } = await service
+      .from("student_profiles")
+      .update({
+        graduation_gate_override_note: note,
+        graduation_gate_override_by: actor.id,
+        graduation_gate_override_at: new Date().toISOString(),
+      })
+      .eq("id", input.userId);
+
+    if (error) {
+      console.error("[records/graduation-override]", error.message);
+      return fail(error, "Could not save the graduation override.");
+    }
+
+    revalidateRecords();
+    revalidatePath("/student/gallery");
+    revalidatePath("/student/records");
+    return { ok: true, message: "Graduation override saved." };
+  } catch (error) {
+    if (error instanceof Error && error.message === "Unauthorized") {
+      return unauthorized();
+    }
+    return fail(error);
+  }
+}
+
+export async function clearGraduationGateOverride(
+  userId: string,
+): Promise<RecordActionResult> {
+  try {
+    await requireSessionAdmin();
+    if (!userId) return { ok: false, message: "Student is required." };
+
+    const access = await requireAccessibleEnrolmentUser(userId);
+    if (!access.ok) return { ok: false, message: access.message };
+
+    const service = createServiceSupabaseClient();
+    const { error } = await service
+      .from("student_profiles")
+      .update({
+        graduation_gate_override_note: null,
+        graduation_gate_override_by: null,
+        graduation_gate_override_at: null,
+      })
+      .eq("id", userId);
+
+    if (error) {
+      console.error("[records/graduation-override-clear]", error.message);
+      return fail(error, "Could not clear the graduation override.");
+    }
+
+    revalidateRecords();
+    revalidatePath("/student/gallery");
+    revalidatePath("/student/records");
+    return { ok: true, message: "Graduation override cleared." };
   } catch (error) {
     if (error instanceof Error && error.message === "Unauthorized") {
       return unauthorized();

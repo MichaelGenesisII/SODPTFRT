@@ -4,6 +4,10 @@ import {
   listBatchesForAdmin,
   listParishesForAdmin,
 } from "@/app/admin/parishes/actions";
+import {
+  listAnnouncementAttachmentsForAdmin,
+  signedDeskAttachmentUrl,
+} from "@/app/admin/desk-attachments/actions";
 import { AnnouncementsManager } from "@/components/admin/announcements-manager";
 import { getSessionAdmin, isNationalAdmin } from "@/lib/admin/auth";
 import {
@@ -11,6 +15,10 @@ import {
   MAX_STUDENT_LIVE_ANNOUNCEMENTS,
   type AdminAnnouncementRecord,
 } from "@/lib/announcements";
+import {
+  publicActionMessage,
+  publicUnavailableMessage,
+} from "@/lib/safe-action-message";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 
 export const metadata: Metadata = {
@@ -22,7 +30,10 @@ export default async function AdminAnnouncementsPage() {
   if (!profile) redirect("/login/admin");
 
   const supabase = await createServerSupabaseClient();
-  const [{ data }, parishes, batches] = await Promise.all([
+  let announcements: AdminAnnouncementRecord[] = [];
+  let loadError: string | null = null;
+
+  const [announcementResult, parishes, batches] = await Promise.all([
     supabase
       .from("announcements")
       .select(
@@ -35,12 +46,38 @@ export default async function AdminAnnouncementsPage() {
     ).catch(() => []),
   ]);
 
-  const announcements = (data ?? []).map((row) => ({
-    ...row,
-    audience: row.audience === "students" ? "students" : "general",
-    parish_id: row.parish_id ?? null,
-    batch_id: row.batch_id ?? null,
-  })) as AdminAnnouncementRecord[];
+  if (announcementResult.error) {
+    console.error("admin announcements:", announcementResult.error.message);
+    loadError = publicActionMessage(
+      announcementResult.error,
+      publicUnavailableMessage("Notices"),
+    );
+  } else {
+    announcements = (announcementResult.data ?? []).map((row) => ({
+      ...row,
+      audience: row.audience === "students" ? "students" : "general",
+      parish_id: row.parish_id ?? null,
+      batch_id: row.batch_id ?? null,
+    })) as AdminAnnouncementRecord[];
+
+    const attachmentMap = await listAnnouncementAttachmentsForAdmin(
+      announcements.map((item) => item.id),
+    );
+
+    for (const item of announcements) {
+      const files = attachmentMap.get(item.id) ?? [];
+      item.attachments = await Promise.all(
+        files.map(async (file) => ({
+          id: file.id,
+          name: file.original_name,
+          mime: file.mime,
+          byteSize: file.byte_size,
+          url: (await signedDeskAttachmentUrl(file.storage_path)) ?? "",
+        })),
+      );
+      item.attachments = item.attachments.filter((file) => file.url);
+    }
+  }
 
   const national = isNationalAdmin(profile);
 
@@ -72,12 +109,21 @@ export default async function AdminAnnouncementsPage() {
           )}
         </p>
       </section>
-      <AnnouncementsManager
-        announcements={announcements}
-        profile={profile}
-        parishes={parishes}
-        batches={batches}
-      />
+      {loadError ? (
+        <div
+          className="border border-red-800/30 bg-red-50 px-5 py-4 text-sm text-red-900"
+          role="alert"
+        >
+          {loadError}
+        </div>
+      ) : (
+        <AnnouncementsManager
+          announcements={announcements}
+          profile={profile}
+          parishes={parishes}
+          batches={batches}
+        />
+      )}
     </div>
   );
 }

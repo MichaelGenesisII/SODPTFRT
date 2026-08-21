@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import {
   addManualEntry,
+  clearGraduationGateOverride,
   deleteAttendanceSession,
   deleteRecordEntry,
   emailStudentScorecard,
@@ -11,6 +12,7 @@ import {
   getRecordBundle,
   listRecordStudents,
   setEntryInclude,
+  setGraduationGateOverride,
   updateScorecardDates,
   upsertAttendanceSession,
 } from "@/app/admin/records/actions";
@@ -19,20 +21,25 @@ import { useToast } from "@/components/ui/toast";
 import { isNationalAdmin, type AdminProfile } from "@/lib/admin/profile";
 import type { RecordBundle } from "@/lib/exams/records";
 import { formatBatchLabel, type Batch, type Parish } from "@/lib/parishes";
+import { DeskPagination } from "@/lib/ui/desk-pagination";
 
-const PAGE_SIZE = 8;
+const PAGE_SIZE = 50;
 
-type StudentRow = Awaited<ReturnType<typeof listRecordStudents>>[number];
+type StudentRow = Awaited<
+  ReturnType<typeof listRecordStudents>
+>["items"][number];
 type MobileSurface = "directory" | "workspace";
 
 export function RecordsManager({
   profile,
   initialStudents,
+  initialTotal,
   parishes,
   batches,
 }: {
   profile: AdminProfile;
   initialStudents: StudentRow[];
+  initialTotal: number;
   parishes: Pick<Parish, "id" | "name">[];
   batches: Batch[];
 }) {
@@ -45,6 +52,7 @@ export function RecordsManager({
   );
   const [batchId, setBatchId] = useState("");
   const [students, setStudents] = useState(initialStudents);
+  const [total, setTotal] = useState(initialTotal);
   const [query, setQuery] = useState("");
   const [page, setPage] = useState(1);
   const [selectedUserId, setSelectedUserId] = useState<string | null>(
@@ -70,11 +78,13 @@ export function RecordsManager({
         const next = await listRecordStudents({
           parishId: parishId || undefined,
           batchId: batchId || undefined,
+          page,
+          pageSize: PAGE_SIZE,
         });
-        setStudents(next);
-        setPage(1);
+        setStudents(next.items);
+        setTotal(next.total);
         setMobileSurface("directory");
-        setSelectedUserId(next[0]?.user_id ?? null);
+        setSelectedUserId(next.items[0]?.user_id ?? null);
       } catch (e) {
         error(
           e instanceof Error ? e.message : "Could not load students.",
@@ -83,7 +93,7 @@ export function RecordsManager({
       }
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [parishId, batchId]);
+  }, [parishId, batchId, page]);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -97,14 +107,7 @@ export function RecordsManager({
     );
   }, [students, query]);
 
-  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
-  const currentPage = Math.min(page, totalPages);
-  const pageStart = (currentPage - 1) * PAGE_SIZE;
-  const pageStudents = filtered.slice(pageStart, pageStart + PAGE_SIZE);
-
-  useEffect(() => {
-    if (page > totalPages) setPage(totalPages);
-  }, [page, totalPages]);
+  const pageStudents = filtered;
 
   useEffect(() => {
     if (!selectedUserId) {
@@ -190,6 +193,7 @@ export function RecordsManager({
               onChange={(e) => {
                 setParishId(e.target.value);
                 setBatchId("");
+                setPage(1);
               }}
               className="w-full border border-stone bg-white/70 px-2 py-1.5 text-sm outline-none focus:border-pine"
             >
@@ -206,7 +210,10 @@ export function RecordsManager({
           Batch
           <select
             value={batchId}
-            onChange={(e) => setBatchId(e.target.value)}
+            onChange={(e) => {
+              setBatchId(e.target.value);
+              setPage(1);
+            }}
             className="w-full border border-stone bg-white/70 px-2 py-1.5 text-sm outline-none focus:border-pine"
           >
             <option value="">All</option>
@@ -223,7 +230,6 @@ export function RecordsManager({
             value={query}
             onChange={(e) => {
               setQuery(e.target.value);
-              setPage(1);
               setMobileSurface("directory");
             }}
             className="w-full border border-stone bg-white/70 px-2 py-1.5 text-sm outline-none focus:border-pine"
@@ -237,7 +243,9 @@ export function RecordsManager({
           <div className="border-b border-stone px-3 py-2 text-xs text-ink/50">
             {filtered.length === 0
               ? "No students"
-              : `Showing ${pageStart + 1}–${Math.min(pageStart + PAGE_SIZE, filtered.length)} of ${filtered.length}`}
+              : query.trim()
+                ? `${filtered.length} match${filtered.length === 1 ? "" : "es"} on this page`
+                : `Page ${page} · ${total} student${total === 1 ? "" : "s"}`}
           </div>
           <ul className="max-h-[min(62vh,36rem)] divide-y divide-stone overflow-y-auto lg:max-h-[min(70vh,40rem)]">
             {pageStudents.map((s) => {
@@ -268,28 +276,15 @@ export function RecordsManager({
               );
             })}
           </ul>
-          {totalPages > 1 ? (
-            <div className="flex items-center justify-between border-t border-stone px-2 py-2">
-              <button
-                type="button"
-                disabled={currentPage <= 1}
-                onClick={() => setPage((p) => p - 1)}
-                className="border border-pine/25 px-2 py-1 text-xs text-pine disabled:opacity-40"
-              >
-                Prev
-              </button>
-              <span className="text-xs tabular-nums text-ink/55">
-                {currentPage}/{totalPages}
-              </span>
-              <button
-                type="button"
-                disabled={currentPage >= totalPages}
-                onClick={() => setPage((p) => p + 1)}
-                className="border border-pine/25 px-2 py-1 text-xs text-pine disabled:opacity-40"
-              >
-                Next
-              </button>
-            </div>
+          {!query.trim() ? (
+            <DeskPagination
+              page={page}
+              totalItems={total}
+              pageSize={PAGE_SIZE}
+              onPageChange={setPage}
+              className="px-2 pb-2"
+              itemLabel="students"
+            />
           ) : null}
         </aside>
 
@@ -582,6 +577,12 @@ function Scorecard({
             compact
           />
         </div>
+
+        <GraduationGatePanel
+          userId={bundle.record.user_id}
+          existingNote={bundle.record.graduation_gate_override_note}
+          pending={pending}
+        />
       </header>
 
       <div className="grid gap-0 lg:grid-cols-2">
@@ -825,6 +826,97 @@ function RecordsInsightGuide({ national }: { national: boolean }) {
           </li>
         ))}
       </ol>
+    </div>
+  );
+}
+
+function GraduationGatePanel({
+  userId,
+  existingNote,
+  pending,
+}: {
+  userId: string;
+  existingNote?: string | null;
+  pending: boolean;
+}) {
+  const router = useRouter();
+  const { success, error } = useToast();
+  const [note, setNote] = useState(existingNote ?? "");
+  const [saving, startSave] = useTransition();
+
+  useEffect(() => {
+    setNote(existingNote ?? "");
+  }, [existingNote, userId]);
+
+  return (
+    <div className="mt-4 border border-stone bg-white/40 px-3 py-3">
+      <p className="text-xs font-medium uppercase tracking-[0.12em] text-celadon">
+        Graduation gate
+      </p>
+      <p className="mt-1 text-sm text-ink/60">
+        Override attendance, exam, and fee checks so this student can upload a
+        graduation portrait.
+      </p>
+      {existingNote ? (
+        <p className="mt-2 text-sm text-ink/70">
+          Active override: {existingNote}
+        </p>
+      ) : null}
+      <label className="mt-3 block text-sm text-ink/70">
+        Override reason
+        <textarea
+          value={note}
+          onChange={(event) => setNote(event.target.value)}
+          rows={2}
+          maxLength={500}
+          className="mt-1 w-full border border-stone bg-mist/40 px-3 py-2 text-sm outline-none focus:border-pine"
+          placeholder="Why this student may graduate early"
+        />
+      </label>
+      <div className="mt-3 flex flex-wrap gap-2">
+        <button
+          type="button"
+          disabled={pending || saving}
+          onClick={() =>
+            startSave(async () => {
+              const result = await setGraduationGateOverride({
+                userId,
+                note,
+              });
+              if (result.ok) {
+                success(result.message, "Records");
+                router.refresh();
+              } else {
+                error(result.message, "Records");
+              }
+            })
+          }
+          className="border border-pine/30 px-3 py-1.5 text-sm font-medium text-pine disabled:opacity-60"
+        >
+          Save override
+        </button>
+        {existingNote ? (
+          <button
+            type="button"
+            disabled={pending || saving}
+            onClick={() =>
+              startSave(async () => {
+                const result = await clearGraduationGateOverride(userId);
+                if (result.ok) {
+                  success(result.message, "Records");
+                  setNote("");
+                  router.refresh();
+                } else {
+                  error(result.message, "Records");
+                }
+              })
+            }
+            className="border border-stone px-3 py-1.5 text-sm text-ink/60 disabled:opacity-60"
+          >
+            Clear override
+          </button>
+        ) : null}
+      </div>
     </div>
   );
 }

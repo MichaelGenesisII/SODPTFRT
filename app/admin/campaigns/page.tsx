@@ -8,6 +8,10 @@ import { listCampaignRecipients } from "@/app/admin/campaigns/actions";
 import { CampaignsManager } from "@/components/admin/campaigns-manager";
 import type { CampaignRecipient } from "@/lib/email/campaigns";
 import { getSessionAdmin, isNationalAdmin } from "@/lib/admin/auth";
+import {
+  publicActionMessage,
+  publicUnavailableMessage,
+} from "@/lib/safe-action-message";
 
 export const metadata: Metadata = {
   title: "Email campaigns | School of Disciples Portal",
@@ -23,8 +27,11 @@ export default async function AdminCampaignsPage() {
   try {
     recipients = await listCampaignRecipients({ activeOnly: true });
   } catch (error) {
-    loadError =
-      error instanceof Error ? error.message : "Could not load recipients.";
+    console.error("admin campaigns:", error);
+    loadError = publicActionMessage(
+      error,
+      publicUnavailableMessage("Campaigns"),
+    );
   }
 
   const [parishes, batches] = await Promise.all([

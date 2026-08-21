@@ -2,7 +2,10 @@ import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 import { StudentDashboard } from "@/components/student/student-dashboard";
 import { fetchStudentAnnouncements } from "@/lib/announcements-server";
-import type { FeePaymentStatus } from "@/lib/payments/fees";
+import {
+  hasTuitionInstallmentPaid,
+  type FeePaymentStatus,
+} from "@/lib/payments/fees";
 import {
   ensureStudentFeeRows,
   getFeePayment,
@@ -30,7 +33,8 @@ export default async function StudentPortalPage() {
   }
 
   let enrolment: Awaited<ReturnType<typeof getStudentEnrolment>> = null;
-  let applicationFeeStatus: FeePaymentStatus | null = null;
+  let tuitionFeeStatus: FeePaymentStatus | null = null;
+  let passportUnlocked = false;
   let loadError: string | null = null;
 
   try {
@@ -39,11 +43,12 @@ export default async function StudentPortalPage() {
     if (enrolment) {
       try {
         await ensureStudentFeeRows(supabase, profile.id);
-        const fee = await getFeePayment(supabase, profile.id, "application");
-        applicationFeeStatus = fee?.status ?? null;
+        const fee = await getFeePayment(supabase, profile.id, "tuition");
+        passportUnlocked = hasTuitionInstallmentPaid(fee);
+        tuitionFeeStatus = fee?.status ?? null;
       } catch (feeError) {
         console.error("[student/home/fees]", feeError);
-        applicationFeeStatus = enrolment.payment_status;
+        tuitionFeeStatus = enrolment.payment_status;
       }
     }
   } catch (error) {
@@ -65,7 +70,8 @@ export default async function StudentPortalPage() {
     <StudentDashboard
       profile={profile}
       enrolment={enrolment}
-      applicationFeeStatus={applicationFeeStatus}
+      tuitionFeeStatus={tuitionFeeStatus}
+      passportUnlocked={passportUnlocked}
       notices={notices}
       loadError={loadError}
     />

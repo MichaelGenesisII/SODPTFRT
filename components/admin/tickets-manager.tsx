@@ -32,6 +32,7 @@ import {
   isNationalAdmin,
   type AdminProfile,
 } from "@/lib/admin/profile";
+import { DeskPagination } from "@/lib/ui/desk-pagination";
 import {
   formatTicketDay,
   formatTicketRelative,
@@ -549,31 +550,14 @@ export function TicketsManager({
                 />
               ))}
         </ul>
-        {totalPages > 1 ? (
-          <div className="flex flex-wrap items-center justify-between gap-2 border-t border-stone px-3 py-2">
-            <button
-              type="button"
-              disabled={currentPage <= 1}
-              onClick={() => goToPage(currentPage - 1)}
-              className="border border-pine/25 px-2.5 py-1.5 text-xs font-medium text-pine transition-colors hover:border-pine disabled:cursor-not-allowed disabled:opacity-40"
-            >
-              Previous
-            </button>
-            <p className="text-xs text-ink/60">
-              Page{" "}
-              <span className="font-medium text-ink">{currentPage}</span> of{" "}
-              {totalPages}
-            </p>
-            <button
-              type="button"
-              disabled={currentPage >= totalPages}
-              onClick={() => goToPage(currentPage + 1)}
-              className="border border-pine/25 px-2.5 py-1.5 text-xs font-medium text-pine transition-colors hover:border-pine disabled:cursor-not-allowed disabled:opacity-40"
-            >
-              Next
-            </button>
-          </div>
-        ) : null}
+        <DeskPagination
+          page={currentPage}
+          totalItems={filtered.length}
+          pageSize={DESK_PAGE_SIZE}
+          onPageChange={goToPage}
+          className="px-3 pb-2"
+          itemLabel="tickets"
+        />
       </div>
     );
 

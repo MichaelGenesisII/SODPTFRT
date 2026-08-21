@@ -2,8 +2,10 @@ import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 import { getOwnStudentRecord } from "@/app/student/records/actions";
 import { StudentRecordsClient } from "@/components/student/student-records";
+import { computeGraduationEligibility } from "@/lib/graduation/eligibility";
 import { publicActionMessage } from "@/lib/safe-action-message";
 import { getSessionStudent } from "@/lib/student/auth";
+import { createServerSupabaseClient } from "@/lib/supabase/server";
 
 export const metadata: Metadata = {
   title: "Records | Student Portal",
@@ -15,8 +17,16 @@ export default async function StudentRecordsPage() {
 
   let bundle: Awaited<ReturnType<typeof getOwnStudentRecord>> = null;
   let loadError: string | null = null;
+  let graduationEligibility: Awaited<
+    ReturnType<typeof computeGraduationEligibility>
+  > | null = null;
   try {
     bundle = await getOwnStudentRecord();
+    const supabase = await createServerSupabaseClient();
+    graduationEligibility = await computeGraduationEligibility(
+      supabase,
+      session.id,
+    );
   } catch (error) {
     console.error("student records:", error);
     loadError = publicActionMessage(
@@ -50,7 +60,10 @@ export default async function StudentRecordsPage() {
           attendance is marked.
         </p>
       ) : (
-        <StudentRecordsClient bundle={bundle} />
+        <StudentRecordsClient
+          bundle={bundle}
+          graduationEligibility={graduationEligibility}
+        />
       )}
     </div>
   );

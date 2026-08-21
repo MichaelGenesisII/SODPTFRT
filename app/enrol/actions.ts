@@ -5,6 +5,7 @@ import {
   validateStep,
   type EnrolFormData,
 } from "@/lib/enrol/schema";
+import { isAddressLookupReady } from "@/lib/address/lookup";
 import {
   enrolmentConfirmationSubject,
   programmeLabelForMode,
@@ -52,9 +53,13 @@ function emptyToNullDate(value: string): string | null {
   return trimmed ? trimmed : null;
 }
 
-function validateAllSteps(data: EnrolFormData): string | null {
+async function validateAllSteps(data: EnrolFormData): Promise<string | null> {
+  const addressLookupReady = await isAddressLookupReady();
+  const payload = addressLookupReady
+    ? data
+    : { ...data, addressPlaceId: "" };
   for (const step of ENROL_STEPS) {
-    const errors = validateStep(step.id, data);
+    const errors = validateStep(step.id, payload, { addressLookupReady });
     const first = Object.values(errors)[0];
     if (first) return first;
   }
@@ -80,7 +85,8 @@ export async function submitEnrolment(
   data: EnrolFormData,
 ): Promise<SubmitEnrolmentResult> {
   try {
-    const validationError = validateAllSteps(data);
+    const addressLookupReady = await isAddressLookupReady();
+    const validationError = await validateAllSteps(data);
     if (validationError) {
       return enrolFail(validationError);
     }
@@ -295,6 +301,9 @@ export async function submitEnrolment(
         county: emptyToNull(data.county),
         postcode: data.postcode.trim(),
         country: data.country,
+        address_place_id: addressLookupReady
+          ? emptyToNull(data.addressPlaceId)
+          : null,
         mobile_number: data.mobileNumber.trim(),
         home_telephone: emptyToNull(data.homeTelephone),
         email,
@@ -324,20 +333,20 @@ export async function submitEnrolment(
 
       if (!enrolError) {
         try {
-          const { ensureStudentFeeRows } = await import(
+          const { requireStudentFeeRows } = await import(
             "@/lib/payments/service"
           );
-          await ensureStudentFeeRows(service, createdUserId!);
+          await requireStudentFeeRows(service, createdUserId!);
         } catch (feeError) {
-          console.error("[enrolment fees] first attempt", feeError);
-          try {
-            const { ensureStudentFeeRows } = await import(
-              "@/lib/payments/service"
-            );
-            await ensureStudentFeeRows(service, createdUserId!);
-          } catch (feeRetryError) {
-            console.error("[enrolment fees] retry failed", feeRetryError);
+          console.error("[enrolment fees]", feeError);
+          await service.from("enrolments").delete().eq("user_id", createdUserId);
+          await service.from("student_profiles").delete().eq("id", createdUserId);
+          if (!reclaimedAuth) {
+            await service.auth.admin.deleteUser(createdUserId);
           }
+          return enrolFail(
+            "Enrolment is temporarily unavailable. Please try again later.",
+          );
         }
 
         const fallbackSubject = enrolmentConfirmationSubject(

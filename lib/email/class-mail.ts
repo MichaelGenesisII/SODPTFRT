@@ -1,4 +1,5 @@
 import { portalBaseUrl } from "@/lib/email/backend";
+import { postEmailApi } from "@/lib/email/post-api";
 
 export type ClassInviteEmailPayload = {
   to: string;
@@ -15,52 +16,6 @@ export type ClassInviteEmailPayload = {
   portalSupportUrl: string;
   siteUrl: string;
 };
-
-async function postEmailApi(
-  path: string,
-  payload: object,
-): Promise<{ ok: boolean; message: string; subject?: string }> {
-  const baseUrl = process.env.EMAIL_API_URL?.replace(/\/$/, "");
-  const secret = process.env.EMAIL_API_SECRET;
-
-  if (!baseUrl || !secret) {
-    return { ok: false, message: "Email backend is not configured." };
-  }
-
-  try {
-    const response = await fetch(`${baseUrl}${path}`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-SOD-Email-Secret": secret,
-      },
-      body: JSON.stringify(payload),
-    });
-    const data = (await response.json().catch(() => null)) as {
-      ok?: boolean;
-      message?: string;
-      subject?: string;
-    } | null;
-
-    if (!response.ok || !data?.ok) {
-      return {
-        ok: false,
-        message: data?.message || `Email service returned ${response.status}.`,
-      };
-    }
-    return {
-      ok: true,
-      message: data.message || "Email sent.",
-      subject: data.subject,
-    };
-  } catch (error) {
-    return {
-      ok: false,
-      message:
-        error instanceof Error ? error.message : "Could not reach email service.",
-    };
-  }
-}
 
 export function sendClassInviteEmail(payload: ClassInviteEmailPayload) {
   return postEmailApi("/api/email/class-invite", payload);

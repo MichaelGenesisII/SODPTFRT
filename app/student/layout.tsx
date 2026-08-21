@@ -16,6 +16,9 @@ export default async function StudentLayout({
   if (!profile) {
     redirect("/login/student");
   }
+  if (profile.account_kind === "alumni") {
+    redirect("/alumni");
+  }
 
   const supportPulse = await getStudentSupportPulse();
 

@@ -9,6 +9,8 @@ import {
 } from "react";
 import { listOpenBatchesForEnrol } from "@/app/admin/parishes/actions";
 import { submitEnrolment } from "@/app/enrol/actions";
+import { AddressSearchField } from "@/components/enrol/address-lookup";
+import { isAddressLookupReady } from "@/lib/address/lookup";
 import {
   ATTENDANCE_MODES,
   COUNTRIES,
@@ -145,6 +147,9 @@ export function EnrolWizard({
   const [submitError, setSubmitError] = useState("");
   const [batches, setBatches] = useState<EnrolBatchOption[]>([]);
   const [batchesLoading, setBatchesLoading] = useState(false);
+  const [addressLookupReady, setAddressLookupReady] = useState<boolean | null>(
+    null,
+  );
 
   const step = ENROL_STEPS[stepIndex];
 
@@ -164,6 +169,16 @@ export function EnrolWizard({
     const batch = batches.find((b) => b.id === data.batchId);
     return batch ? formatBatchLabel(batch) : "";
   }, [batches, data.batchId]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void isAddressLookupReady().then((ready) => {
+      if (!cancelled) setAddressLookupReady(ready);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -189,7 +204,10 @@ export function EnrolWizard({
   }, [data.parishId]);
 
   async function goNext() {
-    const nextErrors = validateStep(step.id as EnrolStepId, data);
+    if (step.id === "address" && addressLookupReady === null) return;
+    const nextErrors = validateStep(step.id as EnrolStepId, data, {
+      addressLookupReady: addressLookupReady !== false,
+    });
     setErrors(nextErrors);
     if (Object.keys(nextErrors).length > 0) return;
 
@@ -358,83 +376,161 @@ export function EnrolWizard({
 
         {step.id === "address" ? (
           <>
-            <div>
-              <FieldLabel htmlFor="addressLine1" required>
-                First Line of Address
-              </FieldLabel>
-              <TextInput
-                id="addressLine1"
-                value={data.addressLine1}
-                onChange={(value) =>
-                  updateField(setData, "addressLine1", value)
-                }
-                autoComplete="address-line1"
-                error={errors.addressLine1}
-              />
-            </div>
-            <div>
-              <FieldLabel htmlFor="addressLine2">
-                Second Line of Address
-              </FieldLabel>
-              <TextInput
-                id="addressLine2"
-                value={data.addressLine2}
-                onChange={(value) =>
-                  updateField(setData, "addressLine2", value)
-                }
-                autoComplete="address-line2"
-              />
-            </div>
-            <div className="grid gap-7 sm:grid-cols-2">
-              <div>
-                <FieldLabel htmlFor="townCity" required>
-                  Town/City
-                </FieldLabel>
-                <TextInput
-                  id="townCity"
-                  value={data.townCity}
-                  onChange={(value) => updateField(setData, "townCity", value)}
-                  autoComplete="address-level2"
-                  error={errors.townCity}
+            {addressLookupReady === null ? (
+              <p className="text-sm text-ink/50">Loading address…</p>
+            ) : addressLookupReady ? (
+              <>
+                <AddressSearchField
+                  placeId={data.addressPlaceId}
+                  formatted={{
+                    line1: data.addressLine1,
+                    line2: data.addressLine2,
+                    townCity: data.townCity,
+                    county: data.county,
+                    postcode: data.postcode,
+                    country: data.country,
+                  }}
+                  onConfirm={(address) => {
+                    setData((current) => ({
+                      ...current,
+                      addressLine1: address.line1,
+                      addressLine2: address.line2,
+                      townCity: address.townCity,
+                      county: address.county,
+                      postcode: address.postcode,
+                      country: address.country,
+                      addressPlaceId: address.placeId,
+                    }));
+                  }}
+                  onClear={() => {
+                    setData((current) => ({
+                      ...current,
+                      addressLine1: "",
+                      addressLine2: "",
+                      townCity: "",
+                      county: "",
+                      postcode: "",
+                      country: "",
+                      addressPlaceId: "",
+                    }));
+                  }}
+                  error={errors.addressPlaceId}
                 />
+                {data.addressPlaceId ? (
+                  <div>
+                    <FieldLabel
+                      htmlFor="addressLine2"
+                      hint="Optional — flat, unit, or building name if needed."
+                    >
+                      Second line of address
+                    </FieldLabel>
+                    <TextInput
+                      id="addressLine2"
+                      value={data.addressLine2}
+                      onChange={(value) =>
+                        updateField(setData, "addressLine2", value)
+                      }
+                      autoComplete="address-line2"
+                    />
+                  </div>
+                ) : null}
+              </>
+            ) : (
+              <div className="space-y-7">
+                <p className="text-sm text-ink/60">
+                  Address search is temporarily unavailable. Enter your address
+                  below.
+                </p>
+                <div>
+                  <FieldLabel htmlFor="addressLine1" required>
+                    First line of address
+                  </FieldLabel>
+                  <TextInput
+                    id="addressLine1"
+                    value={data.addressLine1}
+                    onChange={(value) =>
+                      updateField(setData, "addressLine1", value)
+                    }
+                    autoComplete="address-line1"
+                    error={errors.addressLine1}
+                  />
+                </div>
+                <div>
+                  <FieldLabel
+                    htmlFor="addressLine2"
+                    hint="Optional — flat, unit, or building name."
+                  >
+                    Second line of address
+                  </FieldLabel>
+                  <TextInput
+                    id="addressLine2"
+                    value={data.addressLine2}
+                    onChange={(value) =>
+                      updateField(setData, "addressLine2", value)
+                    }
+                    autoComplete="address-line2"
+                  />
+                </div>
+                <div className="grid gap-7 sm:grid-cols-2">
+                  <div>
+                    <FieldLabel htmlFor="townCity" required>
+                      Town or city
+                    </FieldLabel>
+                    <TextInput
+                      id="townCity"
+                      value={data.townCity}
+                      onChange={(value) =>
+                        updateField(setData, "townCity", value)
+                      }
+                      autoComplete="address-level2"
+                      error={errors.townCity}
+                    />
+                  </div>
+                  <div>
+                    <FieldLabel htmlFor="county">County</FieldLabel>
+                    <TextInput
+                      id="county"
+                      value={data.county}
+                      onChange={(value) =>
+                        updateField(setData, "county", value)
+                      }
+                      autoComplete="address-level1"
+                    />
+                  </div>
+                </div>
+                <div className="grid gap-7 sm:grid-cols-2">
+                  <div>
+                    <FieldLabel htmlFor="postcode" required>
+                      Postcode
+                    </FieldLabel>
+                    <TextInput
+                      id="postcode"
+                      value={data.postcode}
+                      onChange={(value) =>
+                        updateField(setData, "postcode", value)
+                      }
+                      autoComplete="postal-code"
+                      error={errors.postcode}
+                    />
+                  </div>
+                  <div>
+                    <FieldLabel htmlFor="country" required>
+                      Country
+                    </FieldLabel>
+                    <SelectInput
+                      id="country"
+                      value={data.country}
+                      onChange={(value) =>
+                        updateField(setData, "country", value)
+                      }
+                      options={COUNTRIES}
+                      placeholder="Select country"
+                      error={errors.country}
+                    />
+                  </div>
+                </div>
               </div>
-              <div>
-                <FieldLabel htmlFor="county">County</FieldLabel>
-                <TextInput
-                  id="county"
-                  value={data.county}
-                  onChange={(value) => updateField(setData, "county", value)}
-                  autoComplete="address-level1"
-                />
-              </div>
-            </div>
-            <div className="grid gap-7 sm:grid-cols-2">
-              <div>
-                <FieldLabel htmlFor="postcode" required>
-                  Postcode
-                </FieldLabel>
-                <TextInput
-                  id="postcode"
-                  value={data.postcode}
-                  onChange={(value) => updateField(setData, "postcode", value)}
-                  autoComplete="postal-code"
-                  error={errors.postcode}
-                />
-              </div>
-              <div>
-                <FieldLabel htmlFor="country" required>
-                  Country of residence
-                </FieldLabel>
-                <SelectInput
-                  id="country"
-                  value={data.country}
-                  onChange={(value) => updateField(setData, "country", value)}
-                  options={COUNTRIES}
-                  placeholder="Select country"
-                  error={errors.country}
-                />
-              </div>
-            </div>
+            )}
             <div className="grid gap-7 sm:grid-cols-2">
               <div>
                 <FieldLabel htmlFor="mobileNumber" required>

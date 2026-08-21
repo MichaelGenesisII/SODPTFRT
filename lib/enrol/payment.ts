@@ -1,16 +1,16 @@
-import { APPLICATION_FEE } from "@/lib/payments/fees";
+import { TUITION_FEE } from "@/lib/payments/fees";
 import { contact } from "@/lib/site-nav";
 
-/** Programme tracks — application fee is shared across both. */
+/** Programme tracks — tuition fee is shared across both. */
 export const PROGRAMME_FEES = {
   standard: {
     label: "Standard Program",
-    amountGbp: APPLICATION_FEE.amountGbp,
+    amountGbp: TUITION_FEE.amountGbp,
     duration: "10 months",
   },
   ignite: {
     label: "SOD Ignite",
-    amountGbp: APPLICATION_FEE.amountGbp,
+    amountGbp: TUITION_FEE.amountGbp,
     duration: "Young adults 17–22",
   },
 } as const;

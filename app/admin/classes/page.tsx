@@ -9,6 +9,7 @@ import {
   listBatchesForAdmin,
   listParishesForAdmin,
 } from "@/app/admin/parishes/actions";
+import { listCohortsForAdmin } from "@/app/admin/cohorts/actions";
 import { ClassesManager } from "@/components/admin/classes-manager";
 import type { ZoomClass } from "@/lib/classes/types";
 import { getSessionAdmin, isNationalAdmin } from "@/lib/admin/auth";
@@ -41,11 +42,14 @@ export default async function AdminClassesPage() {
     loadError = publicActionMessage(error, publicUnavailableMessage("Classes"));
   }
 
-  const [parishes, batches] = await Promise.all([
+  const [parishes, batches, cohorts] = await Promise.all([
     listParishesForAdmin().catch(() => []),
     listBatchesForAdmin(
       isNationalAdmin(profile) ? null : profile.parish_id,
     ).catch(() => []),
+    isNationalAdmin(profile)
+      ? listCohortsForAdmin().catch(() => [])
+      : Promise.resolve([]),
   ]);
 
   return (
@@ -77,6 +81,7 @@ export default async function AdminClassesPage() {
           classes={classes}
           parishes={parishes}
           batches={batches}
+          cohorts={cohorts}
           zoomReady={zoomReady}
           meetingSdkReady={meetingSdkReady}
         />

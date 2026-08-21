@@ -7,6 +7,7 @@ import {
   type FormEvent,
   type ReactNode,
 } from "react";
+import { EmojiPickerButton } from "@/components/support/emoji-picker";
 import {
   formatTicketClock,
   formatTicketDayLabel,
@@ -44,7 +45,7 @@ export function SupportChatPane({
       className={`flex min-h-0 flex-col overflow-hidden border border-stone/80 bg-mist ${className}`}
     >
       <div
-        className={`support-chat-wallpaper relative min-h-0 flex-1 overflow-y-auto overscroll-contain ${heightClass}`}
+        className={`support-chat-wallpaper relative min-h-0 flex-1 overflow-y-auto overscroll-y-contain [-webkit-overflow-scrolling:touch] ${heightClass}`}
       >
         {children}
       </div>
@@ -75,16 +76,18 @@ export function SupportChatTranscript({
 
   if (messages.length === 0) {
     return (
-      <div className="flex h-full min-h-[16rem] flex-col items-center justify-center px-6 py-12 text-center">
+      <div className="flex h-full min-h-[10rem] flex-col items-center justify-center px-4 py-8 text-center sm:min-h-[16rem] sm:px-6 sm:py-12">
         <span
-          className="inline-flex h-12 w-12 items-center justify-center border border-pine/20 bg-mist/80 text-pine"
+          className="inline-flex h-10 w-10 items-center justify-center border border-pine/20 bg-mist/80 text-pine sm:h-12 sm:w-12"
           aria-hidden
         >
           <ChatGlyph />
         </span>
-        <p className="mt-4 font-display text-xl text-pine">{emptyLabel}</p>
+        <p className="mt-3 font-display text-base text-pine sm:mt-4 sm:text-xl">
+          {emptyLabel}
+        </p>
         {emptyHint ? (
-          <p className="mt-2 max-w-xs text-sm leading-relaxed text-ink/55">
+          <p className="mt-1.5 max-w-[16rem] text-[0.8rem] leading-relaxed text-ink/55 sm:mt-2 sm:max-w-xs sm:text-sm">
             {emptyHint}
           </p>
         ) : null}
@@ -95,17 +98,17 @@ export function SupportChatTranscript({
   let lastDay = "";
 
   return (
-    <div className="flex flex-col gap-2 px-3 py-4 sm:px-5 sm:py-5">
+    <div className="flex flex-col gap-1.5 px-2.5 py-3 sm:gap-2 sm:px-5 sm:py-5">
       {messages.map((message, index) => {
         const day = ticketDayKey(message.createdAt);
         const showDay = day !== lastDay;
         lastDay = day;
 
         return (
-          <div key={message.id} className="space-y-2">
+          <div key={message.id} className="space-y-1.5 sm:space-y-2">
             {showDay ? (
-              <div className="flex justify-center py-1.5">
-                <span className="border border-stone/70 bg-mist/90 px-3 py-1 text-[0.65rem] font-medium uppercase tracking-[0.14em] text-ink/55 shadow-sm">
+              <div className="flex justify-center py-1 sm:py-1.5">
+                <span className="border border-stone/70 bg-mist/90 px-2.5 py-0.5 text-[0.6rem] font-medium uppercase tracking-[0.14em] text-ink/55 shadow-sm sm:px-3 sm:py-1 sm:text-[0.65rem]">
                   {formatTicketDayLabel(message.createdAt)}
                 </span>
               </div>
@@ -153,23 +156,23 @@ function ChatBubble({
       style={style}
     >
       <div
-        className={`group relative max-w-[min(100%,22rem)] sm:max-w-[min(100%,28rem)] ${
+        className={`group relative max-w-[min(100%,20rem)] sm:max-w-[min(100%,28rem)] ${
           mine ? "origin-bottom-right" : "origin-bottom-left"
         }`}
       >
         {!mine ? (
           <div className="mb-1 flex items-center gap-2 px-1">
             <span
-              className="inline-flex h-6 w-6 items-center justify-center bg-pine text-[0.6rem] font-semibold tracking-wide text-mist"
+              className="inline-flex h-5 w-5 items-center justify-center bg-pine text-[0.55rem] font-semibold tracking-wide text-mist sm:h-6 sm:w-6 sm:text-[0.6rem]"
               aria-hidden
             >
               {initials(message.author)}
             </span>
-            <span className="text-[0.65rem] font-medium text-celadon">
+            <span className="text-[0.6rem] font-medium text-celadon sm:text-[0.65rem]">
               {message.author}
             </span>
             {message.badge ? (
-              <span className="text-[0.6rem] uppercase tracking-[0.12em] text-ink/40">
+              <span className="text-[0.55rem] uppercase tracking-[0.12em] text-ink/40 sm:text-[0.6rem]">
                 {message.badge}
               </span>
             ) : null}
@@ -177,7 +180,7 @@ function ChatBubble({
         ) : null}
 
         <div
-          className={`relative px-3.5 py-2.5 ${shell} ${
+          className={`relative px-3 py-2 sm:px-3.5 sm:py-2.5 ${shell} ${
             mine ? "rounded-[1.1rem_1.1rem_0.35rem_1.1rem]" : "rounded-[1.1rem_1.1rem_1.1rem_0.35rem]"
           }`}
         >
@@ -208,7 +211,7 @@ function ChatBubble({
             </p>
           ) : null}
 
-          <p className="whitespace-pre-wrap text-[0.925rem] leading-relaxed">
+          <p className="whitespace-pre-wrap text-[0.9rem] leading-relaxed sm:text-[0.925rem]">
             {message.body}
           </p>
 
@@ -242,6 +245,8 @@ export function SupportChatComposer({
   placeholder,
   submitLabel = "Send",
   settledHint,
+  enableEmojiPicker = false,
+  enterToSend = false,
 }: {
   value: string;
   onChange: (value: string) => void;
@@ -252,47 +257,112 @@ export function SupportChatComposer({
   placeholder: string;
   submitLabel?: string;
   settledHint?: string;
+  enableEmojiPicker?: boolean;
+  /** When true, Enter sends (Shift+Enter still inserts a new line). */
+  enterToSend?: boolean;
 }) {
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const selectionRef = useRef<{ start: number; end: number } | null>(null);
+
   if (disabled && settledHint) {
     return (
       <div className="px-4 py-4 text-center text-sm text-ink/55">{settledHint}</div>
     );
   }
 
+  function rememberSelection() {
+    const el = textareaRef.current;
+    if (!el) return;
+    selectionRef.current = {
+      start: el.selectionStart,
+      end: el.selectionEnd,
+    };
+  }
+
+  function insertEmoji(emoji: string) {
+    const el = textareaRef.current;
+    const selection = selectionRef.current;
+    const start = selection?.start ?? value.length;
+    const end = selection?.end ?? value.length;
+    const next = `${value.slice(0, start)}${emoji}${value.slice(end)}`;
+    if (next.length > maxLength) return;
+    onChange(next);
+    const caret = start + emoji.length;
+    selectionRef.current = { start: caret, end: caret };
+    window.requestAnimationFrame(() => {
+      if (!el) return;
+      el.focus();
+      el.setSelectionRange(caret, caret);
+      el.style.height = "auto";
+      el.style.height = `${Math.min(el.scrollHeight, 120)}px`;
+    });
+  }
+
   return (
-    <form onSubmit={onSubmit} className="px-3 py-3 sm:px-4">
-      <div className="flex items-end gap-2">
+    <form
+      onSubmit={onSubmit}
+      className="px-2.5 pb-[max(0.5rem,env(safe-area-inset-bottom))] pt-2 sm:px-4 sm:py-3"
+    >
+      <div className="flex items-end gap-1.5 sm:gap-2">
+        {enableEmojiPicker ? (
+          <EmojiPickerButton
+            disabled={pending || disabled}
+            onPick={insertEmoji}
+          />
+        ) : null}
         <label className="relative min-w-0 flex-1">
           <span className="sr-only">Message</span>
           <textarea
+            ref={textareaRef}
             value={value}
             onChange={(event) => onChange(event.target.value)}
+            onSelect={rememberSelection}
+            onKeyUp={rememberSelection}
+            onClick={rememberSelection}
             rows={1}
             maxLength={maxLength}
             placeholder={placeholder}
             disabled={pending || disabled}
+            enterKeyHint={enterToSend ? "send" : undefined}
+            onKeyDown={(event) => {
+              if (
+                enterToSend &&
+                event.key === "Enter" &&
+                !event.shiftKey &&
+                !event.nativeEvent.isComposing
+              ) {
+                event.preventDefault();
+                if (!pending && !disabled && value.trim()) {
+                  event.currentTarget.form?.requestSubmit();
+                }
+              }
+            }}
             onInput={(event) => {
               const el = event.currentTarget;
               el.style.height = "auto";
-              el.style.height = `${Math.min(el.scrollHeight, 140)}px`;
+              el.style.height = `${Math.min(el.scrollHeight, 120)}px`;
             }}
-            className="max-h-[140px] min-h-[2.75rem] w-full resize-none rounded-[1.25rem] border border-stone bg-white/85 px-4 py-3 text-sm leading-relaxed text-ink outline-none transition-[border-color,box-shadow] placeholder:text-ink/35 focus:border-pine/50 focus:shadow-[0_0_0_3px_rgb(95_143_122/0.18)] disabled:opacity-60"
+            className="max-h-[120px] min-h-[2.5rem] w-full resize-none rounded-[1.15rem] border border-stone bg-white/85 px-3.5 py-2.5 text-[16px] leading-relaxed text-ink outline-none transition-[border-color,box-shadow] placeholder:text-ink/35 focus:border-pine/50 focus:shadow-[0_0_0_3px_rgb(95_143_122/0.18)] disabled:opacity-60 sm:min-h-[2.75rem] sm:max-h-[140px] sm:rounded-[1.25rem] sm:px-4 sm:py-3 sm:text-sm"
           />
         </label>
         <button
           type="submit"
           disabled={pending || disabled || !value.trim()}
           aria-label={submitLabel}
-          className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-[1.1rem] bg-pine text-mist transition-colors hover:bg-celadon disabled:opacity-40"
+          className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-[1rem] bg-pine text-mist transition-colors hover:bg-celadon disabled:opacity-40 sm:h-11 sm:w-11 sm:rounded-[1.1rem]"
         >
           {pending ? <Spinner /> : <SendIcon />}
         </button>
       </div>
-      <div className="mt-1.5 flex items-center justify-between px-1">
-        <p className="text-[0.65rem] text-ink/40">
+      <div className="mt-1 flex items-center justify-between px-1 sm:mt-1.5">
+        <p className="hidden text-[0.65rem] text-ink/40 sm:block">
           Press send when you are ready
         </p>
-        <p className="text-[0.65rem] tabular-nums text-ink/40">
+        <p
+          className={`ml-auto text-[0.6rem] tabular-nums sm:text-[0.65rem] ${
+            value.length > maxLength * 0.9 ? "text-ink/70" : "text-ink/40"
+          }`}
+        >
           {value.length}/{maxLength}
         </p>
       </div>

@@ -8,9 +8,18 @@ export type NavItem = {
 };
 
 /** Most items point back to the public School of Disciples site. */
+export const loginNav: NavItem = {
+  label: "Login",
+  href: "/login/student",
+  children: [
+    { label: "Student", href: "/login/student" },
+    { label: "Alumni", href: "/login/alumni" },
+    { label: "Admin", href: "/login/admin" },
+  ],
+};
+
 export const primaryNav: NavItem[] = [
   { label: "Home", href: `${SOD_SITE}/`, external: true },
-  { label: "About", href: `${SOD_SITE}/about/`, external: true },
   {
     label: "Testimonials",
     href: `${SOD_SITE}/testimonials/`,

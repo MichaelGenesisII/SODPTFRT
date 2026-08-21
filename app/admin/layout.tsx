@@ -3,6 +3,7 @@ import { AdminShell } from "@/components/admin/admin-shell";
 import { getPaymentsPulse } from "@/app/admin/payments/pulse";
 import { getDeskPulse } from "@/app/admin/tickets/pulse";
 import { getSessionAdmin } from "@/lib/admin/auth";
+import { parishAdminEnabled } from "@/lib/admin/features";
 import { adminDeskScopeLabel } from "@/lib/admin/profile";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 
@@ -43,6 +44,7 @@ export default async function AdminLayout({
       deskLabel={deskLabel}
       deskPulse={deskPulse}
       paymentsPulse={paymentsPulse}
+      parishAdminEnabled={parishAdminEnabled()}
     >
       {children}
     </AdminShell>

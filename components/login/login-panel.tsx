@@ -5,7 +5,6 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useState, type FormEvent } from "react";
 import { requestAdminPasswordReset } from "@/app/login/admin/actions";
 import { requestEnrolmentPasswordReset } from "@/app/enrol/actions";
-import { AdminEntryLink } from "@/components/admin-entry-link";
 import { useToast } from "@/components/ui/toast";
 import {
   publicActionMessage,
@@ -13,7 +12,13 @@ import {
 } from "@/lib/safe-action-message";
 import { createBrowserSupabaseClient } from "@/lib/supabase/client";
 
-export type LoginRole = "student" | "admin";
+export type LoginRole = "student" | "admin" | "alumni";
+
+const OTHER_LOGINS: { role: LoginRole; href: string; label: string }[] = [
+  { role: "student", href: "/login/student", label: "Student sign-in" },
+  { role: "alumni", href: "/login/alumni", label: "Alumni sign-in" },
+  { role: "admin", href: "/login/admin", label: "Admin sign-in" },
+];
 
 type LoginPanelProps = {
   role: LoginRole;
@@ -38,6 +43,24 @@ const copy = {
       "This account is not registered as a student.",
     notAuthorised:
       "This account is not registered as a student. Enrol first, or use the temporary password from your confirmation email.",
+  },
+  alumni: {
+    eyebrow: "Alumni portal",
+    title: "Welcome back",
+    lead: "Sign in with the email from your legacy record. Use forgot password if this is your first visit.",
+    submit: "Sign in as alumni",
+    asideTitle: "Continue your journey",
+    asideBody:
+      "Complete tuition, review your scorecard, and re-join a cohort when you are ready.",
+    hints: ["Tuition balance", "Historical records", "Re-entry"],
+    passwordPlaceholder: "Your password",
+    deskLabel: "Alumni portal",
+    forgotTitle: "Forgot password",
+    resetFailTitle: "Could not send reset",
+    resetOkTitle: "Check your inbox",
+    forbidden: "This account is not registered as alumni.",
+    notAuthorised:
+      "This account is not registered as alumni. Contact the desk if you believe this is an error.",
   },
   admin: {
     eyebrow: "Admin",
@@ -78,6 +101,7 @@ function signInFailureMessage(raw?: string): string {
 export function LoginPanel({ role }: LoginPanelProps) {
   const content = copy[role];
   const isAdmin = role === "admin";
+  const isAlumni = role === "alumni";
   const router = useRouter();
   const searchParams = useSearchParams();
   const { success: toastSuccess, error: toastError } = useToast();
@@ -159,12 +183,12 @@ export function LoginPanel({ role }: LoginPanelProps) {
 
       const { data: profile, error: profileError } = await supabase
         .from("student_profiles")
-        .select("id, is_active")
+        .select("id, is_active, account_kind")
         .eq("id", data.user.id)
         .maybeSingle();
 
       if (profileError) {
-        console.error("[login/student] profile load failed", profileError);
+        console.error(`[login/${role}] profile load failed`, profileError);
         await supabase.auth.signOut();
         setStatus("idle");
         fail(publicUnavailableMessage(content.deskLabel));
@@ -178,15 +202,30 @@ export function LoginPanel({ role }: LoginPanelProps) {
         return;
       }
 
+      const accountKind = profile.account_kind as string | null;
+      if (isAlumni && accountKind !== "alumni") {
+        await supabase.auth.signOut();
+        setStatus("idle");
+        fail(content.notAuthorised, "Access denied");
+        return;
+      }
+      if (!isAlumni && accountKind === "alumni") {
+        toastSuccess("You are signed in.", "Welcome");
+        router.replace("/alumni");
+        router.refresh();
+        return;
+      }
+
       toastSuccess("You are signed in.", "Welcome");
       const nextRaw = searchParams.get("next");
+      const home = isAlumni ? "/alumni" : "/student";
       const nextPath =
         nextRaw &&
-        nextRaw.startsWith("/student") &&
+        nextRaw.startsWith(home) &&
         !nextRaw.startsWith("//") &&
         !nextRaw.includes("://")
           ? nextRaw
-          : "/student";
+          : home;
       router.replace(nextPath);
       router.refresh();
     } catch (err) {
@@ -375,25 +414,21 @@ export function LoginPanel({ role }: LoginPanelProps) {
                   Enrol now
                 </Link>
               </p>
-            ) : (
-              <p className="text-ink/55">Authorised staff only.</p>
-            )}
-            <p>
-              {isAdmin ? (
-                <Link
-                  href="/login/student"
-                  className="font-medium text-pine underline decoration-pine/30 underline-offset-4 hover:text-celadon"
-                >
-                  Student sign-in
-                </Link>
-              ) : (
-                <AdminEntryLink
-                  className="font-medium text-pine underline decoration-pine/30 underline-offset-4 hover:text-celadon"
-                  guestLabel="Admin sign-in"
-                  memberLabel="Open admin desk"
-                />
+            ) : null}
+            <p className="text-ink/55">Sign in elsewhere</p>
+            <div className="flex w-full items-center justify-between gap-4">
+              {OTHER_LOGINS.filter((entry) => entry.role !== role).map(
+                (entry) => (
+                  <Link
+                    key={entry.role}
+                    href={entry.href}
+                    className="font-medium text-pine underline decoration-pine/30 underline-offset-4 hover:text-celadon"
+                  >
+                    {entry.label}
+                  </Link>
+                ),
               )}
-            </p>
+            </div>
           </div>
         </div>
       </div>

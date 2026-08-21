@@ -100,7 +100,13 @@ export function ClassWorkspace({
         </button>
         <p className="text-[0.65rem] font-medium uppercase tracking-[0.14em] text-celadon">
           {item.status} ·{" "}
-          {audienceLabel(item.audience, item.parish_name, item.batch_name)}
+          {audienceLabel(
+            item.audience,
+            item.parish_name,
+            item.batch_name,
+            item.cohort_name,
+            item.year,
+          )}
         </p>
         <h2 className="mt-1 font-display text-[clamp(1.3rem,4vw,2rem)] text-pine">
           {item.title}

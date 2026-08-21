@@ -17,6 +17,11 @@ import {
 } from "@/lib/announcements";
 import { publicActionMessage } from "@/lib/safe-action-message";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
+import {
+  linkAnnouncementAttachments,
+  parseAttachmentIds,
+  replaceAnnouncementAttachments,
+} from "@/app/admin/desk-attachments/actions";
 
 export type AnnouncementActionResult = {
   ok: boolean;
@@ -281,23 +286,30 @@ export async function createAnnouncement(
 
     const supabase = await createServerSupabaseClient();
     const now = new Date().toISOString();
-    const { error } = await supabase.from("announcements").insert({
-      title: fields.title,
-      body: fields.body,
-      href: fields.href,
-      href_label: fields.hrefLabel,
-      audience: scoped.audience,
-      parish_id: scoped.parishId,
-      batch_id: scoped.batchId,
-      is_published: fields.publish,
-      published_at: fields.publish ? now : null,
-      created_by: actor.id,
-      updated_at: now,
-    });
+    const attachmentIds = parseAttachmentIds(formData);
+    const { data: created, error } = await supabase
+      .from("announcements")
+      .insert({
+        title: fields.title,
+        body: fields.body,
+        href: fields.href,
+        href_label: fields.hrefLabel,
+        audience: scoped.audience,
+        parish_id: scoped.parishId,
+        batch_id: scoped.batchId,
+        is_published: fields.publish,
+        published_at: fields.publish ? now : null,
+        created_by: actor.id,
+        updated_at: now,
+      })
+      .select("id")
+      .single();
 
-    if (error) {
+    if (error || !created) {
       return failMessage(error, "Could not save this notice. Please try again.");
     }
+
+    await linkAnnouncementAttachments(created.id as string, attachmentIds);
 
     revalidateAnnouncementPaths();
     return {
@@ -394,6 +406,8 @@ export async function updateAnnouncement(
     if (error) {
       return failMessage(error, "Could not update this notice. Please try again.");
     }
+
+    await replaceAnnouncementAttachments(id, parseAttachmentIds(formData));
 
     revalidateAnnouncementPaths();
     return { ok: true, message: "Notice updated." };

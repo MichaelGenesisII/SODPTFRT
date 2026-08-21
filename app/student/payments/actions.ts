@@ -6,9 +6,12 @@ import { portalBaseUrl } from "@/lib/email/backend";
 import { formatGbp } from "@/lib/enrol/payment";
 import {
   feeDefinition,
+  feeRemaining,
+  isFeeFullyPaid,
   isFeeType,
   MAX_PROOF_BYTES,
   PROOF_MIME_TYPES,
+  validateInstallmentAmount,
   type FeeType,
 } from "@/lib/payments/fees";
 import {
@@ -21,6 +24,7 @@ import { publicActionMessage } from "@/lib/safe-action-message";
 import { SOD_SITE } from "@/lib/site-nav";
 import { getSessionStudent } from "@/lib/student/auth";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
+import { createServiceSupabaseClient } from "@/lib/supabase/service";
 
 export type PaymentActionResult = {
   ok: boolean;
@@ -50,8 +54,17 @@ async function studentReference(userId: string) {
   return data?.reference?.trim() || "SOD";
 }
 
+function parseAmount(raw: FormDataEntryValue | null): number | null {
+  const text = String(raw ?? "").trim().replace(/[£,]/g, "");
+  if (!text) return null;
+  const value = Number(text);
+  if (!Number.isFinite(value)) return null;
+  return Math.round(value * 100) / 100;
+}
+
 export async function startStripeCheckout(
   feeTypeRaw: string,
+  amountRaw?: string,
 ): Promise<PaymentActionResult> {
   try {
     if (!stripeConfigured()) {
@@ -70,36 +83,87 @@ export async function startStripeCheckout(
     const rows = await ensureStudentFeeRows(supabase, profile.id);
     const row = rows.find((item) => item.fee_type === feeType);
     if (!row) return { ok: false, message: "Fee record missing." };
-    if (row.status === "paid") {
-      return { ok: false, message: "This fee is already paid." };
+    if (isFeeFullyPaid(row)) {
+      return { ok: false, message: "This fee is already paid in full." };
     }
+
+    const remaining = feeRemaining(row);
+    const amount = amountRaw ? parseAmount(amountRaw) : remaining;
+    if (amount === null) {
+      return { ok: false, message: "Enter a valid amount." };
+    }
+    const check = validateInstallmentAmount(amount, remaining);
+    if (!check.ok) return { ok: false, message: check.message };
 
     const reference = await studentReference(profile.id);
-    const session = await createFeeCheckoutSession({
-      userId: profile.id,
-      email: profile.email,
-      firstName: profile.first_name,
-      feeType,
-      reference,
-      paymentRowId: row.id,
-    });
+    const service = createServiceSupabaseClient();
+    const now = new Date().toISOString();
 
-    const { error: updateError } = await supabase
-      .from("student_fee_payments")
-      .update({
-        stripe_session_id: session.sessionId,
+    // Drop abandoned unpaid Stripe attempts for this fee before opening a new session.
+    await service
+      .from("fee_transactions")
+      .delete()
+      .eq("user_id", profile.id)
+      .eq("fee_type", feeType)
+      .eq("method", "stripe")
+      .eq("status", "unpaid");
+
+    const { data: tx, error: txError } = await service
+      .from("fee_transactions")
+      .insert({
+        fee_account_id: row.id,
+        user_id: profile.id,
+        fee_type: feeType,
+        amount_gbp: amount,
+        status: "unpaid",
         method: "stripe",
-        updated_at: new Date().toISOString(),
+        created_at: now,
+        updated_at: now,
       })
-      .eq("id", row.id)
-      .eq("user_id", profile.id);
+      .select("id")
+      .single();
 
-    if (updateError) {
-      console.error("[student/payments/checkout]", updateError);
-      return fail(updateError, "Could not start checkout.");
+    if (txError) {
+      console.error("[student/payments/checkout/tx]", txError);
+      return fail(txError, "Could not start checkout.");
     }
 
-    return { ok: true, message: "Redirecting to card checkout.", url: session.url };
+    const txId = tx.id as string;
+
+    try {
+      const session = await createFeeCheckoutSession({
+        userId: profile.id,
+        email: profile.email,
+        firstName: profile.first_name,
+        feeType,
+        reference,
+        paymentRowId: row.id,
+        transactionId: txId,
+        amountGbp: amount,
+      });
+
+      await service
+        .from("fee_transactions")
+        .update({
+          stripe_session_id: session.sessionId,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", txId);
+
+      return {
+        ok: true,
+        message: "Redirecting to card checkout.",
+        url: session.url,
+      };
+    } catch (checkoutError) {
+      await service
+        .from("fee_transactions")
+        .delete()
+        .eq("id", txId)
+        .eq("status", "unpaid");
+      console.error("[student/payments/checkout]", checkoutError);
+      return fail(checkoutError, "Could not start checkout.");
+    }
   } catch (error) {
     console.error("[student/payments/checkout]", error);
     return fail(error, "Could not start checkout.");
@@ -113,6 +177,7 @@ export async function submitBankProof(
     const feeTypeRaw = String(formData.get("feeType") ?? "");
     const note = String(formData.get("note") ?? "").trim();
     const file = formData.get("proof");
+    const amount = parseAmount(formData.get("amount"));
 
     if (!isFeeType(feeTypeRaw)) {
       return { ok: false, message: "Unknown fee." };
@@ -141,9 +206,16 @@ export async function submitBankProof(
     await ensureStudentFeeRows(supabase, profile.id);
     const current = await getFeePayment(supabase, profile.id, feeType);
     if (!current) return { ok: false, message: "Fee record missing." };
-    if (current.status === "paid") {
-      return { ok: false, message: "This fee is already paid." };
+    if (isFeeFullyPaid(current)) {
+      return { ok: false, message: "This fee is already paid in full." };
     }
+
+    const remaining = feeRemaining(current);
+    if (amount === null) {
+      return { ok: false, message: "Enter the amount you transferred." };
+    }
+    const check = validateInstallmentAmount(amount, remaining);
+    if (!check.ok) return { ok: false, message: check.message };
 
     const ext =
       file.type === "image/png"
@@ -165,9 +237,10 @@ export async function submitBankProof(
       return fail(uploadError, "Could not upload proof.");
     }
 
-    const updated = await markFeePendingReview({
+    const { transaction } = await markFeePendingReview({
       userId: profile.id,
       feeType,
+      amountGbp: amount,
       proofPath: path,
       proofMime: file.type,
       proofNote: note || null,
@@ -179,7 +252,7 @@ export async function submitBankProof(
       to: profile.email,
       firstName: profile.first_name,
       feeLabel: fee.label,
-      amountLabel: formatGbp(Number(updated.amount_gbp)),
+      amountLabel: formatGbp(Number(transaction.amount_gbp)),
       reference,
       methodLabel: "Bank transfer",
       portalPaymentsUrl: `${portalBaseUrl()}/student/payments`,
@@ -194,7 +267,7 @@ export async function submitBankProof(
     revalidatePath("/admin/payments");
     return {
       ok: true,
-      message: "Proof uploaded. An admin will review it shortly.",
+      message: `Proof uploaded for ${formatGbp(Number(transaction.amount_gbp))}. An admin will review it shortly.`,
     };
   } catch (error) {
     console.error("[student/payments/proof]", error);

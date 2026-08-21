@@ -1,7 +1,8 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { getFeePayment } from "@/lib/payments/service";
+import { canUploadPassport, getFeePayment } from "@/lib/payments/service";
+import { computeGraduationEligibility } from "@/lib/graduation/eligibility";
 import { publicActionMessage } from "@/lib/safe-action-message";
 import {
   MAX_STUDENT_PHOTO_BYTES,
@@ -15,7 +16,11 @@ import {
 import { getSessionStudent, getStudentEnrolment } from "@/lib/student/auth";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { createServiceSupabaseClient } from "@/lib/supabase/service";
-import { formatBatchLabel } from "@/lib/parishes";
+import type { GalleryScope } from "@/lib/gallery/constants";
+import {
+  fetchGalleryPortraitPage,
+  mapGalleryPhotos,
+} from "@/lib/gallery/list-page";
 
 export type PhotoActionResult = {
   ok: boolean;
@@ -27,6 +32,7 @@ export type GalleryPhoto = {
   displayName: string;
   parishName: string | null;
   batchLabel: string | null;
+  cohortLabel?: string | null;
   imageUrl: string;
   isSelf?: boolean;
   moderationStatus?: string | null;
@@ -89,11 +95,12 @@ export async function uploadPassportPhoto(
       };
     }
 
-    const fee = await getFeePayment(supabase, profile.id, "application");
-    if (!fee || fee.status !== "paid") {
+    const passportAllowed = await canUploadPassport(supabase, profile.id);
+    if (!passportAllowed) {
       return {
         ok: false,
-        message: "Upload your passport photo after the application fee is paid.",
+        message:
+          "Upload your passport photo after your first tuition instalment is confirmed.",
       };
     }
 
@@ -160,12 +167,15 @@ export async function uploadGraduationSelfie(
     }
 
     const supabase = await createServerSupabaseClient();
-    const fee = await getFeePayment(supabase, profile.id, "graduation");
-    if (!fee || fee.status !== "paid") {
+    const eligibility = await computeGraduationEligibility(
+      supabase,
+      profile.id,
+    );
+    if (!eligibility.eligible) {
       return {
         ok: false,
         message:
-          "Upload your graduation selfie after the graduation fee is paid.",
+          "Complete your graduation checklist before uploading a portrait.",
       };
     }
 
@@ -276,8 +286,18 @@ export async function deleteGraduationSelfie(): Promise<PhotoActionResult> {
 }
 
 export async function listGalleryPhotos(
-  scope: "batch" | "parish",
-): Promise<{ ok: true; photos: GalleryPhoto[] } | { ok: false; message: string }> {
+  scope: GalleryScope,
+  page = 1,
+): Promise<
+  | {
+      ok: true;
+      photos: GalleryPhoto[];
+      total: number;
+      page: number;
+      pageSize: number;
+    }
+  | { ok: false; message: string }
+> {
   try {
     const profile = await requireActiveStudent();
     const enrolment = await getStudentEnrolment(profile.id);
@@ -292,152 +312,37 @@ export async function listGalleryPhotos(
       return {
         ok: false,
         message:
-          "Your batch is not set yet. Parish gallery is still available.",
+          "Your batch is not set yet. Try cohort or parish gallery.",
       };
     }
-
-    const service = createServiceSupabaseClient();
-    let enrolQuery = service
-      .from("enrolments")
-      .select(
-        "user_id, first_name, last_name, parish_id, batch_id, created_at, parishes(name), batches(name, year)",
-      )
-      .eq("parish_id", enrolment.parish_id)
-      .order("created_at", { ascending: false });
-
-    if (scope === "batch" && enrolment.batch_id) {
-      enrolQuery = enrolQuery.eq("batch_id", enrolment.batch_id);
-    }
-
-    const { data: enrolRows, error: enrolError } = await enrolQuery.limit(400);
-    if (enrolError) {
-      console.error("[student/gallery/enrol]", enrolError);
+    if (scope === "cohort" && !enrolment.cohort_id) {
       return {
         ok: false,
-        message: publicActionMessage(
-          enrolError,
-          "Gallery is temporarily unavailable. Please try again later.",
-        ),
+        message:
+          "Your cohort is not set yet. Parish gallery is still available.",
       };
     }
 
-    const latestByUser = new Map<
-      string,
-      {
-        user_id: string;
-        first_name: string;
-        last_name: string;
-        parish_name: string | null;
-        batch_label: string | null;
-      }
-    >();
+    const result = await fetchGalleryPortraitPage({
+      scope,
+      page,
+      viewerEnrolment: {
+        parish_id: enrolment.parish_id,
+        batch_id: enrolment.batch_id ?? null,
+        cohort_id: enrolment.cohort_id ?? null,
+      },
+      moderationFilter: "visible",
+    });
 
-    function one<T>(value: T | T[] | null | undefined): T | null {
-      if (!value) return null;
-      return Array.isArray(value) ? (value[0] ?? null) : value;
-    }
+    const photos = await mapGalleryPhotos(result.items, profile.id);
 
-    for (const row of enrolRows ?? []) {
-      const userId = row.user_id as string;
-      if (latestByUser.has(userId)) continue;
-      const parish = one(
-        row.parishes as { name: string } | { name: string }[] | null,
-      );
-      const batch = one(
-        row.batches as
-          | { name: string; year: number }
-          | { name: string; year: number }[]
-          | null,
-      );
-      latestByUser.set(userId, {
-        user_id: userId,
-        first_name: (row.first_name as string) || "",
-        last_name: (row.last_name as string) || "",
-        parish_name: parish?.name ?? null,
-        batch_label: batch
-          ? formatBatchLabel({ name: batch.name, year: batch.year })
-          : null,
-      });
-    }
-
-    const userIds = Array.from(latestByUser.keys());
-    if (userIds.length === 0) {
-      return { ok: true, photos: [] };
-    }
-
-    const { data: profiles, error: profileError } = await service
-      .from("student_profiles")
-      .select(
-        "id, graduation_selfie_path, is_active, selfie_moderation_status",
-      )
-      .in("id", userIds)
-      .eq("is_active", true)
-      .not("graduation_selfie_path", "is", null);
-
-    if (profileError) {
-      console.error("[student/gallery/profiles]", profileError);
-      return {
-        ok: false,
-        message: publicActionMessage(
-          profileError,
-          "Gallery is temporarily unavailable. Please try again later.",
-        ),
-      };
-    }
-
-    const candidates: Array<{
-      id: string;
-      path: string;
-      status: string;
-      meta: {
-        first_name: string;
-        last_name: string;
-        parish_name: string | null;
-        batch_label: string | null;
-      };
-    }> = [];
-
-    for (const person of profiles ?? []) {
-      const status =
-        (person.selfie_moderation_status as string | null) ?? "visible";
-      if (status === "taken_down") continue;
-      const path = person.graduation_selfie_path as string | null;
-      if (!path) continue;
-      const meta = latestByUser.get(person.id as string);
-      if (!meta) continue;
-      candidates.push({
-        id: person.id as string,
-        path,
-        status,
-        meta,
-      });
-    }
-
-    const signed = await signStudentPhotoUrls(
-      candidates.map((c) => c.path),
-      GALLERY_SIGNED_URL_TTL_SEC,
-    );
-
-    const photos: GalleryPhoto[] = [];
-    for (const candidate of candidates) {
-      const imageUrl = signed.get(candidate.path);
-      if (!imageUrl) continue;
-      photos.push({
-        userId: candidate.id,
-        displayName:
-          [candidate.meta.first_name, candidate.meta.last_name]
-            .filter(Boolean)
-            .join(" ") || "Student",
-        parishName: candidate.meta.parish_name,
-        batchLabel: candidate.meta.batch_label,
-        imageUrl,
-        isSelf: candidate.id === profile.id,
-        moderationStatus: candidate.status,
-      });
-    }
-
-    photos.sort((a, b) => a.displayName.localeCompare(b.displayName));
-    return { ok: true, photos };
+    return {
+      ok: true,
+      photos,
+      total: result.total,
+      page: result.page,
+      pageSize: result.pageSize,
+    };
   } catch (error) {
     console.error("[student/gallery]", error);
     return {

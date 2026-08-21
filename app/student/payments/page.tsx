@@ -14,7 +14,7 @@ import { createServerSupabaseClient } from "@/lib/supabase/server";
 export const metadata: Metadata = {
   title: "Payments | Student Portal",
   description:
-    "Track and pay your School of Disciples application and graduation fees.",
+    "Pay tuition and graduation fees — in full or by instalment.",
 };
 
 type PageProps = {
@@ -61,9 +61,9 @@ export default async function StudentPaymentsPage({ searchParams }: PageProps) {
     typeof params.cancelled === "string" ? params.cancelled : null;
 
   let flash: string | null = null;
-  if (paid === "application") {
+  if (paid === "tuition" || paid === "application") {
     flash =
-      "Application fee received. Please upload your passport photograph below.";
+      "Payment received. You can upload your passport photograph after your first tuition instalment is confirmed.";
   } else if (paid === "graduation") {
     flash =
       "Graduation fee received. Please upload your graduation selfie below.";

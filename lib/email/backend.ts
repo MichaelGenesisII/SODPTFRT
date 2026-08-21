@@ -1,3 +1,8 @@
+import {
+  getActiveTemplateOverridePayload,
+} from "@/lib/email/template-overrides";
+import { postEmailApi, type EmailApiResult } from "@/lib/email/post-api";
+
 export type SendTicketEmailPayload = {
   to: string;
   toName: string;
@@ -10,12 +15,7 @@ export type SendTicketEmailPayload = {
   siteUrl: string;
 };
 
-export type SendTicketEmailResult = {
-  ok: boolean;
-  message: string;
-  messageId?: string;
-  subject?: string;
-};
+export type SendTicketEmailResult = EmailApiResult;
 
 export type SendEnrolmentEmailPayload = {
   to: string;
@@ -27,64 +27,6 @@ export type SendEnrolmentEmailPayload = {
   portalSupportUrl: string;
   siteUrl: string;
 };
-
-async function postEmailApi<TPayload extends object>(
-  path: string,
-  payload: TPayload,
-): Promise<SendTicketEmailResult> {
-  const baseUrl = process.env.EMAIL_API_URL?.replace(/\/$/, "");
-  const secret = process.env.EMAIL_API_SECRET;
-
-  if (!baseUrl || !secret) {
-    return {
-      ok: false,
-      message:
-        "Email backend is not configured. Set EMAIL_API_URL and EMAIL_API_SECRET in sod_portal/.env.local, and run sod_portal_be.",
-    };
-  }
-
-  try {
-    const response = await fetch(`${baseUrl}${path}`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-SOD-Email-Secret": secret,
-      },
-      body: JSON.stringify(payload),
-    });
-
-    const data = (await response.json().catch(() => null)) as {
-      ok?: boolean;
-      message?: string;
-      messageId?: string;
-      subject?: string;
-    } | null;
-
-    if (!response.ok || !data?.ok) {
-      return {
-        ok: false,
-        message:
-          data?.message ||
-          `Email service returned ${response.status}. Is sod_portal_be running?`,
-      };
-    }
-
-    return {
-      ok: true,
-      message: data.message || "Email sent.",
-      messageId: data.messageId,
-      subject: data.subject,
-    };
-  } catch (error) {
-    return {
-      ok: false,
-      message:
-        error instanceof Error
-          ? `Could not reach email service: ${error.message}`
-          : "Could not reach email service.",
-    };
-  }
-}
 
 export async function sendTicketEmailViaBackend(
   payload: SendTicketEmailPayload,
@@ -207,6 +149,10 @@ export type CampaignRecipientPayload = {
   to: string;
   firstName: string;
   parishName?: string;
+  /** Human unsubscribe page URL (footer). */
+  unsubscribeUrl?: string;
+  /** One-click URL for List-Unsubscribe header. */
+  listUnsubscribeUrl?: string;
 };
 
 export type SendCampaignEmailPayload = {
@@ -219,6 +165,11 @@ export type SendCampaignEmailPayload = {
   customHeadline?: string;
   customBody?: string;
   recipients: CampaignRecipientPayload[];
+  attachments?: {
+    filename: string;
+    content: string;
+    contentType: string;
+  }[];
 };
 
 export type SendCampaignEmailResult = SendTicketEmailResult & {
@@ -237,19 +188,21 @@ export async function sendCampaignViaBackend(
   if (!baseUrl || !secret) {
     return {
       ok: false,
-      message:
-        "Email backend is not configured. Set EMAIL_API_URL and EMAIL_API_SECRET in sod_portal/.env.local, and run sod_portal_be.",
+      message: "Email backend is not configured.",
     };
   }
 
   try {
+    const override = await getActiveTemplateOverridePayload("campaign");
     const response = await fetch(`${baseUrl}/api/email/campaign`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         "X-SOD-Email-Secret": secret,
       },
-      body: JSON.stringify(payload),
+      body: JSON.stringify(
+        override ? { ...payload, templateOverride: override } : payload,
+      ),
     });
 
     const data = (await response.json().catch(() => null)) as {
@@ -264,9 +217,7 @@ export async function sendCampaignViaBackend(
     if (!response.ok || !data) {
       return {
         ok: false,
-        message:
-          data?.message ||
-          `Email service returned ${response.status}. Is sod_portal_be running?`,
+        message: data?.message || "Campaign could not be sent. Please try again.",
         remaining: data?.remaining,
       };
     }
@@ -280,12 +231,10 @@ export async function sendCampaignViaBackend(
       results: data.results,
     };
   } catch (error) {
+    console.error("[email/campaign]", error);
     return {
       ok: false,
-      message:
-        error instanceof Error
-          ? `Could not reach email service: ${error.message}`
-          : "Could not reach email service.",
+      message: "Campaign could not be sent. Please try again.",
     };
   }
 }

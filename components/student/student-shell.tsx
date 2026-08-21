@@ -68,7 +68,7 @@ const nav: NavEntry[] = [
         href: "/student/payments",
         id: "payments",
         label: "Payments",
-        hint: "Application & graduation fees",
+        hint: "Tuition & graduation fees",
       },
     ],
   },
@@ -123,6 +123,12 @@ const nav: NavEntry[] = [
         id: "notices",
         label: "Notices",
         hint: "Updates from the School",
+      },
+      {
+        href: "/student/community",
+        id: "community",
+        label: "Community",
+        hint: "National student chat",
       },
       {
         href: "/student/support",
@@ -339,7 +345,11 @@ export function StudentShell({ profile, children }: StudentShellProps) {
         entry.kind === "group" &&
         groupContainsStudentPath(entry, pathname, activeSection),
     );
-    setOpenGroupId(match && match.kind === "group" ? match.id : null);
+    // Only auto-open the active route's group. Never force-close on sync —
+    // that prevented opening other sections from Overview.
+    if (match?.kind === "group") {
+      setOpenGroupId(match.id);
+    }
   }, [pathname, activeSection]);
 
   useEffect(() => {
@@ -354,6 +364,33 @@ export function StudentShell({ profile, children }: StudentShellProps) {
       document.body.style.overflow = "";
     };
   }, [mobileOpen]);
+
+  useEffect(() => {
+    if (!pathname.startsWith("/student/community")) return;
+    const root = document.documentElement;
+    const vv = window.visualViewport;
+    if (!vv) return;
+    const viewport = vv;
+
+    function sync() {
+      if (window.matchMedia("(min-width: 1024px)").matches) {
+        root.style.removeProperty("--community-vvh");
+        return;
+      }
+      root.style.setProperty("--community-vvh", `${viewport.height}px`);
+    }
+
+    sync();
+    viewport.addEventListener("resize", sync);
+    viewport.addEventListener("scroll", sync);
+    window.addEventListener("orientationchange", sync);
+    return () => {
+      viewport.removeEventListener("resize", sync);
+      viewport.removeEventListener("scroll", sync);
+      window.removeEventListener("orientationchange", sync);
+      root.style.removeProperty("--community-vvh");
+    };
+  }, [pathname]);
 
   function isChildActive(child: NavChild) {
     return studentNavMatches(child.href, child.id, pathname, activeSection);
@@ -384,35 +421,50 @@ export function StudentShell({ profile, children }: StudentShellProps) {
   }
 
   const currentSection = findStudentNavLabel(pathname, activeSection);
+  const communityMobile = pathname.startsWith("/student/community");
 
   return (
-    <div className="relative flex min-h-svh flex-col bg-mist text-ink lg:flex-row">
+    <div
+      className={`relative flex min-h-svh flex-col bg-mist text-ink lg:flex-row ${
+        communityMobile
+          ? "max-lg:h-[var(--community-vvh,100dvh)] max-lg:overflow-hidden"
+          : ""
+      }`}
+    >
       <div
         className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_top_right,_rgba(95,143,122,0.12),_transparent_45%),radial-gradient(ellipse_at_bottom_left,_rgba(20,53,44,0.06),_transparent_40%)]"
         aria-hidden
       />
 
-      <div className="grain relative isolate sticky top-0 z-40 border-b border-mist/10 bg-pine px-4 py-3 text-mist lg:hidden">
+      <div
+        className={`grain relative isolate sticky top-0 z-40 shrink-0 border-b border-mist/10 bg-pine text-mist lg:hidden ${
+          communityMobile ? "px-3 py-2.5" : "px-4 py-3"
+        }`}
+      >
         <div className="relative flex items-center justify-between gap-3">
-          <Link href="/student#overview" className="flex min-w-0 items-center gap-3">
+          <Link href="/student#overview" className="flex min-w-0 items-center gap-2.5 sm:gap-3">
             <Image
               src="/logo.png"
               alt=""
               width={36}
               height={36}
-              className="h-9 w-9 object-contain"
+              className={`object-contain ${communityMobile ? "h-8 w-8" : "h-9 w-9"}`}
             />
             <div className="min-w-0">
-              <p className="truncate font-display text-lg leading-none">
-                My Journey
+              <p
+                className={`truncate font-display leading-none ${
+                  communityMobile ? "text-base" : "text-lg"
+                }`}
+              >
+                {communityMobile ? "Community" : "My Journey"}
               </p>
-              <p className="mt-1 truncate text-[0.65rem] uppercase tracking-[0.14em] text-celadon">
-                {currentSection}
+              <p className="mt-0.5 truncate text-[0.65rem] uppercase tracking-[0.14em] text-celadon sm:mt-1">
+                {communityMobile ? "National channel" : currentSection}
               </p>
             </div>
           </Link>
           <div className="flex items-center gap-2">
-            {profile.passportUrl ? (
+            {profile.passportUrl && !communityMobile ? (
               // eslint-disable-next-line @next/next/no-img-element
               <img
                 src={profile.passportUrl}
@@ -423,7 +475,7 @@ export function StudentShell({ profile, children }: StudentShellProps) {
             <button
               type="button"
               onClick={() => setMobileOpen((value) => !value)}
-              className="relative inline-flex h-11 w-11 items-center justify-center border border-mist/20 bg-mist/[0.04]"
+              className="relative inline-flex h-10 w-10 items-center justify-center border border-mist/20 bg-mist/[0.04] sm:h-11 sm:w-11"
               aria-expanded={mobileOpen}
               aria-controls="student-sidebar"
               aria-label={mobileOpen ? "Close menu" : "Open menu"}
@@ -729,6 +781,10 @@ export function StudentShell({ profile, children }: StudentShellProps) {
       <div
         className={`relative flex min-w-0 flex-1 flex-col transition-[padding] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] ${
           desktopOpen ? "lg:pl-72" : "lg:pl-0"
+        } ${
+          communityMobile
+            ? "max-lg:min-h-0 max-lg:flex-1 max-lg:overflow-hidden"
+            : ""
         }`}
       >
         <header className="sticky top-0 z-30 hidden h-[4.75rem] items-center justify-between gap-4 border-b border-stone/80 bg-mist/90 px-6 backdrop-blur-xl lg:flex lg:px-10">
@@ -778,7 +834,13 @@ export function StudentShell({ profile, children }: StudentShellProps) {
           </div>
         </header>
 
-        <main className="relative flex-1 px-4 py-6 sm:px-6 sm:py-8 lg:px-10 lg:py-10">
+        <main
+          className={
+            communityMobile
+              ? "relative flex min-h-0 flex-1 flex-col overflow-hidden p-0 lg:overflow-visible lg:px-10 lg:py-10"
+              : "relative flex-1 px-4 py-6 sm:px-6 sm:py-8 lg:px-10 lg:py-10"
+          }
+        >
           {children}
         </main>
       </div>

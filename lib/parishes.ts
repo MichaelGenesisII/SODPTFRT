@@ -11,6 +11,7 @@ export type Parish = {
 export type Batch = {
   id: string;
   parish_id: string;
+  cohort_id: string | null;
   name: string;
   year: number;
   enrolment_open: boolean;

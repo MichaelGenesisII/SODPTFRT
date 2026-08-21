@@ -7,6 +7,7 @@ import {
   isParishAdmin,
   requireSessionAdmin,
 } from "@/lib/admin/auth";
+import { parishAdminEnabled } from "@/lib/admin/features";
 import {
   publicActionMessage,
   publicEmailFailureMessage,
@@ -60,6 +61,12 @@ export async function createAdminAccount(
     let parishId = parishIdRaw || null;
 
     if (isParishAdmin(actor)) {
+      if (!parishAdminEnabled()) {
+        return {
+          ok: false,
+          message: "Parish desks are paused. Contact the national desk.",
+        };
+      }
       if (!actor.parish_id) {
         return {
           ok: false,
@@ -75,6 +82,11 @@ export async function createAdminAccount(
       parishId = actor.parish_id;
     } else if (!isNationalAdmin(actor)) {
       return forbiddenStaffResult();
+    } else if (parishId && !parishAdminEnabled()) {
+      return {
+        ok: false,
+        message: "Parish desks are paused. Invite a national admin instead.",
+      };
     }
 
     if (!email || !password) {

@@ -6,13 +6,16 @@ import {
   requireSessionAdmin,
   type AdminProfile,
 } from "@/lib/admin/auth";
-import { formatBatchLabel } from "@/lib/parishes";
-import { publicActionMessage } from "@/lib/safe-action-message";
 import {
-  GALLERY_SIGNED_URL_TTL_SEC,
-  STUDENT_PHOTOS_BUCKET,
-  signStudentPhotoUrls,
-} from "@/lib/student/photos";
+  GALLERY_PAGE_SIZE,
+  type GalleryModerationFilter,
+} from "@/lib/gallery/constants";
+import {
+  fetchGalleryPortraitPage,
+  mapAdminGalleryItems,
+} from "@/lib/gallery/list-page";
+import { publicActionMessage } from "@/lib/safe-action-message";
+import { STUDENT_PHOTOS_BUCKET } from "@/lib/student/photos";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { createServiceSupabaseClient } from "@/lib/supabase/service";
 
@@ -98,136 +101,107 @@ async function requireAccessibleStudentPhoto(userId: string): Promise<
   return { ok: true, actor, parishId };
 }
 
-export async function listAdminGallery(
-  filter: "all" | "flagged" | "taken_down" = "all",
-): Promise<AdminGalleryItem[]> {
-  const actor = await requireSessionAdmin();
-  const supabase = await createServerSupabaseClient();
+export type AdminGalleryTab = "all" | "flagged" | "taken_down";
 
+export type AdminGalleryPage = {
+  items: AdminGalleryItem[];
+  total: number;
+  page: number;
+  pageSize: number;
+};
+
+export type AdminGalleryCounts = {
+  all: number;
+  flagged: number;
+  takenDown: number;
+};
+
+function tabToFilter(tab: AdminGalleryTab): GalleryModerationFilter {
+  if (tab === "flagged") return "flagged";
+  if (tab === "taken_down") return "taken_down";
+  return "all_admin";
+}
+
+async function adminGalleryScope(actor: AdminProfile) {
   if (!isNationalAdmin(actor) && !actor.parish_id) {
-    return [];
+    return null;
+  }
+  return isNationalAdmin(actor) ? null : actor.parish_id;
+}
+
+export async function getAdminGalleryCounts(): Promise<AdminGalleryCounts> {
+  const actor = await requireSessionAdmin();
+  const parishScope = await adminGalleryScope(actor);
+  if (parishScope === null && !isNationalAdmin(actor)) {
+    return { all: 0, flagged: 0, takenDown: 0 };
   }
 
-  let enrolQ = supabase
-    .from("enrolments")
-    .select(
-      "user_id, first_name, last_name, email, parish_id, batch_id, created_at, parishes(name), batches(name, year)",
-    )
-    .order("created_at", { ascending: false });
+  const base = {
+    scope: "parish" as const,
+    page: 1,
+    viewerEnrolment: {
+      parish_id: parishScope,
+      batch_id: null,
+      cohort_id: null,
+    },
+    pageSize: 1,
+    adminParishId: parishScope,
+  };
 
-  if (!isNationalAdmin(actor) && actor.parish_id) {
-    enrolQ = enrolQ.eq("parish_id", actor.parish_id);
+  const [allPage, flaggedPage, takenDownPage] = await Promise.all([
+    fetchGalleryPortraitPage({
+      ...base,
+      moderationFilter: "all_admin",
+    }),
+    fetchGalleryPortraitPage({
+      ...base,
+      moderationFilter: "flagged",
+    }),
+    fetchGalleryPortraitPage({
+      ...base,
+      moderationFilter: "taken_down",
+    }),
+  ]);
+
+  return {
+    all: allPage.total,
+    flagged: flaggedPage.total,
+    takenDown: takenDownPage.total,
+  };
+}
+
+export async function listAdminGalleryPage(input: {
+  tab?: AdminGalleryTab;
+  page?: number;
+  search?: string | null;
+}): Promise<AdminGalleryPage> {
+  const actor = await requireSessionAdmin();
+  const parishScope = await adminGalleryScope(actor);
+  if (parishScope === null && !isNationalAdmin(actor)) {
+    return { items: [], total: 0, page: 1, pageSize: GALLERY_PAGE_SIZE };
   }
 
-  const { data: enrolRows, error: enrolError } = await enrolQ.limit(800);
-  if (enrolError) throw new Error(enrolError.message);
-
-  function one<T>(value: T | T[] | null | undefined): T | null {
-    if (!value) return null;
-    return Array.isArray(value) ? (value[0] ?? null) : value;
-  }
-
-  const latestByUser = new Map<
-    string,
-    {
-      first_name: string;
-      last_name: string;
-      email: string;
-      parish_id: string | null;
-      parish_name: string | null;
-      batch_label: string | null;
-    }
-  >();
-
-  for (const row of enrolRows ?? []) {
-    const userId = row.user_id as string;
-    if (latestByUser.has(userId)) continue;
-    const parish = one(
-      row.parishes as { name: string } | { name: string }[] | null,
-    );
-    const batch = one(
-      row.batches as
-        | { name: string; year: number }
-        | { name: string; year: number }[]
-        | null,
-    );
-    latestByUser.set(userId, {
-      first_name: (row.first_name as string) || "",
-      last_name: (row.last_name as string) || "",
-      email: (row.email as string) || "",
-      parish_id: (row.parish_id as string | null) ?? null,
-      parish_name: parish?.name ?? null,
-      batch_label: batch
-        ? formatBatchLabel({ name: batch.name, year: batch.year })
-        : null,
-    });
-  }
-
-  const userIds = Array.from(latestByUser.keys());
-  if (userIds.length === 0) return [];
-
-  let profileQ = supabase
-    .from("student_profiles")
-    .select(
-      "id, email, graduation_selfie_path, graduation_selfie_uploaded_at, selfie_moderation_status, selfie_moderation_note, selfie_moderated_at, is_active",
-    )
-    .in("id", userIds)
-    .eq("is_active", true);
-
-  if (filter === "flagged") {
-    profileQ = profileQ.eq("selfie_moderation_status", "flagged");
-  } else if (filter === "taken_down") {
-    profileQ = profileQ.eq("selfie_moderation_status", "taken_down");
-  } else {
-    profileQ = profileQ.or(
-      "graduation_selfie_path.not.is.null,selfie_moderation_status.eq.taken_down",
-    );
-  }
-
-  const { data: profiles, error: profileError } = await profileQ.limit(400);
-  if (profileError) throw new Error(profileError.message);
-
-  const signed = await signStudentPhotoUrls(
-    (profiles ?? []).map((p) => p.graduation_selfie_path as string | null),
-    GALLERY_SIGNED_URL_TTL_SEC,
-  );
-
-  const items: AdminGalleryItem[] = [];
-  for (const person of profiles ?? []) {
-    const meta = latestByUser.get(person.id as string);
-    if (!meta) continue;
-    const path = person.graduation_selfie_path as string | null;
-    const imageUrl = path ? (signed.get(path) ?? null) : null;
-    const status =
-      (person.selfie_moderation_status as GalleryModerationStatus | null) ??
-      "visible";
-    items.push({
-      userId: person.id as string,
-      displayName:
-        [meta.first_name, meta.last_name].filter(Boolean).join(" ") ||
-        "Student",
-      email: meta.email || (person.email as string) || "",
-      parishId: meta.parish_id,
-      parishName: meta.parish_name,
-      batchLabel: meta.batch_label,
-      imageUrl,
-      path,
-      uploadedAt: (person.graduation_selfie_uploaded_at as string | null) ?? null,
-      moderationStatus: status,
-      moderationNote: (person.selfie_moderation_note as string | null) ?? null,
-      moderatedAt: (person.selfie_moderated_at as string | null) ?? null,
-    });
-  }
-
-  items.sort((a, b) => {
-    const rank = (s: GalleryModerationStatus) =>
-      s === "flagged" ? 0 : s === "taken_down" ? 1 : 2;
-    const dr = rank(a.moderationStatus) - rank(b.moderationStatus);
-    if (dr !== 0) return dr;
-    return a.displayName.localeCompare(b.displayName);
+  const tab = input.tab ?? "all";
+  const result = await fetchGalleryPortraitPage({
+    scope: "parish",
+    page: input.page ?? 1,
+    viewerEnrolment: {
+      parish_id: parishScope,
+      batch_id: null,
+      cohort_id: null,
+    },
+    moderationFilter: tabToFilter(tab),
+    search: input.search,
+    adminParishId: parishScope,
   });
 
-  return items;
+  const items = await mapAdminGalleryItems(result.items);
+  return {
+    items,
+    total: result.total,
+    page: result.page,
+    pageSize: result.pageSize,
+  };
 }
 
 export async function flagGallerySelfie(

@@ -1,5 +1,5 @@
 import { createServiceSupabaseClient } from "@/lib/supabase/service";
-import type { AttendanceSource } from "@/lib/classes/types";
+import type { AttendanceSource, ClassAudience } from "@/lib/classes/types";
 
 export async function ensureStudentRecordId(
   userId: string,
@@ -179,16 +179,31 @@ export function sessionDateFromStart(iso: string): string {
 }
 
 export function studentMatchesClassAudience(input: {
-  audience: "everyone" | "parish" | "batch";
+  audience: ClassAudience;
   classParishId: string | null;
   classBatchId: string | null;
+  classCohortId?: string | null;
+  classYear?: number | null;
   studentParishId: string | null | undefined;
   studentBatchId: string | null | undefined;
+  studentCohortId?: string | null | undefined;
+  studentCohortYearStart?: number | null | undefined;
 }): boolean {
   if (input.audience === "everyone") return true;
   if (input.audience === "parish") {
     return Boolean(
       input.classParishId && input.studentParishId === input.classParishId,
+    );
+  }
+  if (input.audience === "cohort") {
+    return Boolean(
+      input.classCohortId && input.studentCohortId === input.classCohortId,
+    );
+  }
+  if (input.audience === "year") {
+    return Boolean(
+      input.classYear != null &&
+        input.studentCohortYearStart === input.classYear,
     );
   }
   return Boolean(

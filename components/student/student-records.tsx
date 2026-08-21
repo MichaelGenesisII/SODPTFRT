@@ -1,11 +1,20 @@
 "use client";
 
+import Link from "next/link";
 import { useState, type ReactNode } from "react";
+import { GraduationChecklist } from "@/components/student/graduation-checklist";
 import type { RecordBundle } from "@/lib/exams/records";
+import type { GraduationEligibility } from "@/lib/graduation/eligibility";
 
 type RecordsTab = "overview" | "attendance" | "exams";
 
-export function StudentRecordsClient({ bundle }: { bundle: RecordBundle }) {
+export function StudentRecordsClient({
+  bundle,
+  graduationEligibility,
+}: {
+  bundle: RecordBundle;
+  graduationEligibility?: GraduationEligibility | null;
+}) {
   const [tab, setTab] = useState<RecordsTab>("overview");
   const [openEntryId, setOpenEntryId] = useState<string | null>(null);
 
@@ -124,8 +133,8 @@ export function StudentRecordsClient({ bundle }: { bundle: RecordBundle }) {
               </p>
               {!record.passport_url ? (
                 <p className="mt-3 text-sm leading-relaxed text-ink/55">
-                  Upload your passport photograph from Payments after the
-                  application fee is paid — it will appear here on your
+                  Upload your passport photograph from Payments after your
+                  first tuition instalment is confirmed — it will appear here on your
                   scorecard.
                 </p>
               ) : null}
@@ -176,6 +185,40 @@ export function StudentRecordsClient({ bundle }: { bundle: RecordBundle }) {
           <p className="mt-4 text-xs leading-relaxed text-ink/45">
             Open Attendance or Exams for the full lists.
           </p>
+          {graduationEligibility ? (
+            <div className="mt-5 border-t border-stone pt-4">
+              <div className="flex flex-wrap items-end justify-between gap-2">
+                <div>
+                  <p className="text-[0.65rem] uppercase tracking-[0.12em] text-celadon">
+                    Graduation
+                  </p>
+                  <h3 className="mt-1 font-display text-lg text-pine">
+                    {graduationEligibility.eligible
+                      ? "Ready for graduation portrait"
+                      : "Graduation checklist"}
+                  </h3>
+                </div>
+                {graduationEligibility.eligible ? (
+                  <Link
+                    href="/student/gallery"
+                    className="text-sm font-medium text-pine underline decoration-pine/30 underline-offset-4"
+                  >
+                    Open gallery
+                  </Link>
+                ) : null}
+              </div>
+              {graduationEligibility.bypassed &&
+              graduationEligibility.bypassReason ? (
+                <p className="mt-2 text-sm text-ink/60">
+                  {graduationEligibility.bypassReason}
+                </p>
+              ) : (
+                <div className="mt-3">
+                  <GraduationChecklist items={graduationEligibility.checklist} />
+                </div>
+              )}
+            </div>
+          ) : null}
         </Panel>
       ) : null}
 

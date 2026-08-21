@@ -22,6 +22,12 @@ import {
 } from "@/lib/announcements";
 import { isNationalAdmin, type AdminProfile } from "@/lib/admin/profile";
 import { formatBatchLabel, type Batch, type Parish } from "@/lib/parishes";
+import {
+  attachmentIdsField,
+  DeskAttachmentPicker,
+} from "@/components/admin/desk-attachment-picker";
+
+const NOTIC_PAGE_SIZE = 8;
 
 const fieldClass =
   "w-full border border-stone bg-white/70 px-4 py-3 text-sm outline-none transition-[border-color,background-color] duration-300 focus:border-pine focus:bg-mist";
@@ -338,6 +344,11 @@ export function AnnouncementsManager({
   const [previewLane, setPreviewLane] =
     useState<AnnouncementAudience>(national ? "general" : "students");
   const [gatePulse, setGatePulse] = useState(false);
+  const [livePage, setLivePage] = useState(1);
+  const [draftPage, setDraftPage] = useState(1);
+  const [composeAttachments, setComposeAttachments] = useState<
+    { id: string; original_name: string; byte_size: number; mime: string }[]
+  >([]);
 
   const composeBatches = useMemo(
     () =>
@@ -402,6 +413,32 @@ export function AnnouncementsManager({
     return drafts.filter((item) => audienceOf(item) === audienceFilter);
   }, [drafts, audienceFilter]);
 
+  const liveTotalPages = Math.max(
+    1,
+    Math.ceil(filteredPublished.length / NOTIC_PAGE_SIZE),
+  );
+  const draftTotalPages = Math.max(
+    1,
+    Math.ceil(filteredDrafts.length / NOTIC_PAGE_SIZE),
+  );
+  const activeListPage = panel === "live" ? livePage : draftPage;
+  const activeTotalPages = panel === "live" ? liveTotalPages : draftTotalPages;
+  const activeFiltered =
+    panel === "live" ? filteredPublished : filteredDrafts;
+  const pageStart = (activeListPage - 1) * NOTIC_PAGE_SIZE;
+  const pageItems = activeFiltered.slice(
+    pageStart,
+    pageStart + NOTIC_PAGE_SIZE,
+  );
+  const rangeFrom =
+    activeFiltered.length === 0 ? 0 : pageStart + 1;
+  const rangeTo = Math.min(pageStart + NOTIC_PAGE_SIZE, activeFiltered.length);
+
+  useEffect(() => {
+    setLivePage(1);
+    setDraftPage(1);
+  }, [audienceFilter]);
+
   const defaultComposeAudience = (): AnnouncementAudience =>
     national ? "general" : "students";
 
@@ -439,6 +476,7 @@ export function AnnouncementsManager({
         setComposeAudience(defaultComposeAudience());
         setComposeParishId(profile.parish_id ?? "");
         setComposeBatchId("");
+        setComposeAttachments([]);
         setPanel("live");
       } else {
         error(next.message, "Notices");
@@ -463,6 +501,14 @@ export function AnnouncementsManager({
       item?.parish_id ?? profile.parish_id ?? "",
     );
     setComposeBatchId(item?.batch_id ?? "");
+    setComposeAttachments(
+      (item?.attachments ?? []).map((file) => ({
+        id: file.id,
+        original_name: file.name,
+        byte_size: file.byteSize,
+        mime: file.mime,
+      })),
+    );
     setExpandedId(null);
     setGatePulse(false);
     setPanel("compose");
@@ -601,7 +647,7 @@ export function AnnouncementsManager({
               })}
             </div>
             <NoticeList
-              items={panel === "live" ? filteredPublished : filteredDrafts}
+              items={pageItems}
               empty={
                 panel === "live"
                   ? "No live notices in this lane. Compose one and publish into an open slot."
@@ -621,6 +667,46 @@ export function AnnouncementsManager({
               }
               onDelete={setPendingDelete}
             />
+            {activeFiltered.length > NOTIC_PAGE_SIZE ? (
+              <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-stone/70 pt-4 text-sm">
+                <p className="text-ink/55">
+                  Showing {rangeFrom}–{rangeTo} of {activeFiltered.length}
+                </p>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    disabled={activeListPage <= 1}
+                    onClick={() =>
+                      panel === "live"
+                        ? setLivePage((p) => Math.max(1, p - 1))
+                        : setDraftPage((p) => Math.max(1, p - 1))
+                    }
+                    className="border border-stone px-3 py-1.5 text-xs disabled:opacity-40"
+                  >
+                    Previous
+                  </button>
+                  <span className="text-xs tabular-nums text-ink/50">
+                    {activeListPage}/{activeTotalPages}
+                  </span>
+                  <button
+                    type="button"
+                    disabled={activeListPage >= activeTotalPages}
+                    onClick={() =>
+                      panel === "live"
+                        ? setLivePage((p) =>
+                            Math.min(liveTotalPages, p + 1),
+                          )
+                        : setDraftPage((p) =>
+                            Math.min(draftTotalPages, p + 1),
+                          )
+                    }
+                    className="border border-stone px-3 py-1.5 text-xs disabled:opacity-40"
+                  >
+                    Next
+                  </button>
+                </div>
+              </div>
+            ) : null}
           </>
         ) : null}
 
@@ -773,6 +859,7 @@ export function AnnouncementsManager({
               const form = event.currentTarget;
               const formData = new FormData(form);
               formData.set("audience", composeAudience);
+              formData.set("attachmentIds", attachmentIdsField(composeAttachments));
               if (editing) {
                 formData.set("id", editing.id);
                 run(() => updateAnnouncement(formData), form);
@@ -796,6 +883,11 @@ export function AnnouncementsManager({
             <input type="hidden" name="audience" value={composeAudience} />
             <input type="hidden" name="parishId" value={composeParishId} />
             <input type="hidden" name="batchId" value={composeBatchId} />
+            <input
+              type="hidden"
+              name="attachmentIds"
+              value={attachmentIdsField(composeAttachments)}
+            />
 
             <fieldset>
               <legend className="mb-2 block text-sm font-medium text-ink">
@@ -1010,6 +1102,15 @@ export function AnnouncementsManager({
                 defaultValue={editing?.body ?? ""}
                 onChange={(event) => setBodyLen(event.target.value.length)}
                 className={`${fieldClass} resize-y`}
+              />
+            </div>
+
+            <div>
+              <p className="mb-2 text-sm font-medium text-ink">Attachments</p>
+              <DeskAttachmentPicker
+                value={composeAttachments}
+                onChange={setComposeAttachments}
+                disabled={pending}
               />
             </div>
 

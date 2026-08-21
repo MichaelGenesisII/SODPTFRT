@@ -16,8 +16,12 @@ import {
   publicActionMessage,
   publicEmailFailureMessage,
 } from "@/lib/safe-action-message";
-import { syncApplicationFeePaymentStatus } from "@/lib/payments/service";
+import { syncTuitionFeePaymentStatus } from "@/lib/payments/service";
+import { sendManualsSentEmail } from "@/lib/email/payment-mail";
+import { portalBaseUrl } from "@/lib/email/backend";
+import { SOD_SITE } from "@/lib/site-nav";
 import { signStudentPhotoUrls } from "@/lib/student/photos";
+import { removeStudentStorageFolder } from "@/lib/student/storage-wipe";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { createServiceSupabaseClient } from "@/lib/supabase/service";
 
@@ -143,7 +147,7 @@ const ENROLMENT_SELECT = `
   born_again, born_again_date, born_again_where, baptised_holy_spirit,
   holy_spirit_date, holy_spirit_where, baptised_water, water_baptism_date,
   water_baptism_where, schools_attended, occupations, occupation_other,
-  parish_id, batch_id, local_church, church_leader, church_activities,
+  parish_id, batch_id, cohort_id, legacy_app_com_no, local_church, church_leader, church_activities,
   declaration_accepted, declared_at, created_at, updated_at
 `;
 
@@ -162,41 +166,27 @@ export async function listAdminStudents(): Promise<AdminStudentRecord[]> {
   }
 
   const [
-    { data: profiles, error: profileError },
     { data: enrolments, error: enrolError },
     { data: parishes },
     { data: batches },
+    { data: cohorts },
   ] = await Promise.all([
-    supabase
-      .from("student_profiles")
-      .select(
-        "id, email, first_name, middle_name, last_name, is_active, created_at, passport_path",
-      )
-      .order("created_at", { ascending: false }),
     enrolQ,
     supabase.from("parishes").select("id, name, region"),
     supabase.from("batches").select("id, name, year"),
+    supabase.from("cohorts").select("id, name, year_start, year_end").then((r) =>
+      r.error ? { data: [] as never[] } : r,
+    ),
   ]);
 
-  if (profileError) {
-    throw new Error(profileError.message);
-  }
   if (enrolError) {
-    throw new Error(enrolError.message);
+    console.error("[admin/students] enrolments", enrolError.message);
+    throw new Error(
+      publicActionMessage(enrolError, "Could not load students."),
+    );
   }
 
-  // Optional enrichment tables (payments / records may not be migrated yet)
-  const [{ data: fees }, { data: records }] = await Promise.all([
-    supabase
-      .from("student_fee_payments")
-      .select("user_id, fee_type, status, amount_gbp, method, paid_at")
-      .then((r) => (r.error ? { data: [] as never[] } : r)),
-    supabase
-      .from("student_records")
-      .select("id, user_id, batch_id")
-      .then((r) => (r.error ? { data: [] as never[] } : r)),
-  ]);
-
+  const latestByUser = new Map<string, AdminEnrolmentRecord>();
   const parishMeta = new Map(
     (parishes ?? []).map((p) => [
       p.id as string,
@@ -209,29 +199,78 @@ export async function listAdminStudents(): Promise<AdminStudentRecord[]> {
       { name: b.name as string, year: b.year as number },
     ]),
   );
+  const cohortMeta = new Map(
+    (cohorts ?? []).map((c) => [
+      c.id as string,
+      {
+        name: c.name as string,
+        year_start: c.year_start as number,
+        year_end: c.year_end as number,
+      },
+    ]),
+  );
 
-  const latestByUser = new Map<string, AdminEnrolmentRecord>();
   for (const row of (enrolments ?? []) as AdminEnrolmentRecord[]) {
     if (!latestByUser.has(row.user_id)) {
       const parish = row.parish_id ? parishMeta.get(row.parish_id) : null;
       const meta = row.batch_id ? batchMeta.get(row.batch_id) : null;
+      const cohort = row.cohort_id ? cohortMeta.get(row.cohort_id) : null;
       latestByUser.set(row.user_id, {
         ...row,
         parish_name: parish?.name ?? null,
         parish_region: parish?.region ?? null,
         batch_name: meta?.name ?? null,
         batch_year: meta?.year ?? null,
+        cohort_name: cohort?.name ?? null,
+        cohort_year_start: cohort?.year_start ?? null,
+        cohort_year_end: cohort?.year_end ?? null,
       });
     }
   }
+
+  const userIds = [...latestByUser.keys()];
+  if (userIds.length === 0) return [];
+
+  const { data: profiles, error: profileError } = await supabase
+    .from("student_profiles")
+    .select(
+      "id, email, first_name, middle_name, last_name, is_active, created_at, passport_path, account_kind, manuals_status, manuals_sent_at",
+    )
+    .in("id", userIds)
+    .order("created_at", { ascending: false });
+
+  if (profileError) {
+    console.error("[admin/students] profiles", profileError.message);
+    throw new Error(
+      publicActionMessage(profileError, "Could not load students."),
+    );
+  }
+
+  // Optional enrichment tables (payments / records may not be migrated yet)
+  const [{ data: fees }, { data: records }] = await Promise.all([
+    supabase
+      .from("student_fee_payments")
+      .select(
+        "user_id, fee_type, status, amount_gbp, amount_due_gbp, amount_paid_gbp, method, paid_at",
+      )
+      .in("user_id", userIds)
+      .then((r) => (r.error ? { data: [] as never[] } : r)),
+    supabase
+      .from("student_records")
+      .select("id, user_id, batch_id")
+      .in("user_id", userIds)
+      .then((r) => (r.error ? { data: [] as never[] } : r)),
+  ]);
 
   const feesByUser = new Map<string, AdminStudentRecord["fees"]>();
   for (const fee of fees ?? []) {
     const list = feesByUser.get(fee.user_id as string) ?? [];
     list.push({
-      fee_type: fee.fee_type as "application" | "graduation",
+      fee_type: fee.fee_type as "tuition" | "graduation",
       status: fee.status as AdminStudentRecord["fees"][number]["status"],
-      amount_gbp: Number(fee.amount_gbp),
+      amount_gbp: Number(fee.amount_gbp ?? fee.amount_due_gbp),
+      amount_due_gbp: Number(fee.amount_due_gbp ?? fee.amount_gbp),
+      amount_paid_gbp: Number(fee.amount_paid_gbp ?? 0),
       method: (fee.method as string | null) ?? null,
       paid_at: (fee.paid_at as string | null) ?? null,
     });
@@ -309,7 +348,7 @@ export async function listAdminStudents(): Promise<AdminStudentRecord[]> {
     ),
   );
 
-  const mapped = ((profiles ?? []) as (Omit<
+  return ((profiles ?? []) as (Omit<
     AdminStudentRecord,
     "enrolment" | "fees" | "path" | "passport_url"
   > & { passport_path?: string | null })[]).map((profile) => {
@@ -343,12 +382,6 @@ export async function listAdminStudents(): Promise<AdminStudentRecord[]> {
       path,
     };
   });
-
-  // Parish desks only list students with an in-parish enrolment row.
-  if (!isNationalAdmin(actor)) {
-    return mapped.filter((row) => row.enrolment?.parish_id === actor.parish_id);
-  }
-  return mapped;
 }
 
 export async function updateEnrolmentStatus(
@@ -365,7 +398,7 @@ export async function updateEnrolmentStatus(
     if (!access.ok) return { ok: false, message: access.message };
 
     if (status === "paid") {
-      await syncApplicationFeePaymentStatus({
+      await syncTuitionFeePaymentStatus({
         userId: access.enrolment.user_id,
         paymentStatus: "paid",
         reviewedBy: actor.id,
@@ -419,7 +452,7 @@ export async function updatePaymentStatus(
     const access = await requireAccessibleEnrolment(enrolmentId);
     if (!access.ok) return { ok: false, message: access.message };
 
-    await syncApplicationFeePaymentStatus({
+    await syncTuitionFeePaymentStatus({
       userId: access.enrolment.user_id,
       paymentStatus: paymentStatus as "unpaid" | "pending_review" | "paid",
       reviewedBy: actor.id,
@@ -572,7 +605,9 @@ export async function deleteStudentAccount(
 
     const service = createServiceSupabaseClient();
 
-    // Wipe tickets (incl. email-matched), fees, enrolments, payment proofs first.
+    await removeStudentStorageFolder(studentId);
+
+    // Wipe tickets (incl. email-matched), fees, enrolments first.
     await service.rpc("cleanup_student_related_data", {
       p_user_id: studentId,
       p_email: access.profile.email,
@@ -641,6 +676,7 @@ export async function reassignEnrolmentBatch(
   enrolmentId: string,
   parishId: string,
   batchId: string,
+  options?: { cohortId?: string | null; reason?: string },
 ): Promise<StudentActionResult> {
   try {
     if (!enrolmentId || !parishId || !batchId) {
@@ -655,9 +691,14 @@ export async function reassignEnrolmentBatch(
       return { ok: false, message: "Outside your parish." };
     }
 
+    const reason = options?.reason?.trim() ?? "";
+    if (reason.length > 0 && reason.length < 2) {
+      return { ok: false, message: "Reason must be at least 2 characters." };
+    }
+
     const { data: batch } = await access.supabase
       .from("batches")
-      .select("id, parish_id, name, year, enrolment_open, is_active")
+      .select("id, parish_id, cohort_id, name, year, enrolment_open, is_active")
       .eq("id", batchId)
       .maybeSingle();
 
@@ -665,12 +706,46 @@ export async function reassignEnrolmentBatch(
       return { ok: false, message: "Batch does not match the parish." };
     }
 
+    const cohortId =
+      options?.cohortId === undefined
+        ? ((batch.cohort_id as string | null) ?? null)
+        : options.cohortId;
+
+    const service = createServiceSupabaseClient();
+    const now = new Date().toISOString();
+
+    await service
+      .from("student_placements")
+      .update({ ended_at: now })
+      .eq("user_id", access.enrolment.user_id)
+      .is("ended_at", null);
+
+    const { data: placement, error: placementError } = await service
+      .from("student_placements")
+      .insert({
+        user_id: access.enrolment.user_id,
+        enrolment_id: enrolmentId,
+        cohort_id: cohortId,
+        batch_id: batchId,
+        parish_id: parishId,
+        reason: reason || null,
+        started_at: now,
+        created_by: actor.id,
+      })
+      .select("id")
+      .maybeSingle();
+
+    if (placementError) {
+      console.error("[placement]", placementError.message);
+    }
+
     const { data, error } = await access.supabase
       .from("enrolments")
       .update({
         parish_id: parishId,
         batch_id: batchId,
-        updated_at: new Date().toISOString(),
+        cohort_id: cohortId,
+        updated_at: now,
       })
       .eq("id", enrolmentId)
       .select("id")
@@ -684,7 +759,27 @@ export async function reassignEnrolmentBatch(
       };
     }
 
+    if (placement?.id) {
+      const { data: existingRecord } = await service
+        .from("student_records")
+        .select("id")
+        .eq("user_id", access.enrolment.user_id)
+        .eq("batch_id", batchId)
+        .maybeSingle();
+
+      if (!existingRecord) {
+        await service.from("student_records").insert({
+          user_id: access.enrolment.user_id,
+          enrolment_id: enrolmentId,
+          parish_id: parishId,
+          batch_id: batchId,
+          placement_id: placement.id,
+        });
+      }
+    }
+
     revalidatePath("/admin/students");
+    revalidatePath("/admin/records");
     const stateNote = !batch.is_active
       ? " (retired batch — student keeps portal access)"
       : !batch.enrolment_open
@@ -844,4 +939,208 @@ export async function getAdminStudentPathDetail(
       source: e.source as string,
     })),
   };
+}
+
+export async function listStudentPlacements(
+  userId: string,
+): Promise<
+  {
+    id: string;
+    reason: string | null;
+    started_at: string;
+    ended_at: string | null;
+    cohort_name: string | null;
+    batch_label: string | null;
+    parish_name: string | null;
+  }[]
+> {
+  const access = await requireAccessibleStudent(userId);
+  if (!access.ok) return [];
+
+  const { data, error } = await access.supabase
+    .from("student_placements")
+    .select(
+      "id, reason, started_at, ended_at, cohorts(name, year_start, year_end), batches(name, year), parishes(name)",
+    )
+    .eq("user_id", userId)
+    .order("started_at", { ascending: false });
+
+  if (error) {
+    console.error("[placements list]", error.message);
+    return [];
+  }
+
+  return (data ?? []).map((row) => {
+    const cohort = Array.isArray(row.cohorts)
+      ? row.cohorts[0]
+      : row.cohorts;
+    const batch = Array.isArray(row.batches) ? row.batches[0] : row.batches;
+    const parish = Array.isArray(row.parishes)
+      ? row.parishes[0]
+      : row.parishes;
+    return {
+      id: row.id as string,
+      reason: (row.reason as string | null) ?? null,
+      started_at: row.started_at as string,
+      ended_at: (row.ended_at as string | null) ?? null,
+      cohort_name: cohort
+        ? `${cohort.name as string} (${cohort.year_start}/${String(cohort.year_end).slice(-2)})`
+        : null,
+      batch_label: batch
+        ? `${batch.name as string} (${batch.year as number})`
+        : null,
+      parish_name: (parish?.name as string | null) ?? null,
+    };
+  });
+}
+
+export async function setManualsSent(
+  studentId: string,
+  sent: boolean,
+): Promise<StudentActionResult> {
+  try {
+    const access = await requireAccessibleStudent(studentId);
+    if (!access.ok) return { ok: false, message: access.message };
+
+    const actor = await requireSessionAdmin();
+    const service = createServiceSupabaseClient();
+    const now = new Date().toISOString();
+
+    const { error } = await service
+      .from("student_profiles")
+      .update({
+        manuals_status: sent ? "sent" : "not_sent",
+        manuals_sent_at: sent ? now : null,
+        manuals_sent_by: sent ? actor.id : null,
+      })
+      .eq("id", studentId);
+
+    if (error) {
+      return { ok: false, message: publicActionMessage(error.message) };
+    }
+
+    if (sent) {
+      const { data: profile } = await service
+        .from("student_profiles")
+        .select("email, first_name")
+        .eq("id", studentId)
+        .maybeSingle();
+      if (profile?.email) {
+        void sendManualsSentEmail({
+          to: profile.email,
+          firstName: profile.first_name || "friend",
+          portalLoginUrl: `${portalBaseUrl()}/login/student`,
+          portalSupportUrl: `${portalBaseUrl()}/student/support`,
+          siteUrl: SOD_SITE,
+        }).catch((mailError) => {
+          console.error("[admin/students] manuals email", mailError);
+        });
+      }
+    }
+
+    revalidatePath("/admin/students");
+    return {
+      ok: true,
+      message: sent
+        ? "Manuals marked as sent. A notification email was queued."
+        : "Manuals marked as not sent.",
+    };
+  } catch (error) {
+    if (error instanceof Error && error.message === "Unauthorized") {
+      return unauthorized();
+    }
+    return { ok: false, message: publicActionMessage(error) };
+  }
+}
+
+export async function bulkSetManualsSent(
+  studentIds: string[],
+): Promise<StudentActionResult> {
+  try {
+    if (!studentIds.length) {
+      return { ok: false, message: "Select at least one student." };
+    }
+
+    const actor = await requireSessionAdmin();
+    const service = createServiceSupabaseClient();
+    const now = new Date().toISOString();
+    let updated = 0;
+
+    for (const studentId of studentIds) {
+      const access = await requireAccessibleStudent(studentId);
+      if (!access.ok) continue;
+
+      const { error } = await service
+        .from("student_profiles")
+        .update({
+          manuals_status: "sent",
+          manuals_sent_at: now,
+          manuals_sent_by: actor.id,
+        })
+        .eq("id", studentId);
+
+      if (!error) {
+        updated += 1;
+        const { data: profile } = await service
+          .from("student_profiles")
+          .select("email, first_name")
+          .eq("id", studentId)
+          .maybeSingle();
+        if (profile?.email) {
+          void sendManualsSentEmail({
+            to: profile.email,
+            firstName: profile.first_name || "friend",
+            portalLoginUrl: `${portalBaseUrl()}/login/student`,
+            portalSupportUrl: `${portalBaseUrl()}/student/support`,
+            siteUrl: SOD_SITE,
+          }).catch((mailError) => {
+            console.error("[admin/students] bulk manuals email", mailError);
+          });
+        }
+      }
+    }
+
+    revalidatePath("/admin/students");
+    return {
+      ok: true,
+      message: `Marked manuals sent for ${updated} student${updated === 1 ? "" : "s"}. Notification emails were queued.`,
+    };
+  } catch (error) {
+    if (error instanceof Error && error.message === "Unauthorized") {
+      return unauthorized();
+    }
+    return { ok: false, message: publicActionMessage(error) };
+  }
+}
+
+export async function upgradeAlumniToStudent(
+  studentId: string,
+): Promise<StudentActionResult> {
+  try {
+    const access = await requireAccessibleStudent(studentId);
+    if (!access.ok) return { ok: false, message: access.message };
+
+    const service = createServiceSupabaseClient();
+    const { error } = await service
+      .from("student_profiles")
+      .update({ account_kind: "student" })
+      .eq("id", studentId)
+      .eq("account_kind", "alumni");
+
+    if (error) {
+      return { ok: false, message: publicActionMessage(error.message) };
+    }
+
+    revalidatePath("/admin/students");
+    revalidatePath("/admin/alumni");
+    return {
+      ok: true,
+      message: "Upgraded to active student. They now use the student portal.",
+    };
+  } catch (error) {
+    if (error instanceof Error && error.message === "Unauthorized") {
+      return unauthorized();
+    }
+    return { ok: false, message: publicActionMessage(error) };
+  }
 }

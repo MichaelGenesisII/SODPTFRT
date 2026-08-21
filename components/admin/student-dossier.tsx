@@ -11,7 +11,9 @@ import {
   getAdminStudentPathDetail,
   reassignEnrolmentBatch,
   resetStudentPassword,
+  setManualsSent,
   setStudentActive,
+  upgradeAlumniToStudent,
   updateEnrolmentContact,
   updateEnrolmentStatus,
   updatePaymentStatus,
@@ -31,6 +33,10 @@ import {
 import { isNationalAdmin, type AdminProfile } from "@/lib/admin/profile";
 import { ATTENDANCE_MODES } from "@/lib/enrol/schema";
 import { FEE_STATUS_META, formatGbp } from "@/lib/payments/fees";
+import {
+  ACCOUNT_KIND_LABELS,
+  MANUALS_STATUS_LABELS,
+} from "@/lib/student/account";
 import { formatBatchLabel, formatBatchPlacementLabel, type Batch, type Parish } from "@/lib/parishes";
 
 const fieldClass =
@@ -124,11 +130,13 @@ export function StudentDossier({
     enrol?.parish_id ?? profile.parish_id ?? "",
   );
   const [assignBatchId, setAssignBatchId] = useState(enrol?.batch_id ?? "");
+  const [assignReason, setAssignReason] = useState("");
 
   useEffect(() => {
     setTab("profile");
     setAssignParishId(enrol?.parish_id ?? profile.parish_id ?? "");
     setAssignBatchId(enrol?.batch_id ?? "");
+    setAssignReason("");
     setPathDetail(null);
   }, [student.id, enrol?.parish_id, enrol?.batch_id, profile.parish_id]);
 
@@ -326,12 +334,14 @@ export function StudentDossier({
             parishes={parishes}
             assignParishId={assignParishId}
             assignBatchId={assignBatchId}
+            assignReason={assignReason}
             assignBatches={assignBatches}
             onAssignParish={(id) => {
               setAssignParishId(id);
               setAssignBatchId("");
             }}
             onAssignBatch={setAssignBatchId}
+            onAssignReason={setAssignReason}
             onRun={onRun}
             onDeleteRequest={onDeleteRequest}
             onCopyPassword={onCopyPassword}
@@ -645,9 +655,11 @@ function ManagePane({
   parishes,
   assignParishId,
   assignBatchId,
+  assignReason,
   assignBatches,
   onAssignParish,
   onAssignBatch,
+  onAssignReason,
   onRun,
   onDeleteRequest,
   onCopyPassword,
@@ -659,12 +671,14 @@ function ManagePane({
   parishes: Pick<Parish, "id" | "name">[];
   assignParishId: string;
   assignBatchId: string;
+  assignReason: string;
   assignBatches: Pick<
     Batch,
     "id" | "parish_id" | "name" | "year" | "enrolment_open" | "is_active"
   >[];
   onAssignParish: (id: string) => void;
   onAssignBatch: (id: string) => void;
+  onAssignReason: (value: string) => void;
   onRun: (
     action: () => Promise<StudentActionResult>,
     options?: { clearPassword?: boolean },
@@ -743,7 +757,7 @@ function ManagePane({
           <ul className="mt-3 divide-y divide-stone border-y border-stone">
             {student.fees.length === 0 ? (
               <li className="py-4 text-sm text-ink/45">
-                No fee rows yet (application / graduation).
+                No fee rows yet (tuition / graduation).
               </li>
             ) : (
               student.fees.map((fee) => (
@@ -753,7 +767,8 @@ function ManagePane({
                 >
                   <span className="capitalize">{fee.fee_type}</span>
                   <span className="text-ink/60">
-                    {formatGbp(fee.amount_gbp)} ·{" "}
+                    {formatGbp(fee.amount_paid_gbp)} /{" "}
+                    {formatGbp(fee.amount_due_gbp)} ·{" "}
                     {FEE_STATUS_META[fee.status]?.label ?? fee.status}
                   </span>
                 </li>
@@ -789,7 +804,7 @@ function ManagePane({
             </h3>
             <p className="mt-2 text-sm leading-relaxed text-ink/60">
               Closed or retired batches stay available for late placement.
-              Students keep portal access either way.
+              Previous scorecards are kept when you move cohort or batch.
             </p>
             <div className="mt-4 flex flex-col gap-3">
               {national ? (
@@ -824,6 +839,15 @@ function ManagePane({
                   ))}
                 </select>
               </label>
+              <label className="block text-sm">
+                Reason for move
+                <input
+                  value={assignReason}
+                  onChange={(e) => onAssignReason(e.target.value)}
+                  placeholder="Optional — e.g. availability, pastoral request"
+                  className={`mt-1 ${fieldClass}`}
+                />
+              </label>
               <button
                 type="button"
                 disabled={pending || !assignParishId || !assignBatchId}
@@ -833,6 +857,7 @@ function ManagePane({
                       enrol.id,
                       assignParishId,
                       assignBatchId,
+                      { reason: assignReason },
                     ),
                   )
                 }
@@ -841,6 +866,55 @@ function ManagePane({
                 Save placement
               </button>
             </div>
+          </div>
+        ) : null}
+
+        <div>
+          <p className="text-[0.65rem] font-medium uppercase tracking-[0.14em] text-celadon">
+            Manuals
+          </p>
+          <h3 className="mt-1 font-display text-xl text-pine">Course manuals</h3>
+          <p className="mt-2 text-sm text-ink/60">
+            Status:{" "}
+            {MANUALS_STATUS_LABELS[student.manuals_status ?? "not_sent"]}
+          </p>
+          <button
+            type="button"
+            disabled={pending}
+            onClick={() =>
+              onRun(() =>
+                setManualsSent(
+                  student.id,
+                  student.manuals_status !== "sent",
+                ),
+              )
+            }
+            className="mt-4 border border-pine/25 px-4 py-2.5 text-sm font-medium text-pine hover:border-pine disabled:opacity-50"
+          >
+            {student.manuals_status === "sent"
+              ? "Mark manuals not sent"
+              : "Mark manuals sent"}
+          </button>
+        </div>
+
+        {student.account_kind === "alumni" ? (
+          <div>
+            <p className="text-[0.65rem] font-medium uppercase tracking-[0.14em] text-celadon">
+              Alumni
+            </p>
+            <h3 className="mt-1 font-display text-xl text-pine">Re-entry</h3>
+            <p className="mt-2 text-sm text-ink/60">
+              {ACCOUNT_KIND_LABELS.alumni} — uses the alumni portal until
+              upgraded.
+            </p>
+            <button
+              type="button"
+              disabled={pending}
+              onClick={() => onRun(() => upgradeAlumniToStudent(student.id))}
+              className="mt-4 border border-pine px-4 py-2.5 text-sm font-medium text-pine hover:bg-pine hover:text-mist disabled:opacity-50"
+            >
+              Upgrade to active student
+            </button>
           </div>
         ) : null}
 

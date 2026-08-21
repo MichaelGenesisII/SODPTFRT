@@ -89,6 +89,8 @@ type ClassRow = {
   audience: ClassAudience;
   parish_id: string | null;
   batch_id: string | null;
+  cohort_id: string | null;
+  year: number | null;
   scheduled_start: string;
   scheduled_end: string;
   duration_minutes: number;
@@ -184,9 +186,18 @@ function resolveAudienceScope(input: {
   audience: ClassAudience;
   parish_id: string | null;
   batch_id: string | null;
+  cohort_id: string | null;
+  year: number | null;
   batchParishId: string | null;
   actor: AdminProfile;
-}): { parish_id: string | null; batch_id: string | null } | ClassActionResult {
+}):
+  | {
+      parish_id: string | null;
+      batch_id: string | null;
+      cohort_id: string | null;
+      year: number | null;
+    }
+  | ClassActionResult {
   const { audience, actor } = input;
 
   if (audience === "everyone") {
@@ -196,7 +207,41 @@ function resolveAudienceScope(input: {
         message: "Only national admins can schedule classes for everyone.",
       };
     }
-    return { parish_id: null, batch_id: null };
+    return {
+      parish_id: null,
+      batch_id: null,
+      cohort_id: null,
+      year: null,
+    };
+  }
+
+  if (audience === "cohort" || audience === "year") {
+    if (!isNationalAdmin(actor)) {
+      return {
+        ok: false,
+        message: "Only national admins can schedule cohort or year classes.",
+      };
+    }
+    if (audience === "cohort") {
+      if (!input.cohort_id) {
+        return { ok: false, message: "Choose a cohort for this class." };
+      }
+      return {
+        parish_id: null,
+        batch_id: null,
+        cohort_id: input.cohort_id,
+        year: null,
+      };
+    }
+    if (input.year == null || !Number.isFinite(input.year)) {
+      return { ok: false, message: "Choose a programme year for this class." };
+    }
+    return {
+      parish_id: null,
+      batch_id: null,
+      cohort_id: null,
+      year: input.year,
+    };
   }
 
   if (audience === "parish") {
@@ -208,7 +253,12 @@ function resolveAudienceScope(input: {
     }
     const scope = assertParishScope(actor, parishId);
     if (scope) return scope;
-    return { parish_id: parishId, batch_id: null };
+    return {
+      parish_id: parishId,
+      batch_id: null,
+      cohort_id: null,
+      year: null,
+    };
   }
 
   // batch
@@ -223,12 +273,20 @@ function resolveAudienceScope(input: {
   }
   const scope = assertParishScope(actor, parishId);
   if (scope) return scope;
-  return { parish_id: parishId, batch_id: input.batch_id };
+  return {
+    parish_id: parishId,
+    batch_id: input.batch_id,
+    cohort_id: null,
+    year: null,
+  };
 }
 
 function mapClass(row: Record<string, unknown>): ZoomClass {
   const parish = row.parishes as { name?: string } | null;
   const batch = row.batches as { name?: string; year?: number } | null;
+  const cohort = row.cohorts as
+    | { name?: string; year_start?: number; year_end?: number }
+    | null;
   return {
     id: row.id as string,
     title: row.title as string,
@@ -236,6 +294,8 @@ function mapClass(row: Record<string, unknown>): ZoomClass {
     audience: (row.audience as ClassAudience) || "everyone",
     parish_id: (row.parish_id as string | null) ?? null,
     batch_id: (row.batch_id as string | null) ?? null,
+    cohort_id: (row.cohort_id as string | null) ?? null,
+    year: row.year != null ? Number(row.year) : null,
     scheduled_start: row.scheduled_start as string,
     scheduled_end: row.scheduled_end as string,
     duration_minutes: Number(row.duration_minutes),
@@ -254,6 +314,7 @@ function mapClass(row: Record<string, unknown>): ZoomClass {
     parish_name: parish?.name ?? null,
     batch_name: batch?.name ?? null,
     batch_year: batch?.year ?? null,
+    cohort_name: cohort?.name ?? null,
   };
 }
 
@@ -276,6 +337,8 @@ export async function previewClassInvite(input: {
   audience: ClassAudience;
   parish_id: string | null;
   batch_id: string | null;
+  cohort_id?: string | null;
+  year?: number | null;
 }): Promise<ClassInvitePreview> {
   const actor = await requireSessionAdmin();
   const supabase = await createServerSupabaseClient();
@@ -283,6 +346,7 @@ export async function previewClassInvite(input: {
   let batchParishId: string | null = null;
   let parishName: string | null = null;
   let batchName: string | null = null;
+  let cohortName: string | null = null;
 
   if (input.batch_id) {
     const { data: batch } = await supabase
@@ -294,10 +358,21 @@ export async function previewClassInvite(input: {
     batchName = batch?.name ?? null;
   }
 
+  if (input.cohort_id) {
+    const { data: cohort } = await supabase
+      .from("cohorts")
+      .select("name")
+      .eq("id", input.cohort_id)
+      .maybeSingle();
+    cohortName = cohort?.name ?? null;
+  }
+
   const resolved = resolveAudienceScope({
     audience: input.audience,
     parish_id: input.parish_id,
     batch_id: input.batch_id,
+    cohort_id: input.cohort_id ?? null,
+    year: input.year ?? null,
     batchParishId,
     actor,
   });
@@ -318,12 +393,20 @@ export async function previewClassInvite(input: {
     audience: input.audience,
     parishId: resolved.parish_id,
     batchId: resolved.batch_id,
+    cohortId: resolved.cohort_id,
+    year: resolved.year,
   });
 
   return {
     recipientCount: recipients.length,
     sampleEmails: recipients.slice(0, 5).map((r) => r.email),
-    audienceLabel: audienceLabel(input.audience, parishName, batchName),
+    audienceLabel: audienceLabel(
+      input.audience,
+      parishName,
+      batchName,
+      cohortName,
+      resolved.year,
+    ),
   };
 }
 
@@ -391,7 +474,7 @@ export async function listAdminClasses(): Promise<ZoomClass[]> {
 
   let q = supabase
     .from("zoom_classes")
-    .select("*, parishes(name), batches(name, year)")
+    .select("*, parishes(name), batches(name, year), cohorts(name, year_start, year_end)")
     .order("scheduled_start", { ascending: false })
     .limit(200);
 
@@ -532,7 +615,7 @@ export async function searchClassStudents(
   const ids = profiles.map((p) => p.id);
   let enrolmentQuery = service
     .from("enrolments")
-    .select("user_id, parish_id, batch_id, created_at")
+    .select("user_id, parish_id, batch_id, cohort_id, created_at, cohorts(year_start)")
     .in("user_id", ids)
     .order("created_at", { ascending: false });
 
@@ -545,13 +628,21 @@ export async function searchClassStudents(
 
   const enrolmentByUser = new Map<
     string,
-    { parish_id: string | null; batch_id: string | null }
+    {
+      parish_id: string | null;
+      batch_id: string | null;
+      cohort_id: string | null;
+      cohort_year_start: number | null;
+    }
   >();
   for (const e of enrolments ?? []) {
     if (!enrolmentByUser.has(e.user_id)) {
+      const cohort = Array.isArray(e.cohorts) ? e.cohorts[0] : e.cohorts;
       enrolmentByUser.set(e.user_id, {
         parish_id: e.parish_id,
         batch_id: e.batch_id,
+        cohort_id: (e.cohort_id as string | null) ?? null,
+        cohort_year_start: cohort?.year_start ?? null,
       });
     }
   }
@@ -576,8 +667,12 @@ export async function searchClassStudents(
         audience: klass.audience || "everyone",
         classParishId: klass.parish_id,
         classBatchId: klass.batch_id,
+        classCohortId: klass.cohort_id,
+        classYear: klass.year,
         studentParishId: p.parish_id,
         studentBatchId: p.batch_id,
+        studentCohortId: enrolmentByUser.get(p.id)?.cohort_id,
+        studentCohortYearStart: enrolmentByUser.get(p.id)?.cohort_year_start,
       }),
     )
     .slice(0, 20);
@@ -589,6 +684,8 @@ export async function createZoomClass(input: {
   audience: ClassAudience;
   parish_id: string | null;
   batch_id: string | null;
+  cohort_id?: string | null;
+  year?: number | null;
   scheduled_start: string;
   scheduled_end: string;
   duration_minutes: number;
@@ -625,6 +722,8 @@ export async function createZoomClass(input: {
     audience: input.audience,
     parish_id: input.parish_id,
     batch_id: input.batch_id,
+    cohort_id: input.cohort_id ?? null,
+    year: input.year ?? null,
     batchParishId,
     actor,
   });
@@ -694,6 +793,8 @@ export async function createZoomClass(input: {
       audience: input.audience,
       parish_id: resolved.parish_id,
       batch_id: resolved.batch_id,
+      cohort_id: resolved.cohort_id,
+      year: resolved.year,
       scheduled_start: start.toISOString(),
       scheduled_end: end.toISOString(),
       duration_minutes: duration,
@@ -720,10 +821,13 @@ export async function createZoomClass(input: {
       audience: input.audience,
       parishId: resolved.parish_id,
       batchId: resolved.batch_id,
+      cohortId: resolved.cohort_id,
+      year: resolved.year,
     });
 
     let parishName: string | null = null;
     let batchName: string | null = null;
+    let cohortName: string | null = null;
     if (resolved.parish_id) {
       const { data: parish } = await supabase
         .from("parishes")
@@ -740,9 +844,23 @@ export async function createZoomClass(input: {
         .maybeSingle();
       batchName = batch?.name ?? null;
     }
+    if (resolved.cohort_id) {
+      const { data: cohort } = await supabase
+        .from("cohorts")
+        .select("name")
+        .eq("id", resolved.cohort_id)
+        .maybeSingle();
+      cohortName = cohort?.name ?? null;
+    }
 
     const whenLabel = formatClassWhenLabel(start.toISOString());
-    const scopeLabel = audienceLabel(input.audience, parishName, batchName);
+    const scopeLabel = audienceLabel(
+      input.audience,
+      parishName,
+      batchName,
+      cohortName,
+      resolved.year,
+    );
     const notes =
       [input.description?.trim(), input.email_notes?.trim()]
         .filter(Boolean)
@@ -837,11 +955,15 @@ export async function markManualAttendance(input: {
 
   const { data: enrolment } = await service
     .from("enrolments")
-    .select("parish_id, batch_id")
+    .select("parish_id, batch_id, cohort_id, cohorts(year_start)")
     .eq("user_id", input.userId)
     .order("created_at", { ascending: false })
     .limit(1)
     .maybeSingle();
+
+  const cohort = Array.isArray(enrolment?.cohorts)
+    ? enrolment?.cohorts[0]
+    : enrolment?.cohorts;
 
   if (
     !isNationalAdmin(actor) &&
@@ -859,8 +981,12 @@ export async function markManualAttendance(input: {
       audience: (klass.audience as ClassAudience) || "everyone",
       classParishId: klass.parish_id,
       classBatchId: klass.batch_id,
+      classCohortId: klass.cohort_id,
+      classYear: klass.year,
       studentParishId: enrolment?.parish_id,
       studentBatchId: enrolment?.batch_id,
+      studentCohortId: (enrolment?.cohort_id as string | null) ?? null,
+      studentCohortYearStart: cohort?.year_start ?? null,
     })
   ) {
     return {
@@ -1003,19 +1129,27 @@ export async function syncZoomClassAttendance(
   const profileIds = [...new Set([...emailToUser.values()])];
   const enrolByUser = new Map<
     string,
-    { parish_id: string | null; batch_id: string | null }
+    {
+      parish_id: string | null;
+      batch_id: string | null;
+      cohort_id: string | null;
+      cohort_year_start: number | null;
+    }
   >();
   if (profileIds.length) {
     const { data: enrolments } = await service
       .from("enrolments")
-      .select("user_id, parish_id, batch_id, created_at")
+      .select("user_id, parish_id, batch_id, cohort_id, created_at, cohorts(year_start)")
       .in("user_id", profileIds)
       .order("created_at", { ascending: false });
     for (const row of enrolments ?? []) {
       if (!enrolByUser.has(row.user_id)) {
+        const cohort = Array.isArray(row.cohorts) ? row.cohorts[0] : row.cohorts;
         enrolByUser.set(row.user_id, {
           parish_id: row.parish_id,
           batch_id: row.batch_id,
+          cohort_id: (row.cohort_id as string | null) ?? null,
+          cohort_year_start: cohort?.year_start ?? null,
         });
       }
     }
@@ -1049,8 +1183,12 @@ export async function syncZoomClassAttendance(
           audience: classAudience,
           classParishId: klass.parish_id,
           classBatchId: klass.batch_id,
+          classCohortId: klass.cohort_id,
+          classYear: klass.year,
           studentParishId: enrolment?.parish_id,
           studentBatchId: enrolment?.batch_id,
+          studentCohortId: enrolment?.cohort_id,
+          studentCohortYearStart: enrolment?.cohort_year_start,
         })
       ) {
         outOfAudience += 1;

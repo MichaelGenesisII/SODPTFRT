@@ -17,6 +17,7 @@ import {
   type AdminProfile,
 } from "@/lib/admin/profile";
 import { createTemporaryPassword } from "@/lib/enrol/reference";
+import { parishAdminEnabled } from "@/lib/admin/features";
 import type { Parish } from "@/lib/parishes";
 
 const fieldClass =
@@ -89,6 +90,7 @@ export function AccessManager({
   const { success, error, info } = useToast();
   const national = isNationalAdmin(profile);
   const parishDesk = isParishAdmin(profile);
+  const parishInvitesEnabled = parishAdminEnabled();
   const [panel, setPanel] = useState<Panel>("directory");
   const [pending, startTransition] = useTransition();
   const [showPassword, setShowPassword] = useState(false);
@@ -197,7 +199,9 @@ export function AccessManager({
       eyebrow: "Staff",
       title: "Invite an admin",
       lead: national
-        ? "Create their account and email a temporary password. Pick National or a parish desk."
+        ? parishInvitesEnabled
+          ? "Create their account and email a temporary password. Pick National or a parish desk."
+          : "Create a national desk account. We email them a temporary password."
         : `Create another admin for ${ownParishName}. We email them a temporary password.`,
     },
     password: {
@@ -564,6 +568,20 @@ export function AccessManager({
                       <p className="mt-1.5 text-xs text-ink/50">
                         Locked to your parish. You cannot invite to another
                         church or to National.
+                      </p>
+                    </>
+                  ) : !parishInvitesEnabled ? (
+                    <>
+                      <input type="hidden" name="parishId" value="" />
+                      <p
+                        id="parishId"
+                        className={`${fieldClass} bg-white/40 text-ink`}
+                      >
+                        National desk
+                      </p>
+                      <p className="mt-1.5 text-xs text-ink/50">
+                        Parish admin desks are paused. New admins join the
+                        national desk only.
                       </p>
                     </>
                   ) : (

@@ -40,6 +40,8 @@ export type AdminEnrolmentRecord = {
   occupation_other: string | null;
   parish_id: string | null;
   batch_id: string | null;
+  cohort_id: string | null;
+  legacy_app_com_no: string | null;
   local_church: string | null;
   church_leader: string;
   church_activities: string | null;
@@ -51,12 +53,17 @@ export type AdminEnrolmentRecord = {
   parish_region?: string | null;
   batch_name?: string | null;
   batch_year?: number | null;
+  cohort_name?: string | null;
+  cohort_year_start?: number | null;
+  cohort_year_end?: number | null;
 };
 
 export type StudentFeeSnap = {
-  fee_type: "application" | "graduation";
+  fee_type: "tuition" | "graduation";
   status: PaymentStatus;
   amount_gbp: number;
+  amount_due_gbp: number;
+  amount_paid_gbp: number;
   method: string | null;
   paid_at: string | null;
 };
@@ -78,6 +85,9 @@ export type AdminStudentRecord = {
   last_name: string;
   is_active: boolean;
   created_at: string;
+  account_kind?: "student" | "alumni";
+  manuals_status?: "not_sent" | "sent";
+  manuals_sent_at?: string | null;
   passport_url?: string | null;
   enrolment: AdminEnrolmentRecord | null;
   fees: StudentFeeSnap[];

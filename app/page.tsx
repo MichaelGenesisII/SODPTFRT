@@ -1,6 +1,5 @@
 import Image from "next/image";
 import Link from "next/link";
-import { AdminEntryLink } from "@/components/admin-entry-link";
 import { AnnouncementsSection } from "@/components/announcements";
 import { SiteFooter } from "@/components/site-footer";
 import { SiteHeader } from "@/components/site-header";
@@ -62,11 +61,6 @@ export default function Home() {
               <Link href="/login/student" className={heroSecondaryClass}>
                 Enter as Student
               </Link>
-              <AdminEntryLink
-                className={heroSecondaryClass}
-                guestLabel="Enter as Admin"
-                memberLabel="Open your desk"
-              />
             </div>
           </div>
         </div>

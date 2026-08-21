@@ -8,6 +8,7 @@ import {
 } from "react";
 import Link from "next/link";
 import {
+  bulkSetManualsSent,
   deleteStudentAccount,
   type StudentActionResult,
 } from "@/app/admin/students/actions";
@@ -22,10 +23,12 @@ import {
 import { isNationalAdmin, type AdminProfile } from "@/lib/admin/profile";
 import type { EnrolmentStatus } from "@/lib/student/types";
 import { formatBatchLabel, type Batch, type Parish } from "@/lib/parishes";
+import { DeskPagination } from "@/lib/ui/desk-pagination";
 
 const STUDENTS_PAGE_SIZE = 8;
 
 type PathLane = "all" | "review" | "secured" | "paused";
+type ManualsLane = "all" | "not_sent" | "sent";
 type PageView = "desk" | "insight";
 type MobileSurface = "directory" | "workspace";
 
@@ -99,6 +102,8 @@ export function StudentsManager({
     isNationalAdmin(profile) ? "" : profile.parish_id ?? "",
   );
   const [batchFilter, setBatchFilter] = useState("");
+  const [manualsFilter, setManualsFilter] = useState<ManualsLane>("all");
+  const [bulkSelected, setBulkSelected] = useState<string[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(
     students[0]?.id ?? null,
   );
@@ -151,6 +156,15 @@ export function StudentsManager({
       if (batchFilter && student.enrolment?.batch_id !== batchFilter) {
         return false;
       }
+      if (manualsFilter === "sent" && student.manuals_status !== "sent") {
+        return false;
+      }
+      if (
+        manualsFilter === "not_sent" &&
+        (student.manuals_status ?? "not_sent") !== "not_sent"
+      ) {
+        return false;
+      }
       if (!q) return true;
       const haystack = [
         studentFullName(student),
@@ -169,7 +183,7 @@ export function StudentsManager({
         .toLowerCase();
       return haystack.includes(q);
     });
-  }, [students, lane, query, parishFilter, batchFilter]);
+  }, [students, lane, query, parishFilter, batchFilter, manualsFilter]);
 
   const totalPages = Math.max(
     1,
@@ -187,7 +201,7 @@ export function StudentsManager({
   useEffect(() => {
     setPage(1);
     setMobileSurface("directory");
-  }, [lane, query, parishFilter, batchFilter]);
+  }, [lane, query, parishFilter, batchFilter, manualsFilter]);
 
   useEffect(() => {
     if (page > totalPages) setPage(totalPages);
@@ -418,7 +432,42 @@ export function StudentsManager({
                 ))}
               </select>
             </label>
+            <label className="flex flex-col gap-1 text-xs text-ink/50">
+              Manuals
+              <select
+                value={manualsFilter}
+                onChange={(event) =>
+                  setManualsFilter(event.target.value as ManualsLane)
+                }
+                className={filterSelectClass}
+              >
+                <option value="all">All</option>
+                <option value="not_sent">Not sent</option>
+                <option value="sent">Sent</option>
+              </select>
+            </label>
           </div>
+
+          {bulkSelected.length ? (
+            <div className="flex flex-wrap items-center gap-2 text-sm">
+              <span>{bulkSelected.length} selected</span>
+              <button
+                type="button"
+                disabled={pending}
+                onClick={() =>
+                  startTransition(async () => {
+                    const result = await bulkSetManualsSent(bulkSelected);
+                    if (result.ok) success(result.message);
+                    else error(result.message);
+                    setBulkSelected([]);
+                  })
+                }
+                className="border border-pine px-3 py-1.5 text-xs font-medium text-pine hover:bg-pine hover:text-mist disabled:opacity-50"
+              >
+                Mark manuals sent
+              </button>
+            </div>
+          ) : null}
 
           <div className="grid gap-3 lg:grid-cols-[minmax(0,20rem)_minmax(0,1fr)] xl:grid-cols-[minmax(0,22rem)_minmax(0,1fr)]">
             <section
@@ -443,17 +492,34 @@ export function StudentsManager({
                   const status = student.enrolment?.status;
                   return (
                     <li key={student.id}>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setSelectedId(student.id);
-                          setRevealedPassword(null);
-                          setMobileSurface("workspace");
-                        }}
-                        className={`flex w-full items-start gap-3 px-3 py-3 text-left transition-colors sm:px-4 sm:py-3.5 ${
+                      <div
+                        className={`flex w-full items-start gap-2 px-3 py-3 sm:px-4 sm:py-3.5 ${
                           active ? "bg-pine text-mist" : "hover:bg-stone/40"
                         }`}
                       >
+                        <input
+                          type="checkbox"
+                          checked={bulkSelected.includes(student.id)}
+                          onChange={(event) => {
+                            event.stopPropagation();
+                            setBulkSelected((prev) =>
+                              event.target.checked
+                                ? [...prev, student.id]
+                                : prev.filter((id) => id !== student.id),
+                            );
+                          }}
+                          className="mt-2 shrink-0"
+                          aria-label={`Select ${name}`}
+                        />
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSelectedId(student.id);
+                            setRevealedPassword(null);
+                            setMobileSurface("workspace");
+                          }}
+                          className="flex min-w-0 flex-1 items-start gap-3 text-left"
+                        >
                         <span
                           className={`mt-0.5 flex size-9 shrink-0 items-center justify-center text-xs font-medium ${
                             active
@@ -521,34 +587,19 @@ export function StudentsManager({
                           </span>
                         </span>
                       </button>
+                      </div>
                     </li>
                   );
                 })}
               </ul>
-              {totalPages > 1 ? (
-                <div className="flex items-center justify-between gap-2 border-t border-stone px-3 py-2.5 sm:px-4 sm:py-3">
-                  <button
-                    type="button"
-                    disabled={currentPage <= 1}
-                    onClick={() => goToPage(currentPage - 1)}
-                    className="border border-pine/25 px-2.5 py-1.5 text-xs font-medium text-pine disabled:opacity-40 sm:px-3 sm:py-2 sm:text-sm"
-                  >
-                    Prev
-                  </button>
-                  <p className="text-xs tabular-nums text-ink/60 sm:text-sm">
-                    <span className="font-medium text-ink">{currentPage}</span>/
-                    {totalPages}
-                  </p>
-                  <button
-                    type="button"
-                    disabled={currentPage >= totalPages}
-                    onClick={() => goToPage(currentPage + 1)}
-                    className="border border-pine/25 px-2.5 py-1.5 text-xs font-medium text-pine disabled:opacity-40 sm:px-3 sm:py-2 sm:text-sm"
-                  >
-                    Next
-                  </button>
-                </div>
-              ) : null}
+              <DeskPagination
+                page={currentPage}
+                totalItems={filtered.length}
+                pageSize={STUDENTS_PAGE_SIZE}
+                onPageChange={goToPage}
+                className="px-3 pb-2.5 sm:px-4 sm:pb-3"
+                itemLabel="students"
+              />
             </section>
 
             <section

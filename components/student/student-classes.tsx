@@ -453,7 +453,13 @@ function ClassRow({
       {open && hasExtra ? (
         <div className="mt-3 border border-stone bg-white/50 px-3 py-3 text-sm text-ink/65">
           <p className="text-[0.6rem] uppercase tracking-[0.12em] text-ink/40">
-            {audienceLabel(item.audience, item.parish_name, item.batch_name)}
+            {audienceLabel(
+              item.audience,
+              item.parish_name,
+              item.batch_name,
+              item.cohort_name,
+              item.year,
+            )}
           </p>
           {item.description ? (
             <p className="mt-2 whitespace-pre-wrap break-words leading-relaxed">

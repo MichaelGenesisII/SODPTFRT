@@ -107,7 +107,7 @@ export async function listBatchesForAdmin(
   let query = supabase
     .from("batches")
     .select(
-      "id, parish_id, name, year, enrolment_open, is_active, created_at, updated_at",
+      "id, parish_id, cohort_id, name, year, enrolment_open, is_active, created_at, updated_at",
     )
     .order("year", { ascending: false })
     .order("name", { ascending: true });

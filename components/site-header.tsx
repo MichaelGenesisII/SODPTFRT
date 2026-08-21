@@ -3,7 +3,7 @@
 import Image from "next/image";
 import Link from "next/link";
 import { useEffect, useId, useRef, useState } from "react";
-import { enrolHref, primaryNav, type NavItem } from "@/lib/site-nav";
+import { enrolHref, loginNav, primaryNav, type NavItem } from "@/lib/site-nav";
 
 function ExternalOrLocal({
   item,
@@ -32,6 +32,126 @@ function ExternalOrLocal({
     <Link href={item.href} className={className} onClick={onNavigate}>
       {item.label}
     </Link>
+  );
+}
+
+function DesktopNavDropdown({
+  item,
+  linkClass,
+  align = "left",
+}: {
+  item: NavItem;
+  linkClass: string;
+  align?: "left" | "right";
+}) {
+  const children = item.children ?? [];
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onPointerDown = (event: PointerEvent) => {
+      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("pointerdown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [open]);
+
+  if (!children.length) {
+    return <ExternalOrLocal item={item} className={linkClass} />;
+  }
+
+  return (
+    <div
+      ref={rootRef}
+      className="relative"
+      onMouseEnter={() => setOpen(true)}
+      onMouseLeave={() => setOpen(false)}
+    >
+      <button
+        type="button"
+        className={`${linkClass} inline-flex items-center gap-1`}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={() => setOpen((value) => !value)}
+      >
+        {item.label}
+        <svg
+          viewBox="0 0 12 12"
+          className={`size-3 opacity-60 transition-transform duration-200 ${
+            open ? "rotate-180" : ""
+          }`}
+          aria-hidden
+        >
+          <path
+            d="M2.5 4.5 6 8l3.5-3.5"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        </svg>
+      </button>
+      {open ? (
+        <div
+          className={`absolute top-full z-50 min-w-[10.5rem] pt-2 ${
+            align === "right" ? "right-0" : "left-0"
+          }`}
+          role="menu"
+        >
+          <div className="border border-stone/80 bg-mist py-1 shadow-lg">
+            {children.map((child) => (
+              <Link
+                key={child.href}
+                href={child.href}
+                role="menuitem"
+                onClick={() => setOpen(false)}
+                className="block px-4 py-2.5 text-[0.8125rem] font-medium tracking-wide text-ink/75 transition-colors hover:bg-stone/50 hover:text-pine"
+              >
+                {child.label}
+              </Link>
+            ))}
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function MobileLoginLinks({
+  onNavigate,
+}: {
+  onNavigate: () => void;
+}) {
+  const children = loginNav.children ?? [];
+  if (!children.length) return null;
+
+  return (
+    <div className="border-t border-stone pt-4">
+      <p className="text-[0.65rem] font-medium uppercase tracking-[0.18em] text-celadon">
+        Sign in
+      </p>
+      <div className="mt-3 grid grid-cols-3 gap-2">
+        {children.map((child) => (
+          <Link
+            key={child.href}
+            href={child.href}
+            onClick={onNavigate}
+            className="flex min-h-11 items-center justify-center border border-pine/20 bg-white/40 px-2 py-2.5 text-center text-[0.8125rem] font-medium leading-tight text-pine transition-colors hover:border-pine hover:bg-stone/40"
+          >
+            {child.label}
+          </Link>
+        ))}
+      </div>
+    </div>
   );
 }
 
@@ -121,7 +241,14 @@ export function SiteHeader() {
               ))}
             </nav>
 
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 sm:gap-3">
+              <div className="hidden xl:block">
+                <DesktopNavDropdown
+                  item={loginNav}
+                  linkClass={linkClass}
+                  align="right"
+                />
+              </div>
               <Link
                 href={enrolHref}
                 className="hidden bg-pine px-4 py-2 text-[0.8125rem] font-medium tracking-wide text-mist transition-colors duration-300 hover:bg-celadon sm:inline-flex"
@@ -148,25 +275,17 @@ export function SiteHeader() {
             >
               <nav className="flex flex-col gap-4" aria-label="Mobile">
                 {primaryNav.map((item) => (
-                  <div key={item.href} className="flex flex-col gap-2">
-                    <ExternalOrLocal
-                      item={item}
-                      className={mobileLinkClass}
-                      onNavigate={() => setOpen(false)}
-                    />
-                    {item.children?.map((child) => (
-                      <ExternalOrLocal
-                        key={child.href}
-                        item={child}
-                        className="nav-link-header w-fit pl-3 text-sm text-ink/65"
-                        onNavigate={() => setOpen(false)}
-                      />
-                    ))}
-                  </div>
+                  <ExternalOrLocal
+                    key={item.href}
+                    item={item}
+                    className={mobileLinkClass}
+                    onNavigate={() => setOpen(false)}
+                  />
                 ))}
+                <MobileLoginLinks onNavigate={() => setOpen(false)} />
                 <Link
                   href={enrolHref}
-                  className="mt-2 inline-flex w-fit bg-pine px-4 py-2.5 text-sm font-medium text-mist"
+                  className="inline-flex w-full items-center justify-center bg-pine px-4 py-3 text-sm font-medium text-mist"
                   onClick={() => setOpen(false)}
                 >
                   Enrol Now

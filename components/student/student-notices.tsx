@@ -7,6 +7,7 @@ import {
   isSafeAnnouncementHref,
   type Announcement,
 } from "@/lib/announcements";
+import { formatAttachmentSize } from "@/lib/desk-attachments";
 
 type NoticesTab = "latest" | "earlier";
 
@@ -51,6 +52,43 @@ function NoticeLink({
     <Link href={href} className={className}>
       {label}
     </Link>
+  );
+}
+
+function NoticeAttachments({
+  notice,
+  tone = "pine",
+}: {
+  notice: Announcement;
+  tone?: "pine" | "mist" | "parchment";
+}) {
+  if (!notice.attachments?.length) return null;
+
+  const linkClass =
+    tone === "mist"
+      ? "text-mist/85 underline-offset-2 hover:underline"
+      : tone === "parchment"
+        ? "text-[#6b4f2a] underline-offset-2 hover:underline"
+        : "text-pine underline-offset-2 hover:underline";
+
+  return (
+    <ul className="mt-3 space-y-1.5">
+      {notice.attachments.map((file) => (
+        <li key={file.id}>
+          <a
+            href={file.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className={`inline-flex items-center gap-2 text-sm ${linkClass}`}
+          >
+            <span>{file.name}</span>
+            <span className="text-[0.65rem] opacity-70">
+              ({formatAttachmentSize(file.byteSize)})
+            </span>
+          </a>
+        </li>
+      ))}
+    </ul>
   );
 }
 
@@ -170,6 +208,7 @@ export function StudentNoticesBoard({ notices }: { notices: Announcement[] }) {
                 <p className="mt-3 max-w-2xl whitespace-pre-wrap break-words text-sm leading-relaxed text-mist/75 sm:mt-4 sm:text-base">
                   {featured.body}
                 </p>
+                <NoticeAttachments notice={featured} tone="mist" />
                 {featured.href ? (
                   <NoticeLink
                     href={featured.href}
@@ -236,6 +275,7 @@ export function StudentNoticesBoard({ notices }: { notices: Announcement[] }) {
                             <p className="whitespace-pre-wrap break-words text-sm leading-relaxed text-ink/65">
                               {notice.body}
                             </p>
+                            <NoticeAttachments notice={notice} tone="parchment" />
                             {notice.href ? (
                               <NoticeLink
                                 href={notice.href}

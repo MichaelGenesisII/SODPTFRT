@@ -18,7 +18,11 @@ import { BANK_TRANSFER, formatGbp } from "@/lib/enrol/payment";
 import {
   FEE_CATALOGUE,
   FEE_STATUS_META,
+  MIN_INSTALLMENT_GBP,
   feeDefinition,
+  hasTuitionInstallmentPaid,
+  feeRemaining,
+  isFeeFullyPaid,
   type FeePaymentStatus,
   type FeeType,
   type StudentFeePayment,
@@ -41,9 +45,12 @@ type PaymentsBoardProps = {
   graduationSelfieNote?: string | null;
 };
 
-function bucketFor(status: FeePaymentStatus): PaymentsTab {
-  if (status === "paid") return "paid";
-  if (status === "pending_review") return "review";
+function bucketFor(
+  payment: StudentFeePayment | undefined,
+): PaymentsTab {
+  if (!payment) return "due";
+  if (isFeeFullyPaid(payment)) return "paid";
+  if (payment.status === "pending_review") return "review";
   return "due";
 }
 
@@ -52,8 +59,7 @@ function feeRowsFor(
   tab: PaymentsTab,
 ): FeeType[] {
   return FEE_CATALOGUE.map((fee) => fee.type).filter((type) => {
-    const status = payments[type]?.status ?? "unpaid";
-    return bucketFor(status) === tab;
+    return bucketFor(payments[type]) === tab;
   });
 }
 
@@ -79,9 +85,10 @@ export function StudentPaymentsBoard({
   const review = feeRowsFor(byType, "review");
   const paid = feeRowsFor(byType, "paid");
 
-  const applicationPaid = byType.application?.status === "paid";
-  const graduationPaid = byType.graduation?.status === "paid";
-  const needsPassport = applicationPaid && !passportUploaded;
+  const tuitionAccount = byType.tuition;
+  const passportUnlocked = hasTuitionInstallmentPaid(tuitionAccount);
+  const graduationPaid = byType.graduation ? isFeeFullyPaid(byType.graduation) : false;
+  const needsPassport = passportUnlocked && !passportUploaded;
   const needsSelfie =
     graduationPaid &&
     (!graduationSelfieUploaded || graduationSelfieTakenDown);
@@ -95,7 +102,7 @@ export function StudentPaymentsBoard({
         : "paid";
   const [tab, setTab] = useState<PaymentsTab>(defaultTab);
   const [openType, setOpenType] = useState<FeeType | null>(() => {
-    if (needsPassport) return "application";
+    if (needsPassport) return "tuition";
     if (needsSelfie) return "graduation";
     return (review[0] ?? due[0] ?? paid[0] ?? null) as FeeType | null;
   });
@@ -223,7 +230,7 @@ export function StudentPaymentsBoard({
         }
         body={
           tab === "due"
-            ? "Open a fee to pay by card or start a bank transfer."
+            ? "Open a fee, choose an amount, then pay by card or bank transfer."
             : tab === "review"
               ? "Bank proofs with the admin desk. You will get an email when approved."
               : "Fees that are settled — card or approved bank transfer."
@@ -281,7 +288,8 @@ function Header({ flash }: { flash?: string | null }) {
         Your payments
       </h1>
       <p className="mt-2 max-w-xl text-sm leading-relaxed text-ink/70 sm:mt-1.5">
-        Application and graduation — one fee at a time.
+        Choose tuition or graduation, then pay in full or by instalment — minimum{" "}
+        {formatGbp(MIN_INSTALLMENT_GBP)} each time unless you clear the balance.
       </p>
       {flash ? (
         <p className="mt-3 border border-pine/20 bg-pine/5 px-4 py-3 text-sm leading-relaxed text-pine">
@@ -322,20 +330,26 @@ function FeeRow({
   const fee = feeDefinition(feeType);
   const status = payment?.status ?? "unpaid";
   const meta = FEE_STATUS_META[status];
+  const remaining = payment ? feeRemaining(payment) : fee.amountGbp;
+  const paidSoFar = payment?.amount_paid_gbp ?? 0;
+  const fullyPaid = payment ? isFeeFullyPaid(payment) : false;
+  const passportAllowed =
+    feeType === "tuition" && paidSoFar > 0 && !passportUploaded;
+  const [amount, setAmount] = useState(String(Math.max(remaining, 0) || ""));
   const [mode, setMode] = useState<"idle" | "bank">("idle");
   const [pending, startTransition] = useTransition();
   const { success, error } = useToast();
   const router = useRouter();
 
   const needsPhoto =
-    status === "paid" &&
-    ((feeType === "application" && !passportUploaded) ||
-      (feeType === "graduation" &&
-        (!graduationSelfieUploaded || graduationSelfieTakenDown)));
+    passportAllowed ||
+    (fullyPaid &&
+      feeType === "graduation" &&
+      (!graduationSelfieUploaded || graduationSelfieTakenDown));
 
   function payCard() {
     startTransition(async () => {
-      const result = await startStripeCheckout(feeType);
+      const result = await startStripeCheckout(feeType, amount);
       if (!result.ok || !result.url) {
         error(result.message);
         return;
@@ -349,6 +363,7 @@ function FeeRow({
     const form = event.currentTarget;
     const formData = new FormData(form);
     formData.set("feeType", feeType);
+    formData.set("amount", amount);
     startTransition(async () => {
       const result = await submitBankProof(formData);
       if (!result.ok) {
@@ -375,7 +390,10 @@ function FeeRow({
           className="min-w-0 flex-1 text-left"
         >
           <p className="text-[0.6rem] uppercase tracking-[0.12em] text-celadon">
-            {meta.label} · {formatGbp(fee.amountGbp)}
+            {meta.label} · {formatGbp(fee.amountGbp)} total
+            {paidSoFar > 0 && !fullyPaid
+              ? ` · ${formatGbp(paidSoFar)} paid · ${formatGbp(remaining)} left`
+              : ""}
             {needsPhoto ? " · photo required" : ""}
           </p>
           <h3 className="mt-1 break-words font-display text-base text-pine sm:text-lg">
@@ -401,42 +419,45 @@ function FeeRow({
 
       {open ? (
         <div className="mt-3 space-y-3 border border-stone bg-white/50 px-3 py-3 text-sm text-ink/65 sm:px-4 sm:py-4">
-          {status === "paid" ? (
-            <>
-              <p className="leading-relaxed">
-                Paid
-                {payment?.method === "stripe"
-                  ? " by card"
-                  : payment?.method === "bank_transfer"
-                    ? " by bank transfer"
-                    : ""}
-                {payment?.paid_at
-                  ? ` · ${new Date(payment.paid_at).toLocaleDateString("en-GB")}`
+          {fullyPaid ? (
+            <p className="leading-relaxed">
+              Paid in full
+              {payment?.method === "stripe"
+                ? " (includes card payments)"
+                : payment?.method === "bank_transfer"
+                  ? " (includes approved bank transfers)"
                   : ""}
-                .
-              </p>
-              {feeType === "application" ? (
-                <PhotoUploadCard
-                  kind="passport"
-                  required={true}
-                  alreadyUploaded={passportUploaded}
-                  previewUrl={passportUrl}
-                />
-              ) : null}
-              {feeType === "graduation" ? (
-                <PhotoUploadCard
-                  kind="graduation_selfie"
-                  required
-                  alreadyUploaded={
-                    graduationSelfieUploaded && !graduationSelfieTakenDown
-                  }
-                  previewUrl={graduationSelfieUrl}
-                  takenDown={graduationSelfieTakenDown}
-                  moderationNote={graduationSelfieNote}
-                />
-              ) : null}
-            </>
-          ) : status === "pending_review" ? (
+              {payment?.paid_at
+                ? ` · ${new Date(payment.paid_at).toLocaleDateString("en-GB")}`
+                : ""}
+              .
+            </p>
+          ) : paidSoFar > 0 ? (
+            <p className="leading-relaxed">
+              {formatGbp(paidSoFar)} paid · {formatGbp(remaining)} remaining.
+            </p>
+          ) : null}
+          {passportAllowed ? (
+            <PhotoUploadCard
+              kind="passport"
+              required
+              alreadyUploaded={passportUploaded}
+              previewUrl={passportUrl}
+            />
+          ) : null}
+          {fullyPaid && feeType === "graduation" ? (
+            <PhotoUploadCard
+              kind="graduation_selfie"
+              required
+              alreadyUploaded={
+                graduationSelfieUploaded && !graduationSelfieTakenDown
+              }
+              previewUrl={graduationSelfieUrl}
+              takenDown={graduationSelfieTakenDown}
+              moderationNote={graduationSelfieNote}
+            />
+          ) : null}
+          {!fullyPaid && status === "pending_review" ? (
             <p className="leading-relaxed">
               Your bank proof is with the admin desk. You will get an email when
               it is approved.
@@ -447,14 +468,31 @@ function FeeRow({
                 </>
               ) : null}
             </p>
-          ) : mode === "bank" ? (
+          ) : !fullyPaid && mode === "bank" ? (
             <div className="space-y-4">
               <div className="border border-stone bg-stone/30 px-3 py-3 text-sm text-ink/70">
                 <p className="leading-relaxed">
-                  Transfer {formatGbp(fee.amountGbp)} using reference{" "}
+                  Transfer using reference{" "}
                   <span className="break-all font-mono text-pine">
                     {referenceCompact}
                   </span>
+                </p>
+                <label className="mt-3 block text-sm font-medium text-ink">
+                  Amount transferred (£)
+                  <input
+                    type="number"
+                    name="amount"
+                    min={1}
+                    step={1}
+                    required
+                    value={amount}
+                    onChange={(e) => setAmount(e.target.value)}
+                    className="mt-2 w-full border border-stone bg-white/70 px-3 py-2.5 text-sm outline-none focus:border-pine sm:py-2"
+                  />
+                </label>
+                <p className="mt-1 text-xs text-ink/45">
+                  Minimum {formatGbp(MIN_INSTALLMENT_GBP)} unless this clears your{" "}
+                  {formatGbp(remaining)} balance.
                 </p>
                 <dl className="mt-3 space-y-2 text-sm sm:space-y-1.5">
                   <BankLine label="Account name" value={BANK_TRANSFER.accountName} />
@@ -519,6 +557,22 @@ function FeeRow({
             </div>
           ) : (
             <div className="space-y-3">
+              <label className="block text-sm font-medium text-ink">
+                Amount to pay now (£)
+                <input
+                  type="number"
+                  min={1}
+                  step={1}
+                  value={amount}
+                  onChange={(e) => setAmount(e.target.value)}
+                  className="mt-2 w-full border border-stone bg-white/70 px-3 py-2.5 text-sm outline-none focus:border-pine sm:py-2"
+                />
+              </label>
+              <p className="text-xs leading-relaxed text-ink/45">
+                {formatGbp(remaining)} remaining · minimum{" "}
+                {formatGbp(MIN_INSTALLMENT_GBP)} per instalment unless you pay the
+                full balance.
+              </p>
               <div className="flex flex-col gap-2 sm:flex-row">
                 <button
                   type="button"

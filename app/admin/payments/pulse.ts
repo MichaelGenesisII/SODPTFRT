@@ -14,7 +14,7 @@ export async function getPaymentsPulse(): Promise<PaymentsPulse> {
   try {
     const supabase = await createServerSupabaseClient();
     const { count } = await supabase
-      .from("student_fee_payments")
+      .from("fee_transactions")
       .select("*", { count: "exact", head: true })
       .eq("status", "pending_review");
 

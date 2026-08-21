@@ -139,6 +139,8 @@ export type EnrolFormData = {
   postcode: string;
   /** Country of residence (address) — not nationality */
   country: string;
+  /** Place id from address search when lookup is configured */
+  addressPlaceId: string;
   mobileNumber: string;
   homeTelephone: string;
   email: string;
@@ -180,6 +182,7 @@ export const initialEnrolFormData: EnrolFormData = {
   county: "",
   postcode: "",
   country: "",
+  addressPlaceId: "",
   mobileNumber: "",
   homeTelephone: "",
   email: "",
@@ -206,11 +209,31 @@ export const initialEnrolFormData: EnrolFormData = {
   declarationAccepted: false,
 };
 
+export type ValidateStepContext = {
+  /** When false, place search is down — require typed address lines instead. */
+  addressLookupReady?: boolean;
+};
+
+function validateAddressLines(
+  data: EnrolFormData,
+  errors: Partial<Record<keyof EnrolFormData, string>>,
+) {
+  if (!data.addressLine1.trim())
+    errors.addressLine1 = "First line of address is required.";
+  if (!data.townCity.trim()) errors.townCity = "Town or city is required.";
+  if (!data.postcode.trim()) errors.postcode = "Postcode is required.";
+  if (!data.country) errors.country = "Country is required.";
+  else if (!(COUNTRIES as readonly string[]).includes(data.country))
+    errors.country = "Please choose a valid country.";
+}
+
 export function validateStep(
   stepId: EnrolStepId,
   data: EnrolFormData,
+  context: ValidateStepContext = {},
 ): Partial<Record<keyof EnrolFormData, string>> {
   const errors: Partial<Record<keyof EnrolFormData, string>> = {};
+  const addressLookupReady = context.addressLookupReady ?? true;
 
   if (stepId === "program") {
     if (!data.attendanceMode) {
@@ -228,13 +251,25 @@ export function validateStep(
   }
 
   if (stepId === "address") {
-    if (!data.addressLine1.trim())
-      errors.addressLine1 = "First line of address is required.";
-    if (!data.townCity.trim()) errors.townCity = "Town/City is required.";
-    if (!data.postcode.trim()) errors.postcode = "Postcode is required.";
-    if (!data.country) errors.country = "Country of residence is required.";
-    else if (!(COUNTRIES as readonly string[]).includes(data.country))
-      errors.country = "Please choose a valid country.";
+    if (addressLookupReady) {
+      if (!data.addressPlaceId.trim()) {
+        errors.addressPlaceId =
+          "Search for your address and choose a result from the list.";
+      } else if (
+        !data.addressLine1.trim() ||
+        !data.townCity.trim() ||
+        !data.postcode.trim() ||
+        !data.country
+      ) {
+        errors.addressPlaceId =
+          "That address could not be confirmed. Search again and pick from the list.";
+      } else if (!(COUNTRIES as readonly string[]).includes(data.country)) {
+        errors.addressPlaceId =
+          "That address is outside supported countries. Contact the school if you need help.";
+      }
+    } else {
+      validateAddressLines(data, errors);
+    }
     if (!data.mobileNumber.trim())
       errors.mobileNumber = "Mobile number is required.";
     else if (!/^\+?[\d\s()-]{7,20}$/.test(data.mobileNumber.trim()))
@@ -269,6 +304,11 @@ export function validateStep(
           errors.dateOfBirth = "Applicants must be at least 13 years old.";
         } else if (ageYears > 100) {
           errors.dateOfBirth = "Please check the date of birth.";
+        } else if (data.attendanceMode === "ignite") {
+          if (ageYears < 17 || ageYears > 22) {
+            errors.dateOfBirth =
+              "SOD Ignite is for young adults aged 17–22. Choose Standard, or check the date of birth.";
+          }
         }
       }
     }
@@ -285,14 +325,42 @@ export function validateStep(
     if (!data.bornAgain) errors.bornAgain = "Please answer this question.";
     else if (!yesNo.has(data.bornAgain))
       errors.bornAgain = "Please answer Yes or No.";
+    else if (data.bornAgain === "Yes") {
+      if (!data.bornAgainDate.trim())
+        errors.bornAgainDate = "Please add the date.";
+      if (!data.bornAgainWhere.trim())
+        errors.bornAgainWhere = "Please add where this happened.";
+    }
     if (!data.baptisedHolySpirit)
       errors.baptisedHolySpirit = "Please answer this question.";
     else if (!yesNo.has(data.baptisedHolySpirit))
       errors.baptisedHolySpirit = "Please answer Yes or No.";
+    else if (data.baptisedHolySpirit === "Yes") {
+      if (!data.holySpiritDate.trim())
+        errors.holySpiritDate = "Please add the date.";
+      if (!data.holySpiritWhere.trim())
+        errors.holySpiritWhere = "Please add where this happened.";
+    }
     if (!data.baptisedWater)
       errors.baptisedWater = "Please answer this question.";
     else if (!yesNo.has(data.baptisedWater))
       errors.baptisedWater = "Please answer Yes or No.";
+    else if (data.baptisedWater === "Yes") {
+      if (!data.waterBaptismDate.trim())
+        errors.waterBaptismDate = "Please add the date.";
+      if (!data.waterBaptismWhere.trim())
+        errors.waterBaptismWhere = "Please add where this happened.";
+    }
+  }
+
+  if (stepId === "preview") {
+    for (const prior of ENROL_STEPS) {
+      if (prior.id === "preview" || prior.id === "declaration") continue;
+      Object.assign(
+        errors,
+        validateStep(prior.id as EnrolStepId, data, context),
+      );
+    }
   }
 
   if (stepId === "life") {

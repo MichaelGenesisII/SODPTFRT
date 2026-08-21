@@ -21,7 +21,7 @@ async function getActiveStudentProfile(
 ) {
   const { data } = await supabase
     .from("student_profiles")
-    .select("id, is_active")
+    .select("id, is_active, account_kind")
     .eq("id", userId)
     .maybeSingle();
 
@@ -50,11 +50,52 @@ export async function middleware(request: NextRequest) {
       const profile = await getActiveStudentProfile(supabase, user.id);
       if (profile) {
         const portal = request.nextUrl.clone();
-        portal.pathname = "/student";
+        portal.pathname =
+          profile.account_kind === "alumni" ? "/alumni" : "/student";
         portal.search = "";
         return NextResponse.redirect(portal);
       }
     }
+    return response;
+  }
+
+  if (pathname === "/login/alumni") {
+    if (supabase && user) {
+      const profile = await getActiveStudentProfile(supabase, user.id);
+      if (profile && profile.account_kind === "alumni") {
+        const portal = request.nextUrl.clone();
+        portal.pathname = "/alumni";
+        portal.search = "";
+        return NextResponse.redirect(portal);
+      }
+    }
+    return response;
+  }
+
+  if (pathname.startsWith("/alumni")) {
+    if (!supabase) {
+      const login = request.nextUrl.clone();
+      login.pathname = "/login/alumni";
+      login.searchParams.set("error", "config");
+      return NextResponse.redirect(login);
+    }
+
+    if (!user) {
+      const login = request.nextUrl.clone();
+      login.pathname = "/login/alumni";
+      return NextResponse.redirect(login);
+    }
+
+    const profile = await getActiveStudentProfile(supabase, user.id);
+
+    if (!profile || profile.account_kind !== "alumni") {
+      await supabase.auth.signOut();
+      const login = request.nextUrl.clone();
+      login.pathname = "/login/alumni";
+      login.searchParams.set("error", "forbidden");
+      return NextResponse.redirect(login);
+    }
+
     return response;
   }
 
@@ -80,6 +121,12 @@ export async function middleware(request: NextRequest) {
       login.pathname = "/login/student";
       login.searchParams.set("error", "forbidden");
       return NextResponse.redirect(login);
+    }
+
+    if (profile.account_kind === "alumni") {
+      const alumni = request.nextUrl.clone();
+      alumni.pathname = pathname.replace(/^\/student/, "/alumni");
+      return NextResponse.redirect(alumni);
     }
 
     return response;
@@ -121,5 +168,7 @@ export const config = {
     "/login/admin",
     "/student/:path*",
     "/login/student",
+    "/alumni/:path*",
+    "/login/alumni",
   ],
 };

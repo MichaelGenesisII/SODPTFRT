@@ -115,12 +115,42 @@ async function studentEnrolment(userId: string) {
   const supabase = await createServerSupabaseClient();
   const { data } = await supabase
     .from("enrolments")
-    .select("parish_id, batch_id")
+    .select("parish_id, batch_id, cohort_id, cohorts(year_start)")
     .eq("user_id", userId)
     .order("created_at", { ascending: false })
     .limit(1)
     .maybeSingle();
-  return data;
+  if (!data) return null;
+  const cohort = Array.isArray(data.cohorts) ? data.cohorts[0] : data.cohorts;
+  return {
+    parish_id: data.parish_id as string | null,
+    batch_id: data.batch_id as string | null,
+    cohort_id: (data.cohort_id as string | null) ?? null,
+    cohort_year_start: cohort?.year_start ?? null,
+  };
+}
+
+function matchesStudentAudience(
+  klass: {
+    audience?: ClassAudience | null;
+    parish_id?: string | null;
+    batch_id?: string | null;
+    cohort_id?: string | null;
+    year?: number | null;
+  },
+  enrolment: Awaited<ReturnType<typeof studentEnrolment>>,
+) {
+  return studentMatchesClassAudience({
+    audience: (klass.audience as ClassAudience) || "everyone",
+    classParishId: klass.parish_id ?? null,
+    classBatchId: klass.batch_id ?? null,
+    classCohortId: klass.cohort_id ?? null,
+    classYear: klass.year ?? null,
+    studentParishId: enrolment?.parish_id,
+    studentBatchId: enrolment?.batch_id,
+    studentCohortId: enrolment?.cohort_id,
+    studentCohortYearStart: enrolment?.cohort_year_start,
+  });
 }
 
 function mapStudentClass(row: Record<string, unknown>): ZoomClass {
@@ -131,6 +161,8 @@ function mapStudentClass(row: Record<string, unknown>): ZoomClass {
     audience: (row.audience as ClassAudience) || "everyone",
     parish_id: (row.parish_id as string | null) ?? null,
     batch_id: (row.batch_id as string | null) ?? null,
+    cohort_id: (row.cohort_id as string | null) ?? null,
+    year: row.year != null ? Number(row.year) : null,
     scheduled_start: row.scheduled_start as string,
     scheduled_end: row.scheduled_end as string,
     duration_minutes: Number(row.duration_minutes),
@@ -150,6 +182,7 @@ function mapStudentClass(row: Record<string, unknown>): ZoomClass {
     batch_name: (row.batch_name as string | null) ?? null,
     batch_year:
       row.batch_year != null ? Number(row.batch_year) : null,
+    cohort_name: (row.cohort_name as string | null) ?? null,
   };
 }
 
@@ -183,11 +216,11 @@ export async function listStudentClasses(): Promise<ZoomClass[]> {
   const { data, error } = await supabase
     .from("zoom_classes")
     .select(
-      `id, title, description, audience, parish_id, batch_id,
+      `id, title, description, audience, parish_id, batch_id, cohort_id, year,
        scheduled_start, scheduled_end, duration_minutes,
        attendance_threshold_percent, zoom_meeting_id, zoom_meeting_uuid,
        zoom_join_url, zoom_passcode, status, created_by, last_synced_at,
-       created_at, updated_at, parishes(name), batches(name, year)`,
+       created_at, updated_at, parishes(name), batches(name, year), cohorts(name)`,
     )
     .in("status", ["scheduled", "live", "ended"])
     .order("scheduled_start", { ascending: true })
@@ -199,23 +232,17 @@ export async function listStudentClasses(): Promise<ZoomClass[]> {
   }
 
   return (data ?? [])
-    .filter((row) =>
-      studentMatchesClassAudience({
-        audience: (row.audience as ClassAudience) || "everyone",
-        classParishId: row.parish_id,
-        classBatchId: row.batch_id,
-        studentParishId: enrolment?.parish_id,
-        studentBatchId: enrolment?.batch_id,
-      }),
-    )
+    .filter((row) => matchesStudentAudience(row, enrolment))
     .map((row) => {
       const parish = row.parishes as { name?: string } | null;
       const batch = row.batches as { name?: string; year?: number } | null;
+      const cohort = row.cohorts as { name?: string } | null;
       return mapStudentClass({
         ...(row as Record<string, unknown>),
         parish_name: parish?.name ?? null,
         batch_name: batch?.name ?? null,
         batch_year: batch?.year ?? null,
+        cohort_name: cohort?.name ?? null,
       });
     });
 }
@@ -274,15 +301,7 @@ export async function markAttendanceWithCode(
   }
 
   const enrolment = await studentEnrolment(profile.id);
-  if (
-    !studentMatchesClassAudience({
-      audience: (klass.audience as ClassAudience) || "everyone",
-      classParishId: klass.parish_id,
-      classBatchId: klass.batch_id,
-      studentParishId: enrolment?.parish_id,
-      studentBatchId: enrolment?.batch_id,
-    })
-  ) {
+  if (!matchesStudentAudience(klass, enrolment)) {
     return {
       ok: false,
       message: "This class is not open to your parish / batch.",
@@ -414,15 +433,7 @@ export async function getInPortalJoinSession(
   }
 
   const enrolment = await studentEnrolment(profile.id);
-  if (
-    !studentMatchesClassAudience({
-      audience: (klass.audience as ClassAudience) || "everyone",
-      classParishId: klass.parish_id,
-      classBatchId: klass.batch_id,
-      studentParishId: enrolment?.parish_id,
-      studentBatchId: enrolment?.batch_id,
-    })
-  ) {
+  if (!matchesStudentAudience(klass, enrolment)) {
     return { ok: false, message: "This class is not open to you." };
   }
 
