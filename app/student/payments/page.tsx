@@ -63,13 +63,13 @@ export default async function StudentPaymentsPage({ searchParams }: PageProps) {
   let flash: string | null = null;
   if (paid === "tuition" || paid === "application") {
     flash =
-      "Payment received. You can upload your passport photograph after your first tuition instalment is confirmed.";
+      "Card checkout finished. Balance updates when payment is confirmed — refresh if needed. Passport unlocks after your first confirmed tuition instalment.";
   } else if (paid === "graduation") {
     flash =
-      "Graduation fee received. Please upload your graduation selfie below.";
+      "Card checkout finished for graduation. Upload your selfie once the fee shows as paid — refresh if needed.";
   } else if (paid) {
     flash =
-      "Card payment received. Status updates when Stripe confirms — refresh if needed.";
+      "Card checkout finished. Status updates when Stripe confirms — refresh if needed.";
   } else if (cancelled) {
     flash = "Checkout cancelled. You can try again anytime.";
   }

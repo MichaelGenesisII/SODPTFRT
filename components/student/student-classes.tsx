@@ -8,6 +8,7 @@ import {
   updateStudentZoomEmail,
 } from "@/app/student/classes/actions";
 import { InPortalZoom } from "@/components/classes/in-portal-zoom";
+import { DeskLoaderOverlay } from "@/components/ui/desk-loader";
 import { useToast } from "@/components/ui/toast";
 import {
   audienceLabel,
@@ -39,6 +40,8 @@ export function StudentClassesClient({
   const router = useRouter();
   const { success, error } = useToast();
   const [pending, startTransition] = useTransition();
+  const [busyLabel, setBusyLabel] = useState<string | null>(null);
+  const busy = pending || Boolean(busyLabel);
   const [tab, setTab] = useState<ClassesTab>("upcoming");
   const [zoomEmail, setZoomEmail] = useState(profile.zoom_email ?? "");
   const [checkInCode, setCheckInCode] = useState("");
@@ -69,45 +72,61 @@ export function StudentClassesClient({
 
   function saveZoomEmail(event: FormEvent) {
     event.preventDefault();
+    setBusyLabel("Saving Zoom seat…");
     startTransition(async () => {
-      const next = await updateStudentZoomEmail(zoomEmail);
-      if (next.ok) {
-        success(next.message, "Zoom seat");
-        router.refresh();
-      } else {
-        error(next.message, "Zoom seat");
+      try {
+        const next = await updateStudentZoomEmail(zoomEmail);
+        if (next.ok) {
+          success(next.message, "Zoom seat");
+          router.refresh();
+        } else {
+          error(next.message, "Zoom seat");
+        }
+      } finally {
+        setBusyLabel(null);
       }
     });
   }
 
   function submitCode(event: FormEvent) {
     event.preventDefault();
+    setBusyLabel("Checking you in…");
     startTransition(async () => {
-      const next = await markAttendanceWithCode(checkInCode);
-      if (next.ok) {
-        success(next.message, "Check-in");
-        setCheckInCode("");
-        setTab("upcoming");
-        router.refresh();
-      } else {
-        error(next.message, "Check-in");
+      try {
+        const next = await markAttendanceWithCode(checkInCode);
+        if (next.ok) {
+          success(next.message, "Check-in");
+          setCheckInCode("");
+          setTab("upcoming");
+          router.refresh();
+        } else {
+          error(next.message, "Check-in");
+        }
+      } finally {
+        setBusyLabel(null);
       }
     });
   }
 
   async function joinInPortal(classId: string) {
     setJoiningId(classId);
-    const next = await getInPortalJoinSession(classId);
-    setJoiningId(null);
-    if (!next.ok) {
-      error(next.message, "In-portal Zoom");
-      return;
+    setBusyLabel("Joining class…");
+    try {
+      const next = await getInPortalJoinSession(classId);
+      if (!next.ok) {
+        error(next.message, "In-portal Zoom");
+        return;
+      }
+      setPortalSession(next.session);
+    } finally {
+      setJoiningId(null);
+      setBusyLabel(null);
     }
-    setPortalSession(next.session);
   }
 
   return (
-    <div className="space-y-4 sm:space-y-5">
+    <div className="relative space-y-4 sm:space-y-5" aria-busy={busy}>
+      <DeskLoaderOverlay active={busy} label={busyLabel ?? "Working…"} />
       {portalSession ? (
         <section className="animate-panel-in border border-stone bg-mist">
           <div className="flex items-start justify-between gap-3 border-b border-stone px-3 py-3 sm:px-5">
@@ -230,10 +249,12 @@ export function StudentClassesClient({
             </label>
             <button
               type="submit"
-              disabled={pending || checkInCode.trim().length < 4}
+              disabled={busy || checkInCode.trim().length < 4}
               className="min-h-11 w-full bg-pine px-4 py-2.5 text-sm font-medium text-mist disabled:opacity-60 sm:w-auto"
             >
-              {pending ? "Checking…" : "Mark present"}
+              {busy && busyLabel?.startsWith("Checking")
+                ? "Checking…"
+                : "Mark present"}
             </button>
           </form>
         </Panel>
@@ -243,7 +264,7 @@ export function StudentClassesClient({
         <Panel
           eyebrow="Your Zoom seat"
           title="How we recognise you online"
-          body={`Join with ${profile.email}, or add a secondary Zoom email. Online present needs ≥75% of class length.`}
+          body={`Join with ${profile.email}, or add a secondary Zoom email. Online present needs ≥90% of class length.`}
         >
           <form
             onSubmit={saveZoomEmail}
@@ -261,10 +282,10 @@ export function StudentClassesClient({
             </label>
             <button
               type="submit"
-              disabled={pending}
+              disabled={busy}
               className="min-h-11 w-full border border-pine/30 px-4 py-2.5 text-sm font-medium text-pine disabled:opacity-60 sm:w-auto"
             >
-              {pending ? "Saving…" : "Save seat"}
+              {busy && busyLabel?.startsWith("Saving") ? "Saving…" : "Save seat"}
             </button>
           </form>
         </Panel>

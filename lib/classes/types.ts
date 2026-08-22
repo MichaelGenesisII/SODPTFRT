@@ -54,7 +54,7 @@ export type ZoomClassAttendance = {
   student_email?: string | null;
 };
 
-export const DEFAULT_ATTENDANCE_THRESHOLD = 75;
+export const DEFAULT_ATTENDANCE_THRESHOLD = 90;
 
 export function requiredSecondsForClass(
   durationMinutes: number,

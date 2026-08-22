@@ -1,3 +1,4 @@
+/** DB may still store legacy enum values; the platform only runs School of Disciples. */
 export type ProgrammeType = "sp" | "ep" | "other";
 
 export type Cohort = {
@@ -29,10 +30,13 @@ export type StudentPlacement = {
   parish_name?: string | null;
 };
 
+/** Only programme offered on this platform. */
+export const DEFAULT_PROGRAMME_TYPE: ProgrammeType = "sp";
+
 export const PROGRAMME_TYPE_LABELS: Record<ProgrammeType, string> = {
-  sp: "School of Disciples (SP)",
-  ep: "Evangelism Programme (EP)",
-  other: "Other",
+  sp: "School of Disciples",
+  ep: "School of Disciples",
+  other: "School of Disciples",
 };
 
 export function slugifyCohortName(name: string): string {

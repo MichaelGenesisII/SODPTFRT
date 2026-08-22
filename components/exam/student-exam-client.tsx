@@ -6,6 +6,7 @@ import { useState, useTransition } from "react";
 import { startStudentAttempt } from "@/app/exam/actions";
 import { ExamResultCertificate } from "@/components/exam/exam-result-certificate";
 import { ExamRunner } from "@/components/exam/exam-runner";
+import { DeskLoaderOverlay } from "@/components/ui/desk-loader";
 import { publicActionMessage } from "@/lib/safe-action-message";
 import { attemptHasFinalScore } from "@/lib/exams/attempt-status";
 import { passedExam } from "@/lib/exams/score";
@@ -35,6 +36,8 @@ export function StudentExamClient({
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
+  const [busyLabel, setBusyLabel] = useState<string | null>(null);
+  const busy = pending || Boolean(busyLabel);
   const [error, setError] = useState<string | null>(null);
   const [attempt, setAttempt] = useState(initialAttempt);
   const [live, setLive] = useState(false);
@@ -103,7 +106,9 @@ export function StudentExamClient({
         ) : (
           <div className="border border-stone bg-white/40 px-6 py-8">
             <p className="text-[0.7rem] uppercase tracking-[0.18em] text-celadon">
-              {attempt.status === "submitted" ? "Awaiting grading" : attempt.status}
+              {attempt.status === "submitted"
+                ? "Awaiting grading"
+                : attempt.status}
             </p>
             <h1 className="mt-2 font-display text-3xl text-pine">{exam.title}</h1>
             <p className="mt-3 text-sm text-ink/65">
@@ -128,7 +133,8 @@ export function StudentExamClient({
     (exam.closes_at && new Date(exam.closes_at).getTime() < Date.now());
 
   return (
-    <div className="mx-auto max-w-xl py-8">
+    <div className="relative mx-auto max-w-xl py-8" aria-busy={busy}>
+      <DeskLoaderOverlay active={busy} label={busyLabel ?? "Working…"} />
       <p className="text-[0.7rem] uppercase tracking-[0.18em] text-celadon">
         Ready when you are
       </p>
@@ -160,46 +166,51 @@ export function StudentExamClient({
       ) : null}
       <button
         type="button"
-        disabled={pending || Boolean(windowClosed)}
+        disabled={busy || Boolean(windowClosed)}
         onClick={() => {
+          setBusyLabel("Starting exam…");
           startTransition(async () => {
-            const result = await startStudentAttempt(exam.id);
-            if (!result.ok) {
-              setError(
-                publicActionMessage(
-                  result.message,
-                  "Could not start the exam. Please try again.",
-                ),
-              );
-              return;
+            try {
+              const result = await startStudentAttempt(exam.id);
+              if (!result.ok) {
+                setError(
+                  publicActionMessage(
+                    result.message,
+                    "Could not start the exam. Please try again.",
+                  ),
+                );
+                return;
+              }
+              router.refresh();
+              setAttempt({
+                id: result.attemptId!,
+                exam_id: exam.id,
+                user_id: null,
+                candidate: null,
+                attempt_token: result.token!,
+                status: "in_progress",
+                started_at: new Date().toISOString(),
+                submitted_at: null,
+                auto_score: 0,
+                manual_score: 0,
+                total_score: 0,
+                max_score: 0,
+                percent: null,
+                graded_by: null,
+                graded_at: null,
+                released_at: null,
+                created_at: new Date().toISOString(),
+                updated_at: new Date().toISOString(),
+              });
+              setLive(true);
+            } finally {
+              setBusyLabel(null);
             }
-            router.refresh();
-            setAttempt({
-              id: result.attemptId!,
-              exam_id: exam.id,
-              user_id: null,
-              candidate: null,
-              attempt_token: result.token!,
-              status: "in_progress",
-              started_at: new Date().toISOString(),
-              submitted_at: null,
-              auto_score: 0,
-              manual_score: 0,
-              total_score: 0,
-              max_score: 0,
-              percent: null,
-              graded_by: null,
-              graded_at: null,
-              released_at: null,
-              created_at: new Date().toISOString(),
-              updated_at: new Date().toISOString(),
-            });
-            setLive(true);
           });
         }}
         className="mt-6 bg-pine px-5 py-3 text-sm font-medium text-mist disabled:opacity-50"
       >
-        {pending ? "Starting…" : windowClosed ? "Exam not open" : "Begin exam"}
+        {busy ? "Starting…" : windowClosed ? "Exam not open" : "Begin exam"}
       </button>
     </div>
   );

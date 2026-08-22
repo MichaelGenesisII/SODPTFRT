@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useState, useTransition } from "react";
 import { requestEnrolmentPasswordReset } from "@/app/enrol/actions";
+import { DeskLoader, DeskLoaderOverlay } from "@/components/ui/desk-loader";
 import { useToast } from "@/components/ui/toast";
 import { contact, supportHref } from "@/lib/site-nav";
 
@@ -19,22 +20,36 @@ export function EnrolAlreadyApplied({
 }: EnrolAlreadyAppliedProps) {
   const { success, error } = useToast();
   const [pending, startTransition] = useTransition();
+  const [busyLabel, setBusyLabel] = useState<string | null>(null);
+  const busy = pending || Boolean(busyLabel);
   const [resetSent, setResetSent] = useState(false);
 
   function sendReset() {
+    setBusyLabel("Sending credentials…");
     startTransition(async () => {
-      const result = await requestEnrolmentPasswordReset(email);
-      if (!result.ok) {
-        error(result.message, "Could not send reset");
-        return;
+      try {
+        const result = await requestEnrolmentPasswordReset(email);
+        if (!result.ok) {
+          error(result.message, "Could not send reset");
+          return;
+        }
+        setResetSent(true);
+        success(result.message, "Check your inbox");
+      } finally {
+        setBusyLabel(null);
       }
-      setResetSent(true);
-      success(result.message, "Check your inbox");
     });
   }
 
   return (
-    <div className="animate-fade-rise border border-stone bg-mist">
+    <div
+      className="relative animate-fade-rise border border-stone bg-mist"
+      aria-busy={busy}
+    >
+      <DeskLoaderOverlay
+        active={busy}
+        label={busyLabel ?? "Sending credentials…"}
+      />
       <div className="relative overflow-hidden border-b border-stone px-5 py-8 sm:px-8 sm:py-10">
         <div
           className="pointer-events-none absolute -right-10 -top-16 h-40 w-40 rounded-full bg-[radial-gradient(circle,rgba(95,143,122,0.28),transparent_70%)]"
@@ -100,11 +115,15 @@ export function EnrolAlreadyApplied({
           ) : (
             <button
               type="button"
-              disabled={pending}
+              disabled={busy}
               onClick={sendReset}
-              className="mt-4 inline-flex w-full items-center justify-center border border-pine/30 px-5 py-3.5 text-sm font-medium text-pine transition-colors hover:border-pine hover:bg-stone/30 disabled:opacity-60 sm:w-auto"
+              className="mt-4 inline-flex min-h-[2.75rem] min-w-[12rem] w-full items-center justify-center border border-pine/30 px-5 py-3.5 text-sm font-medium text-pine transition-colors hover:border-pine hover:bg-stone/30 disabled:opacity-60 sm:w-auto"
             >
-              {pending ? "Sending…" : "Email me fresh credentials"}
+              {busy ? (
+                <DeskLoader label={busyLabel ?? "Sending…"} />
+              ) : (
+                "Email me fresh credentials"
+              )}
             </button>
           )}
         </li>
@@ -138,8 +157,9 @@ export function EnrolAlreadyApplied({
         <div className="border-t border-stone px-5 py-4 sm:px-8">
           <button
             type="button"
+            disabled={busy}
             onClick={onDismiss}
-            className="text-sm font-medium text-ink/55 underline decoration-ink/20 underline-offset-4 hover:text-pine"
+            className="text-sm font-medium text-ink/55 underline decoration-ink/20 underline-offset-4 hover:text-pine disabled:opacity-50"
           >
             Use a different email on the form
           </button>

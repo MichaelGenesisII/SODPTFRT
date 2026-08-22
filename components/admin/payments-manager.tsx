@@ -14,6 +14,7 @@ import {
   type AdminPaymentQueueItem,
   type PaymentActionResult,
 } from "@/app/admin/payments/actions";
+import { DeskLoader, DeskLoaderOverlay } from "@/components/ui/desk-loader";
 import { useToast } from "@/components/ui/toast";
 import {
   FEE_STATUS_META,
@@ -93,6 +94,8 @@ export function PaymentsManager({
   const router = useRouter();
   const { success, error } = useToast();
   const [pendingAction, startTransition] = useTransition();
+  const [busyLabel, setBusyLabel] = useState<string | null>(null);
+  const busy = pendingAction || Boolean(busyLabel);
   const [lane, setLane] = useState<Lane>("pending");
   const [feeFilter, setFeeFilter] = useState<"all" | FeeType>("all");
   const [selectedId, setSelectedId] = useState<string | null>(
@@ -175,14 +178,19 @@ export function PaymentsManager({
     setPage(Math.min(totalPages, Math.max(1, next)));
   }
 
-  function run(action: () => Promise<PaymentActionResult>) {
+  function run(action: () => Promise<PaymentActionResult>, label: string) {
+    setBusyLabel(label);
     startTransition(async () => {
-      const next = await action();
-      if (next.ok) {
-        success(next.message, "Payments");
-        router.refresh();
-      } else {
-        error(next.message, "Payments");
+      try {
+        const next = await action();
+        if (next.ok) {
+          success(next.message, "Payments");
+          router.refresh();
+        } else {
+          error(next.message, "Payments");
+        }
+      } finally {
+        setBusyLabel(null);
       }
     });
   }
@@ -343,8 +351,13 @@ export function PaymentsManager({
         </div>
 
         <section
-          className={`${workspaceClass} min-h-[16rem] border border-stone bg-mist sm:min-h-[20rem]`}
+          className={`${workspaceClass} relative min-h-[16rem] border border-stone bg-mist sm:min-h-[20rem]`}
+          aria-busy={busy}
         >
+          <DeskLoaderOverlay
+            active={busy}
+            label={busyLabel ?? "Working…"}
+          />
           {!selected ? (
             <div className="flex h-full min-h-[16rem] flex-col items-center justify-center px-5 py-12 text-center sm:min-h-[20rem]">
               <p className="font-display text-xl text-pine">Open a proof</p>
@@ -451,17 +464,24 @@ export function PaymentsManager({
                     <div className="mt-auto flex flex-col gap-2 pt-2">
                       <button
                         type="button"
-                        disabled={pendingAction}
+                        disabled={busy}
                         onClick={() =>
-                          run(() => approvePaymentProof(selected.id))
+                          run(
+                            () => approvePaymentProof(selected.id),
+                            "Approving payment…",
+                          )
                         }
-                        className="bg-pine px-4 py-2.5 text-sm font-medium text-mist transition hover:bg-celadon disabled:opacity-60"
+                        className="inline-flex min-h-[2.5rem] items-center justify-center bg-pine px-4 py-2.5 text-sm font-medium text-mist transition hover:bg-celadon disabled:opacity-60"
                       >
-                        Approve payment
+                        {busy && busyLabel?.startsWith("Approving") ? (
+                          <DeskLoader label={busyLabel} tone="mist" />
+                        ) : (
+                          "Approve payment"
+                        )}
                       </button>
                       <button
                         type="button"
-                        disabled={pendingAction}
+                        disabled={busy}
                         onClick={() => {
                           if (
                             !window.confirm(
@@ -470,11 +490,18 @@ export function PaymentsManager({
                           ) {
                             return;
                           }
-                          run(() => rejectPaymentProof(selected.id));
+                          run(
+                            () => rejectPaymentProof(selected.id),
+                            "Returning proof…",
+                          );
                         }}
-                        className="border border-stone px-4 py-2.5 text-sm text-ink/70 transition hover:border-pine hover:text-pine disabled:opacity-60"
+                        className="inline-flex min-h-[2.5rem] items-center justify-center border border-stone px-4 py-2.5 text-sm text-ink/70 transition hover:border-pine hover:text-pine disabled:opacity-60"
                       >
-                        Return to student
+                        {busy && busyLabel?.startsWith("Returning") ? (
+                          <DeskLoader label={busyLabel} />
+                        ) : (
+                          "Return to student"
+                        )}
                       </button>
                     </div>
                   ) : (

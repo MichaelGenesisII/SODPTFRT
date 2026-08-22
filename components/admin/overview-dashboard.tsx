@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useMemo, useState, useTransition, type ReactNode } from "react";
 import { getStatementOfReport } from "@/app/admin/overview/actions";
+import { DeskLoader, DeskLoaderOverlay } from "@/components/ui/desk-loader";
 import { useToast } from "@/components/ui/toast";
 import {
   downloadStatementExcel,
@@ -182,6 +183,8 @@ export function OverviewDashboard({
 }: OverviewDashboardProps) {
   const { success, error, info } = useToast();
   const [pending, startTransition] = useTransition();
+  const [busyLabel, setBusyLabel] = useState<string | null>(null);
+  const busy = pending || Boolean(busyLabel);
   const national = isNationalAdmin(profile);
   const [parishId, setParishId] = useState(
     national ? "" : profile.parish_id ?? "",
@@ -234,7 +237,11 @@ export function OverviewDashboard({
     { label: "Rejected", count: stats.enrolmentByStatus.rejected },
   ];
 
-  function loadReport(thenDownload?: (bundle: StatementReportBundle) => void) {
+  function loadReport(
+    thenDownload?: (bundle: StatementReportBundle) => void,
+    label = "Building statement…",
+  ) {
+    setBusyLabel(label);
     startTransition(async () => {
       try {
         const bundle = await getStatementOfReport({
@@ -256,6 +263,8 @@ export function OverviewDashboard({
         }
       } catch (err) {
         error(publicActionMessage(err), "Overview");
+      } finally {
+        setBusyLabel(null);
       }
     });
   }
@@ -617,7 +626,14 @@ export function OverviewDashboard({
       </section>
 
       {/* Statement */}
-      <section className="mt-6 border border-stone bg-mist/40 p-3.5 sm:mt-8 sm:p-6">
+      <section
+        className="relative mt-6 border border-stone bg-mist/40 p-3.5 sm:mt-8 sm:p-6"
+        aria-busy={busy}
+      >
+        <DeskLoaderOverlay
+          active={busy}
+          label={busyLabel ?? "Building statement…"}
+        />
         <p className="text-[0.6rem] font-medium uppercase tracking-[0.14em] text-celadon sm:text-[0.65rem]">
           Documents
         </p>
@@ -642,7 +658,8 @@ export function OverviewDashboard({
                 <select
                   value={parishId}
                   onChange={(e) => setParishId(e.target.value)}
-                  className={fieldClass}
+                  disabled={busy}
+                  className={`${fieldClass} disabled:opacity-50`}
                 >
                   <option value="">All UK parishes</option>
                   {parishes.map((p) => (
@@ -664,8 +681,9 @@ export function OverviewDashboard({
               <input
                 type="checkbox"
                 checked={paidOnly}
+                disabled={busy}
                 onChange={(e) => setPaidOnly(e.target.checked)}
-                className="h-4 w-4 accent-pine"
+                className="h-4 w-4 accent-pine disabled:opacity-50"
               />
               Tuition paid only
             </label>
@@ -674,11 +692,15 @@ export function OverviewDashboard({
           <div className="flex flex-col gap-2">
             <button
               type="button"
-              disabled={pending}
-              onClick={() => loadReport()}
-              className="w-full border border-pine/30 px-4 py-2.5 text-sm font-medium text-pine disabled:opacity-50 sm:w-auto sm:self-start"
+              disabled={busy}
+              onClick={() => loadReport(undefined, "Building preview…")}
+              className="inline-flex min-h-[2.5rem] w-full items-center justify-center border border-pine/30 px-4 py-2.5 text-sm font-medium text-pine disabled:opacity-50 sm:w-auto sm:self-start"
             >
-              {pending ? "Building…" : "Preview list"}
+              {busy && busyLabel?.startsWith("Building preview") ? (
+                <DeskLoader label={busyLabel} />
+              ) : (
+                "Preview list"
+              )}
             </button>
             <div className="grid grid-cols-4 gap-1.5 sm:flex sm:flex-wrap sm:gap-2">
               {(
@@ -692,11 +714,17 @@ export function OverviewDashboard({
                 <button
                   key={label}
                   type="button"
-                  disabled={pending}
-                  onClick={() => loadReport(fn)}
-                  className="bg-pine px-2 py-2.5 text-xs font-medium text-mist disabled:opacity-50 sm:min-w-[4.5rem] sm:px-3 sm:text-sm"
+                  disabled={busy}
+                  onClick={() =>
+                    loadReport(fn, `Preparing ${label}…`)
+                  }
+                  className="inline-flex min-h-[2.5rem] items-center justify-center bg-pine px-2 py-2.5 text-xs font-medium text-mist disabled:opacity-50 sm:min-w-[4.5rem] sm:px-3 sm:text-sm"
                 >
-                  {label}
+                  {busy && busyLabel?.includes(label) ? (
+                    <DeskLoader label={busyLabel} tone="mist" />
+                  ) : (
+                    label
+                  )}
                 </button>
               ))}
             </div>

@@ -13,6 +13,7 @@ import {
 } from "@/app/student/payments/actions";
 import { PhotoUploadCard } from "@/components/student/photo-upload-card";
 import { ImageFileField } from "@/components/student/image-file-field";
+import { DeskLoader, DeskLoaderOverlay } from "@/components/ui/desk-loader";
 import { useToast } from "@/components/ui/toast";
 import { BANK_TRANSFER, formatGbp } from "@/lib/enrol/payment";
 import {
@@ -63,6 +64,12 @@ function feeRowsFor(
   });
 }
 
+function tabLabel(tab: PaymentsTab): string {
+  if (tab === "review") return "In review";
+  if (tab === "paid") return "Paid";
+  return "Due";
+}
+
 export function StudentPaymentsBoard({
   payments,
   reference,
@@ -93,13 +100,16 @@ export function StudentPaymentsBoard({
     graduationPaid &&
     (!graduationSelfieUploaded || graduationSelfieTakenDown);
 
-  const defaultTab: PaymentsTab = needsPassport || needsSelfie
-    ? "paid"
-    : review.length > 0
-      ? "review"
-      : due.length > 0
-        ? "due"
-        : "paid";
+  // Passport lives on the tuition fee row (often still Due after a partial payment).
+  const photoTab: PaymentsTab | null = needsPassport
+    ? bucketFor(tuitionAccount)
+    : needsSelfie
+      ? "paid"
+      : null;
+
+  const defaultTab: PaymentsTab =
+    photoTab ??
+    (review.length > 0 ? "review" : due.length > 0 ? "due" : "paid");
   const [tab, setTab] = useState<PaymentsTab>(defaultTab);
   const [openType, setOpenType] = useState<FeeType | null>(() => {
     if (needsPassport) return "tuition";
@@ -143,7 +153,7 @@ export function StudentPaymentsBoard({
 
   if (loadError) {
     return (
-      <div className="mx-auto w-full max-w-4xl space-y-4">
+      <div className="mx-auto w-full max-w-5xl space-y-4">
         <Header flash={flash} />
         <p
           className="border border-red-800/30 bg-red-50 px-4 py-3 text-sm text-red-900"
@@ -156,18 +166,18 @@ export function StudentPaymentsBoard({
   }
 
   return (
-    <div className="mx-auto w-full max-w-4xl space-y-4 sm:space-y-5">
+    <div className="mx-auto w-full max-w-5xl space-y-4 sm:space-y-5">
       <Header flash={flash} />
 
-      {(needsPassport || needsSelfie) && tab !== "paid" ? (
+      {photoTab && tab !== photoTab ? (
         <p className="border border-[#c4a574]/40 bg-[#efe8dc]/50 px-4 py-3 text-sm leading-relaxed text-[#6b4f2a]">
           A required photograph is waiting under{" "}
           <button
             type="button"
             className="font-medium underline underline-offset-2"
-            onClick={() => selectTab("paid")}
+            onClick={() => selectTab(photoTab)}
           >
-            Paid
+            {tabLabel(photoTab)}
           </button>
           .
         </p>
@@ -338,6 +348,8 @@ function FeeRow({
   const [amount, setAmount] = useState(String(Math.max(remaining, 0) || ""));
   const [mode, setMode] = useState<"idle" | "bank">("idle");
   const [pending, startTransition] = useTransition();
+  const [busyLabel, setBusyLabel] = useState<string | null>(null);
+  const busy = pending || Boolean(busyLabel);
   const { success, error } = useToast();
   const router = useRouter();
 
@@ -348,13 +360,18 @@ function FeeRow({
       (!graduationSelfieUploaded || graduationSelfieTakenDown));
 
   function payCard() {
+    setBusyLabel("Opening card checkout…");
     startTransition(async () => {
-      const result = await startStripeCheckout(feeType, amount);
-      if (!result.ok || !result.url) {
-        error(result.message);
-        return;
+      try {
+        const result = await startStripeCheckout(feeType, amount);
+        if (!result.ok || !result.url) {
+          error(result.message);
+          return;
+        }
+        window.location.href = result.url;
+      } finally {
+        setBusyLabel(null);
       }
-      window.location.href = result.url;
     });
   }
 
@@ -364,21 +381,27 @@ function FeeRow({
     const formData = new FormData(form);
     formData.set("feeType", feeType);
     formData.set("amount", amount);
+    setBusyLabel("Uploading bank proof…");
     startTransition(async () => {
-      const result = await submitBankProof(formData);
-      if (!result.ok) {
-        error(result.message);
-        return;
+      try {
+        const result = await submitBankProof(formData);
+        if (!result.ok) {
+          error(result.message);
+          return;
+        }
+        success(result.message);
+        setMode("idle");
+        form.reset();
+        router.refresh();
+      } finally {
+        setBusyLabel(null);
       }
-      success(result.message);
-      setMode("idle");
-      form.reset();
-      router.refresh();
     });
   }
 
   return (
-    <li className="py-3.5 first:pt-0 last:pb-0">
+    <li className="relative py-3.5 first:pt-0 last:pb-0">
+      <DeskLoaderOverlay active={busy} label={busyLabel ?? "Working…"} />
       <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between sm:gap-3">
         <button
           type="button"
@@ -540,15 +563,20 @@ function FeeRow({
                 <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:gap-3">
                   <button
                     type="submit"
-                    disabled={pending}
-                    className="min-h-11 w-full bg-pine px-4 py-2.5 text-sm font-medium text-mist hover:bg-celadon disabled:opacity-60 sm:w-auto"
+                    disabled={busy}
+                    className="inline-flex min-h-11 w-full items-center justify-center bg-pine px-4 py-2.5 text-sm font-medium text-mist hover:bg-celadon disabled:opacity-60 sm:w-auto"
                   >
-                    {pending ? "Uploading…" : "Submit proof"}
+                    {busy && busyLabel?.startsWith("Uploading") ? (
+                      <DeskLoader label={busyLabel} tone="mist" />
+                    ) : (
+                      "Submit proof"
+                    )}
                   </button>
                   <button
                     type="button"
                     onClick={() => setMode("idle")}
-                    className="min-h-11 w-full border border-pine/25 px-4 py-2.5 text-sm font-medium text-pine sm:w-auto"
+                    disabled={busy}
+                    className="min-h-11 w-full border border-pine/25 px-4 py-2.5 text-sm font-medium text-pine disabled:opacity-60 sm:w-auto"
                   >
                     Cancel
                   </button>
@@ -576,16 +604,21 @@ function FeeRow({
               <div className="flex flex-col gap-2 sm:flex-row">
                 <button
                   type="button"
-                  disabled={pending || !cardReady}
+                  disabled={busy || !cardReady}
                   onClick={payCard}
                   className="inline-flex min-h-11 flex-1 items-center justify-center bg-pine px-4 py-2.5 text-sm font-medium text-mist transition-colors hover:bg-celadon disabled:opacity-50"
                 >
-                  {pending ? "Opening…" : "Pay by card"}
+                  {busy && busyLabel?.startsWith("Opening") ? (
+                    <DeskLoader label={busyLabel} tone="mist" />
+                  ) : (
+                    "Pay by card"
+                  )}
                 </button>
                 <button
                   type="button"
+                  disabled={busy}
                   onClick={() => setMode("bank")}
-                  className="inline-flex min-h-11 flex-1 items-center justify-center border border-pine/30 px-4 py-2.5 text-sm font-medium text-pine hover:border-pine"
+                  className="inline-flex min-h-11 flex-1 items-center justify-center border border-pine/30 px-4 py-2.5 text-sm font-medium text-pine hover:border-pine disabled:opacity-50"
                 >
                   Bank transfer
                 </button>

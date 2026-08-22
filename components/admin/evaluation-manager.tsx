@@ -10,6 +10,7 @@ import {
   unreleaseAttempt,
   type EvaluationAttemptRow,
 } from "@/app/admin/evaluation/actions";
+import { DeskLoader, DeskLoaderOverlay } from "@/components/ui/desk-loader";
 import { useToast } from "@/components/ui/toast";
 import { needsManualGrade } from "@/lib/exams/score";
 import {
@@ -32,6 +33,8 @@ export function EvaluationManager({
   const router = useRouter();
   const { success, error } = useToast();
   const [pending, startTransition] = useTransition();
+  const [busyLabel, setBusyLabel] = useState<string | null>(null);
+  const busy = pending || Boolean(busyLabel);
   const [rows, setRows] = useState(initial);
   const [lane, setLane] = useState<Lane>("needs");
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -99,6 +102,32 @@ export function EvaluationManager({
     }),
     [rows],
   );
+
+  function runGrade(
+    action: () => Promise<{ ok: boolean; message: string }>,
+    label: string,
+  ) {
+    if (!detail) return;
+    const attemptId = detail.attempt.id;
+    setBusyLabel(label);
+    startTransition(async () => {
+      try {
+        const next = await action();
+        if (next.ok) {
+          success(next.message, "Exams");
+          const refreshed = await getEvaluationDetail(attemptId);
+          setDetail(refreshed);
+          const list = await listEvaluationAttempts();
+          setRows(list);
+          router.refresh();
+        } else {
+          error(next.message, "Exams");
+        }
+      } finally {
+        setBusyLabel(null);
+      }
+    });
+  }
 
   return (
     <div className="space-y-3">
@@ -209,8 +238,13 @@ export function EvaluationManager({
         </div>
 
         <section
-          className={`${workspaceClass} min-h-[16rem] border border-stone bg-mist sm:min-h-[22rem]`}
+          className={`${workspaceClass} relative min-h-[16rem] border border-stone bg-mist sm:min-h-[22rem]`}
+          aria-busy={busy}
         >
+          <DeskLoaderOverlay
+            active={busy}
+            label={busyLabel ?? "Working…"}
+          />
           {!detail ? (
             <div className="flex min-h-[16rem] items-center justify-center px-5 text-center sm:min-h-[22rem] sm:px-6">
               <div>
@@ -223,52 +257,26 @@ export function EvaluationManager({
           ) : (
             <GradeWorkspace
               detail={detail}
-              pending={pending}
+              pending={busy}
+              busyLabel={busyLabel}
               onBack={() => setMobileSurface("directory")}
               onSave={(grades) => {
-                startTransition(async () => {
-                  const next = await saveManualGrades(detail.attempt.id, grades);
-                  if (next.ok) {
-                    success(next.message, "Exams");
-                    const refreshed = await getEvaluationDetail(
-                      detail.attempt.id,
-                    );
-                    setDetail(refreshed);
-                    const list = await listEvaluationAttempts();
-                    setRows(list);
-                    router.refresh();
-                  } else error(next.message, "Exams");
-                });
+                runGrade(
+                  () => saveManualGrades(detail.attempt.id, grades),
+                  "Saving grades…",
+                );
               }}
               onRelease={() => {
-                startTransition(async () => {
-                  const next = await releaseAttempt(detail.attempt.id);
-                  if (next.ok) {
-                    success(next.message, "Exams");
-                    const refreshed = await getEvaluationDetail(
-                      detail.attempt.id,
-                    );
-                    setDetail(refreshed);
-                    const list = await listEvaluationAttempts();
-                    setRows(list);
-                    router.refresh();
-                  } else error(next.message, "Exams");
-                });
+                runGrade(
+                  () => releaseAttempt(detail.attempt.id),
+                  "Releasing…",
+                );
               }}
               onUnrelease={() => {
-                startTransition(async () => {
-                  const next = await unreleaseAttempt(detail.attempt.id);
-                  if (next.ok) {
-                    success(next.message, "Exams");
-                    const refreshed = await getEvaluationDetail(
-                      detail.attempt.id,
-                    );
-                    setDetail(refreshed);
-                    const list = await listEvaluationAttempts();
-                    setRows(list);
-                    router.refresh();
-                  } else error(next.message, "Exams");
-                });
+                runGrade(
+                  () => unreleaseAttempt(detail.attempt.id),
+                  "Pulling back release…",
+                );
               }}
             />
           )}
@@ -281,6 +289,7 @@ export function EvaluationManager({
 function GradeWorkspace({
   detail,
   pending,
+  busyLabel,
   onBack,
   onSave,
   onRelease,
@@ -292,6 +301,7 @@ function GradeWorkspace({
     answers: ExamAnswer[];
   };
   pending: boolean;
+  busyLabel: string | null;
   onBack?: () => void;
   onSave: (
     grades: {
@@ -365,9 +375,13 @@ function GradeWorkspace({
                   })),
                 )
               }
-              className="bg-pine px-3 py-1.5 text-sm font-medium text-mist disabled:opacity-60"
+              className="inline-flex min-h-[2rem] min-w-[6.5rem] items-center justify-center bg-pine px-3 py-1.5 text-sm font-medium text-mist disabled:opacity-60"
             >
-              Save grades
+              {pending && busyLabel?.startsWith("Saving") ? (
+                <DeskLoader label={busyLabel} tone="mist" />
+              ) : (
+                "Save grades"
+              )}
             </button>
           ) : null}
           {detail.attempt.status !== "released" ? (
@@ -375,18 +389,26 @@ function GradeWorkspace({
               type="button"
               disabled={pending}
               onClick={onRelease}
-              className="border border-pine/30 px-3 py-1.5 text-sm font-medium text-pine disabled:opacity-60"
+              className="inline-flex min-h-[2rem] min-w-[5rem] items-center justify-center border border-pine/30 px-3 py-1.5 text-sm font-medium text-pine disabled:opacity-60"
             >
-              Release
+              {pending && busyLabel?.startsWith("Releasing") ? (
+                <DeskLoader label={busyLabel} />
+              ) : (
+                "Release"
+              )}
             </button>
           ) : (
             <button
               type="button"
               disabled={pending}
               onClick={onUnrelease}
-              className="border border-stone px-3 py-1.5 text-sm font-medium text-ink/70 disabled:opacity-60"
+              className="inline-flex min-h-[2rem] min-w-[8rem] items-center justify-center border border-stone px-3 py-1.5 text-sm font-medium text-ink/70 disabled:opacity-60"
             >
-              Pull back release
+              {pending && busyLabel?.startsWith("Pulling") ? (
+                <DeskLoader label={busyLabel} />
+              ) : (
+                "Pull back release"
+              )}
             </button>
           )}
         </div>

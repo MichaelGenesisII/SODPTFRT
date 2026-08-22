@@ -8,6 +8,7 @@ import {
   uploadPassportPhoto,
 } from "@/app/student/photos/actions";
 import { ImageFileField } from "@/components/student/image-file-field";
+import { DeskLoaderOverlay } from "@/components/ui/desk-loader";
 import { useToast } from "@/components/ui/toast";
 
 type PhotoUploadCardProps = {
@@ -30,6 +31,8 @@ export function PhotoUploadCard({
   const router = useRouter();
   const { success, error } = useToast();
   const [pending, startTransition] = useTransition();
+  const [busyLabel, setBusyLabel] = useState<string | null>(null);
+  const busy = pending || Boolean(busyLabel);
   const [preview, setPreview] = useState<string | null>(null);
   const [replacing, setReplacing] = useState(false);
   const [fileKey, setFileKey] = useState(0);
@@ -53,33 +56,45 @@ export function PhotoUploadCard({
     event.preventDefault();
     const form = event.currentTarget;
     const formData = new FormData(form);
+    setBusyLabel(
+      isPassport ? "Uploading passport photo…" : "Uploading selfie…",
+    );
     startTransition(async () => {
-      const result = isPassport
-        ? await uploadPassportPhoto(formData)
-        : await uploadGraduationSelfie(formData);
-      if (!result.ok) {
-        error(result.message);
-        return;
+      try {
+        const result = isPassport
+          ? await uploadPassportPhoto(formData)
+          : await uploadGraduationSelfie(formData);
+        if (!result.ok) {
+          error(result.message);
+          return;
+        }
+        success(result.message);
+        form.reset();
+        setPreview(null);
+        setReplacing(false);
+        setFileKey((k) => k + 1);
+        router.refresh();
+      } finally {
+        setBusyLabel(null);
       }
-      success(result.message);
-      form.reset();
-      setPreview(null);
-      setReplacing(false);
-      setFileKey((k) => k + 1);
-      router.refresh();
     });
   }
 
   function onDelete() {
     if (isPassport) return;
+    setBusyLabel("Removing selfie…");
     startTransition(async () => {
-      const result = await deleteGraduationSelfie();
-      if (!result.ok) {
-        error(result.message);
-        return;
+      try {
+        const result = await deleteGraduationSelfie();
+        if (!result.ok) {
+          error(result.message);
+          return;
+        }
+        success(result.message);
+        router.refresh();
+      } finally {
+        setBusyLabel(null);
       }
-      success(result.message);
-      router.refresh();
     });
   }
 
@@ -111,7 +126,11 @@ export function PhotoUploadCard({
 
   if (!isPassport && (alreadyUploaded || takenDown) && !replacing) {
     return (
-      <div className="border border-pine/20 bg-pine/5 px-4 py-4">
+      <div
+        className="relative border border-pine/20 bg-pine/5 px-4 py-4"
+        aria-busy={busy}
+      >
+        <DeskLoaderOverlay active={busy} label={busyLabel ?? "Working…"} />
         <p className="text-[0.65rem] font-medium uppercase tracking-[0.14em] text-celadon">
           {title}
         </p>
@@ -129,19 +148,22 @@ export function PhotoUploadCard({
           <div className="flex flex-wrap gap-2">
             <button
               type="button"
+              disabled={busy}
               onClick={() => setReplacing(true)}
-              className="border border-pine/30 px-3 py-2 text-sm font-medium text-pine hover:border-pine"
+              className="border border-pine/30 px-3 py-2 text-sm font-medium text-pine hover:border-pine disabled:opacity-60"
             >
               {takenDown || !alreadyUploaded ? "Upload replacement" : "Replace"}
             </button>
             {alreadyUploaded && !takenDown ? (
               <button
                 type="button"
-                disabled={pending}
+                disabled={busy}
                 onClick={onDelete}
                 className="border border-stone px-3 py-2 text-sm font-medium text-ink/60 hover:border-red-800/40 hover:text-red-900 disabled:opacity-60"
               >
-                {pending ? "Removing…" : "Delete"}
+                {busy && busyLabel?.startsWith("Removing")
+                  ? "Removing…"
+                  : "Delete"}
               </button>
             ) : null}
           </div>
@@ -152,12 +174,14 @@ export function PhotoUploadCard({
 
   return (
     <div
-      className={`border px-4 py-4 ${
+      className={`relative border px-4 py-4 ${
         required || takenDown
           ? "border-[#c4a574]/50 bg-[#efe8dc]/40"
           : "border-stone bg-mist"
       }`}
+      aria-busy={busy}
     >
+      <DeskLoaderOverlay active={busy} label={busyLabel ?? "Working…"} />
       <p
         className={`text-[0.65rem] font-medium uppercase tracking-[0.14em] ${
           required || takenDown ? "text-[#6b4f2a]" : "text-celadon"
@@ -192,22 +216,23 @@ export function PhotoUploadCard({
         <div className="flex flex-wrap gap-2">
           <button
             type="submit"
-            disabled={pending}
+            disabled={busy}
             className="bg-pine px-4 py-2.5 text-sm font-medium text-mist hover:bg-celadon disabled:opacity-60"
           >
-            {pending
+            {busy && busyLabel?.startsWith("Uploading")
               ? "Uploading…"
               : `Upload ${isPassport ? "passport" : "selfie"}`}
           </button>
           {!isPassport && replacing ? (
             <button
               type="button"
+              disabled={busy}
               onClick={() => {
                 setReplacing(false);
                 setPreview(null);
                 setFileKey((k) => k + 1);
               }}
-              className="border border-stone px-4 py-2.5 text-sm text-ink/60"
+              className="border border-stone px-4 py-2.5 text-sm text-ink/60 disabled:opacity-60"
             >
               Cancel
             </button>

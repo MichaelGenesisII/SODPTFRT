@@ -21,6 +21,7 @@ import {
   type StudentPathDetail,
 } from "@/app/admin/students/actions";
 import { StudentCertificateDesk } from "@/components/admin/student-certificate-desk";
+import { DeskLoader } from "@/components/ui/desk-loader";
 import {
   ENROLMENT_STATUS_META,
   ENROLMENT_STATUSES,
@@ -53,11 +54,12 @@ type Props = {
     "id" | "parish_id" | "name" | "year" | "enrolment_open" | "is_active"
   >[];
   pending: boolean;
+  busyLabel: string | null;
   revealedPassword: string | null;
   onBack?: () => void;
   onRun: (
     action: () => Promise<StudentActionResult>,
-    options?: { clearPassword?: boolean },
+    options?: { clearPassword?: boolean; label?: string },
   ) => void;
   onDeleteRequest: () => void;
   onCopyPassword: (value: string) => void;
@@ -114,6 +116,7 @@ export function StudentDossier({
   parishes,
   batches,
   pending,
+  busyLabel,
   revealedPassword,
   onBack,
   onRun,
@@ -330,6 +333,7 @@ export function StudentDossier({
             student={student}
             national={national}
             pending={pending}
+            busyLabel={busyLabel}
             revealedPassword={revealedPassword}
             parishes={parishes}
             assignParishId={assignParishId}
@@ -651,6 +655,7 @@ function ManagePane({
   student,
   national,
   pending,
+  busyLabel,
   revealedPassword,
   parishes,
   assignParishId,
@@ -667,6 +672,7 @@ function ManagePane({
   student: AdminStudentRecord;
   national: boolean;
   pending: boolean;
+  busyLabel: string | null;
   revealedPassword: string | null;
   parishes: Pick<Parish, "id" | "name">[];
   assignParishId: string;
@@ -681,7 +687,7 @@ function ManagePane({
   onAssignReason: (value: string) => void;
   onRun: (
     action: () => Promise<StudentActionResult>,
-    options?: { clearPassword?: boolean },
+    options?: { clearPassword?: boolean; label?: string },
   ) => void;
   onDeleteRequest: () => void;
   onCopyPassword: (value: string) => void;
@@ -704,8 +710,10 @@ function ManagePane({
                   value={enrol.status}
                   disabled={pending}
                   onChange={(event) =>
-                    onRun(() =>
-                      updateEnrolmentStatus(enrol.id, event.target.value),
+                    onRun(
+                      () =>
+                        updateEnrolmentStatus(enrol.id, event.target.value),
+                      { label: "Updating enrolment…" },
                     )
                   }
                   className={`mt-1 ${fieldClass}`}
@@ -723,8 +731,9 @@ function ManagePane({
                   value={enrol.payment_status}
                   disabled={pending}
                   onChange={(event) =>
-                    onRun(() =>
-                      updatePaymentStatus(enrol.id, event.target.value),
+                    onRun(
+                      () => updatePaymentStatus(enrol.id, event.target.value),
+                      { label: "Updating payment…" },
                     )
                   }
                   className={`mt-1 ${fieldClass}`}
@@ -786,8 +795,11 @@ function ManagePane({
           <ContactEditor
             enrol={enrol}
             pending={pending}
+            busyLabel={busyLabel}
             onSave={(values) => {
-              onRun(() => updateEnrolmentContact(enrol.id, values));
+              onRun(() => updateEnrolmentContact(enrol.id, values), {
+                label: "Saving contact…",
+              });
             }}
           />
         ) : null}
@@ -852,18 +864,24 @@ function ManagePane({
                 type="button"
                 disabled={pending || !assignParishId || !assignBatchId}
                 onClick={() =>
-                  onRun(() =>
-                    reassignEnrolmentBatch(
-                      enrol.id,
-                      assignParishId,
-                      assignBatchId,
-                      { reason: assignReason },
-                    ),
+                  onRun(
+                    () =>
+                      reassignEnrolmentBatch(
+                        enrol.id,
+                        assignParishId,
+                        assignBatchId,
+                        { reason: assignReason },
+                      ),
+                    { label: "Saving placement…" },
                   )
                 }
-                className="border border-pine px-4 py-2.5 text-sm font-medium text-pine hover:bg-pine hover:text-mist disabled:opacity-50"
+                className="inline-flex min-h-[2.5rem] min-w-[8.5rem] items-center justify-center border border-pine px-4 py-2.5 text-sm font-medium text-pine hover:bg-pine hover:text-mist disabled:opacity-50"
               >
-                Save placement
+                {pending && busyLabel?.startsWith("Saving placement") ? (
+                  <DeskLoader label={busyLabel} />
+                ) : (
+                  "Save placement"
+                )}
               </button>
             </div>
           </div>
@@ -882,18 +900,24 @@ function ManagePane({
             type="button"
             disabled={pending}
             onClick={() =>
-              onRun(() =>
-                setManualsSent(
-                  student.id,
-                  student.manuals_status !== "sent",
-                ),
+              onRun(
+                () =>
+                  setManualsSent(
+                    student.id,
+                    student.manuals_status !== "sent",
+                  ),
+                { label: "Updating manuals…" },
               )
             }
-            className="mt-4 border border-pine/25 px-4 py-2.5 text-sm font-medium text-pine hover:border-pine disabled:opacity-50"
+            className="mt-4 inline-flex min-h-[2.5rem] min-w-[10rem] items-center justify-center border border-pine/25 px-4 py-2.5 text-sm font-medium text-pine hover:border-pine disabled:opacity-50"
           >
-            {student.manuals_status === "sent"
-              ? "Mark manuals not sent"
-              : "Mark manuals sent"}
+            {pending && busyLabel?.startsWith("Updating manuals") ? (
+              <DeskLoader label={busyLabel} />
+            ) : student.manuals_status === "sent" ? (
+              "Mark manuals not sent"
+            ) : (
+              "Mark manuals sent"
+            )}
           </button>
         </div>
 
@@ -910,10 +934,18 @@ function ManagePane({
             <button
               type="button"
               disabled={pending}
-              onClick={() => onRun(() => upgradeAlumniToStudent(student.id))}
-              className="mt-4 border border-pine px-4 py-2.5 text-sm font-medium text-pine hover:bg-pine hover:text-mist disabled:opacity-50"
+              onClick={() =>
+                onRun(() => upgradeAlumniToStudent(student.id), {
+                  label: "Upgrading seat…",
+                })
+              }
+              className="mt-4 inline-flex min-h-[2.5rem] min-w-[11rem] items-center justify-center border border-pine px-4 py-2.5 text-sm font-medium text-pine hover:bg-pine hover:text-mist disabled:opacity-50"
             >
-              Upgrade to active student
+              {pending && busyLabel?.startsWith("Upgrading") ? (
+                <DeskLoader label={busyLabel} />
+              ) : (
+                "Upgrade to active student"
+              )}
             </button>
           </div>
         ) : null}
@@ -928,19 +960,42 @@ function ManagePane({
               type="button"
               disabled={pending}
               onClick={() =>
-                onRun(() => setStudentActive(student.id, !student.is_active))
+                onRun(
+                  () => setStudentActive(student.id, !student.is_active),
+                  {
+                    label: student.is_active
+                      ? "Pausing seat…"
+                      : "Reactivating…",
+                  },
+                )
               }
-              className="border border-pine/25 px-4 py-2.5 text-sm font-medium text-pine hover:border-pine disabled:opacity-50"
+              className="inline-flex min-h-[2.5rem] min-w-[6.5rem] items-center justify-center border border-pine/25 px-4 py-2.5 text-sm font-medium text-pine hover:border-pine disabled:opacity-50"
             >
-              {student.is_active ? "Pause seat" : "Reactivate"}
+              {pending &&
+              (busyLabel?.startsWith("Pausing") ||
+                busyLabel?.startsWith("Reactivating")) ? (
+                <DeskLoader label={busyLabel} />
+              ) : student.is_active ? (
+                "Pause seat"
+              ) : (
+                "Reactivate"
+              )}
             </button>
             <button
               type="button"
               disabled={pending}
-              onClick={() => onRun(() => resetStudentPassword(student.id))}
-              className="border border-pine/25 px-4 py-2.5 text-sm font-medium text-pine hover:border-pine disabled:opacity-50"
+              onClick={() =>
+                onRun(() => resetStudentPassword(student.id), {
+                  label: "Resetting password…",
+                })
+              }
+              className="inline-flex min-h-[2.5rem] min-w-[10rem] items-center justify-center border border-pine/25 px-4 py-2.5 text-sm font-medium text-pine hover:border-pine disabled:opacity-50"
             >
-              New temporary password
+              {pending && busyLabel?.startsWith("Resetting") ? (
+                <DeskLoader label={busyLabel} />
+              ) : (
+                "New temporary password"
+              )}
             </button>
             <button
               type="button"
@@ -977,10 +1032,12 @@ function ManagePane({
 function ContactEditor({
   enrol,
   pending,
+  busyLabel,
   onSave,
 }: {
   enrol: NonNullable<AdminStudentRecord["enrolment"]>;
   pending: boolean;
+  busyLabel: string | null;
   onSave: (values: {
     mobile_number: string;
     home_telephone: string;
@@ -1142,9 +1199,13 @@ function ContactEditor({
       <button
         type="submit"
         disabled={pending}
-        className="bg-pine px-4 py-2.5 text-sm font-medium text-mist disabled:opacity-60"
+        className="inline-flex min-h-[2.5rem] min-w-[7.5rem] items-center justify-center bg-pine px-4 py-2.5 text-sm font-medium text-mist disabled:opacity-60"
       >
-        Save contact
+        {pending && busyLabel?.startsWith("Saving contact") ? (
+          <DeskLoader label={busyLabel} tone="mist" />
+        ) : (
+          "Save contact"
+        )}
       </button>
     </form>
   );

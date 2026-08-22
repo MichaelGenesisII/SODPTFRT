@@ -28,6 +28,60 @@ export type DeskAttachmentView = {
   url?: string;
 };
 
+/** How a notice attachment may be opened by students / the public. */
+export const NOTICE_ATTACHMENT_ACCESS_MODES = [
+  "view",
+  "download",
+  "both",
+] as const;
+
+export type NoticeAttachmentAccess =
+  (typeof NOTICE_ATTACHMENT_ACCESS_MODES)[number];
+
+export type NoticeAttachmentLinkInput = {
+  id: string;
+  access: NoticeAttachmentAccess;
+};
+
+export function isNoticeAttachmentAccess(
+  value: string,
+): value is NoticeAttachmentAccess {
+  return (NOTICE_ATTACHMENT_ACCESS_MODES as readonly string[]).includes(value);
+}
+
+export function parseNoticeAttachmentLinks(
+  formData: FormData,
+): NoticeAttachmentLinkInput[] {
+  const raw = String(
+    formData.get("attachmentLinks") ?? formData.get("attachmentIds") ?? "",
+  ).trim();
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return [];
+
+    const links: NoticeAttachmentLinkInput[] = [];
+    for (const entry of parsed) {
+      if (typeof entry === "string") {
+        links.push({ id: entry, access: "both" });
+        continue;
+      }
+      if (!entry || typeof entry !== "object") continue;
+      const id = (entry as { id?: unknown }).id;
+      const accessRaw = (entry as { access?: unknown }).access;
+      if (typeof id !== "string" || !id) continue;
+      const access =
+        typeof accessRaw === "string" && isNoticeAttachmentAccess(accessRaw)
+          ? accessRaw
+          : "both";
+      links.push({ id, access });
+    }
+    return links;
+  } catch {
+    return [];
+  }
+}
+
 export function isAllowedDeskAttachmentMime(
   mime: string,
 ): mime is DeskAttachmentMime {

@@ -2,6 +2,7 @@
 
 import {
   ENROL_STEPS,
+  isEnrolParishOther,
   validateStep,
   type EnrolFormData,
 } from "@/lib/enrol/schema";
@@ -95,39 +96,57 @@ export async function submitEnrolment(
     const firstName = data.firstName.trim();
     const lastName = data.lastName.trim();
     const temporaryPassword = createTemporaryPassword();
-    const parishId = data.parishId.trim();
-    const batchId = data.batchId.trim();
+    const parishIdRaw = data.parishId.trim();
+    const parishOther = data.parishOther.trim();
+    const parishIsOther = isEnrolParishOther(parishIdRaw);
+    const parishId = parishIsOther ? null : parishIdRaw;
+    const batchId = parishIsOther ? null : data.batchId.trim();
+    let cohortId: string | null = null;
 
     const service = createServiceSupabaseClient();
 
-    const { data: batchRow, error: batchError } = await service
-      .from("batches")
-      .select("id, parish_id, enrolment_open, is_active, name, year")
-      .eq("id", batchId)
-      .maybeSingle();
+    if (!parishIsOther) {
+      if (!parishId || !batchId) {
+        return enrolFail("Please select your parish and an open batch.");
+      }
 
-    if (batchError || !batchRow) {
-      if (batchError) console.error("[enrol] batch lookup", batchError);
-      return enrolFail(
-        "Selected batch was not found. Choose a parish and open batch again.",
-      );
-    }
-    if (batchRow.parish_id !== parishId) {
-      return enrolFail("Selected batch does not belong to that parish.");
-    }
-    if (!batchRow.is_active || !batchRow.enrolment_open) {
-      return enrolFail("That batch is not open for enrolment.");
+      const { data: batchRow, error: batchError } = await service
+        .from("batches")
+        .select("id, parish_id, cohort_id, enrolment_open, is_active, name, year")
+        .eq("id", batchId)
+        .maybeSingle();
+
+      if (batchError || !batchRow) {
+        if (batchError) console.error("[enrol] batch lookup", batchError);
+        return enrolFail(
+          "Selected batch was not found. Choose a parish and open batch again.",
+        );
+      }
+      if (batchRow.parish_id !== parishId) {
+        return enrolFail("Selected batch does not belong to that parish.");
+      }
+      if (!batchRow.is_active || !batchRow.enrolment_open) {
+        return enrolFail("That batch is not open for enrolment.");
+      }
+
+      const { data: parishRow } = await service
+        .from("parishes")
+        .select("id, name, is_active")
+        .eq("id", parishId)
+        .maybeSingle();
+
+      if (!parishRow?.is_active) {
+        return enrolFail("Selected parish is not available.");
+      }
+
+      cohortId = (batchRow.cohort_id as string | null) ?? null;
+    } else if (!parishOther) {
+      return enrolFail("Please enter your parish or church name.");
     }
 
-    const { data: parishRow } = await service
-      .from("parishes")
-      .select("id, name, is_active")
-      .eq("id", parishId)
-      .maybeSingle();
-
-    if (!parishRow?.is_active) {
-      return enrolFail("Selected parish is not available.");
-    }
+    const localChurchStored = parishIsOther
+      ? [parishOther, data.localChurch.trim()].filter(Boolean).join(" — ")
+      : data.localChurch.trim();
 
     const { data: existingProfile } = await service
       .from("student_profiles")
@@ -324,7 +343,8 @@ export async function submitEnrolment(
         occupation_other: emptyToNull(data.occupationOther),
         parish_id: parishId,
         batch_id: batchId,
-        local_church: emptyToNull(data.localChurch) ?? "",
+        cohort_id: cohortId,
+        local_church: emptyToNull(localChurchStored) ?? "",
         church_leader: data.churchLeader.trim(),
         church_activities: emptyToNull(data.churchActivities),
         declaration_accepted: data.declarationAccepted,

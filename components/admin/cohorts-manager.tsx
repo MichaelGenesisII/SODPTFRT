@@ -7,12 +7,12 @@ import {
   updateCohort,
   type CohortActionResult,
 } from "@/app/admin/cohorts/actions";
+import { DeskLoader, DeskLoaderOverlay } from "@/components/ui/desk-loader";
 import { useToast } from "@/components/ui/toast";
 import {
   formatCohortLabel,
-  PROGRAMME_TYPE_LABELS,
+  DEFAULT_PROGRAMME_TYPE,
   type Cohort,
-  type ProgrammeType,
 } from "@/lib/cohorts";
 import { formatBatchLabel, type Batch, type Parish } from "@/lib/parishes";
 
@@ -32,13 +32,14 @@ export function CohortsManager({
 }: CohortsManagerProps) {
   const { success, error } = useToast();
   const [pending, startTransition] = useTransition();
+  const [busyLabel, setBusyLabel] = useState<string | null>(null);
+  const busy = pending || Boolean(busyLabel);
   const [selectedId, setSelectedId] = useState<string | null>(
     cohorts[0]?.id ?? null,
   );
   const [name, setName] = useState("");
   const [yearStart, setYearStart] = useState(String(new Date().getFullYear()));
   const [yearEnd, setYearEnd] = useState(String(new Date().getFullYear() + 1));
-  const [programmeType, setProgrammeType] = useState<ProgrammeType>("sp");
   const [isActive, setIsActive] = useState(true);
   const [batchFilter, setBatchFilter] = useState("");
 
@@ -69,7 +70,6 @@ export function CohortsManager({
     setName(cohort.name);
     setYearStart(String(cohort.year_start));
     setYearEnd(String(cohort.year_end));
-    setProgrammeType(cohort.programme_type);
     setIsActive(cohort.is_active);
   }
 
@@ -78,20 +78,25 @@ export function CohortsManager({
     setName("");
     setYearStart(String(new Date().getFullYear()));
     setYearEnd(String(new Date().getFullYear() + 1));
-    setProgrammeType("sp");
     setIsActive(true);
   }
 
-  function run(action: () => Promise<CohortActionResult>) {
+  function run(action: () => Promise<CohortActionResult>, label: string) {
+    setBusyLabel(label);
     startTransition(async () => {
-      const result = await action();
-      if (result.ok) success(result.message);
-      else error(result.message);
+      try {
+        const result = await action();
+        if (result.ok) success(result.message);
+        else error(result.message);
+      } finally {
+        setBusyLabel(null);
+      }
     });
   }
 
   return (
-    <div className="grid gap-6 lg:grid-cols-[280px_1fr]">
+    <div className="relative grid gap-6 lg:grid-cols-[280px_1fr]" aria-busy={busy}>
+      <DeskLoaderOverlay active={busy} label={busyLabel ?? "Working…"} />
       <aside className="border border-stone/80 bg-white/50 p-4">
         <div className="flex items-center justify-between gap-2">
           <p className="text-[0.65rem] font-medium uppercase tracking-[0.14em] text-celadon">
@@ -165,24 +170,6 @@ export function CohortsManager({
                 className={`mt-1 ${fieldClass}`}
               />
             </label>
-            <label className="block text-sm">
-              Programme
-              <select
-                value={programmeType}
-                onChange={(e) =>
-                  setProgrammeType(e.target.value as ProgrammeType)
-                }
-                className={`mt-1 ${fieldClass}`}
-              >
-                {(Object.keys(PROGRAMME_TYPE_LABELS) as ProgrammeType[]).map(
-                  (key) => (
-                    <option key={key} value={key}>
-                      {PROGRAMME_TYPE_LABELS[key]}
-                    </option>
-                  ),
-                )}
-              </select>
-            </label>
             {selected ? (
               <label className="flex items-center gap-2 self-end text-sm">
                 <input
@@ -196,28 +183,38 @@ export function CohortsManager({
           </div>
           <button
             type="button"
-            disabled={pending || !name.trim()}
+            disabled={busy || !name.trim()}
             onClick={() =>
-              run(() =>
-                selected
-                  ? updateCohort(selected.id, {
-                      name,
-                      yearStart: Number(yearStart),
-                      yearEnd: Number(yearEnd),
-                      programmeType,
-                      isActive,
-                    })
-                  : createCohort({
-                      name,
-                      yearStart: Number(yearStart),
-                      yearEnd: Number(yearEnd),
-                      programmeType,
-                    }),
+              run(
+                () =>
+                  selected
+                    ? updateCohort(selected.id, {
+                        name,
+                        yearStart: Number(yearStart),
+                        yearEnd: Number(yearEnd),
+                        programmeType: DEFAULT_PROGRAMME_TYPE,
+                        isActive,
+                      })
+                    : createCohort({
+                        name,
+                        yearStart: Number(yearStart),
+                        yearEnd: Number(yearEnd),
+                        programmeType: DEFAULT_PROGRAMME_TYPE,
+                      }),
+                selected ? "Saving cohort…" : "Creating cohort…",
               )
             }
-            className="mt-4 border border-pine px-4 py-2.5 text-sm font-medium text-pine hover:bg-pine hover:text-mist disabled:opacity-50"
+            className="mt-4 inline-flex min-h-[2.5rem] min-w-[8.5rem] items-center justify-center border border-pine px-4 py-2.5 text-sm font-medium text-pine hover:bg-pine hover:text-mist disabled:opacity-50"
           >
-            {selected ? "Save cohort" : "Create cohort"}
+            {busy &&
+            (busyLabel?.startsWith("Saving cohort") ||
+              busyLabel?.startsWith("Creating cohort")) ? (
+              <DeskLoader label={busyLabel} />
+            ) : selected ? (
+              "Save cohort"
+            ) : (
+              "Create cohort"
+            )}
           </button>
         </section>
 
@@ -240,9 +237,12 @@ export function CohortsManager({
                     </span>
                     <button
                       type="button"
-                      disabled={pending}
+                      disabled={busy}
                       onClick={() =>
-                        run(() => assignBatchToCohort(batch.id, null))
+                        run(
+                          () => assignBatchToCohort(batch.id, null),
+                          "Unlinking batch…",
+                        )
                       }
                       className="text-xs font-medium text-pine underline disabled:opacity-50"
                     >
@@ -271,9 +271,12 @@ export function CohortsManager({
                   <li key={batch.id}>
                     <button
                       type="button"
-                      disabled={pending}
+                      disabled={busy}
                       onClick={() =>
-                        run(() => assignBatchToCohort(batch.id, selected.id))
+                        run(
+                          () => assignBatchToCohort(batch.id, selected.id),
+                          "Linking batch…",
+                        )
                       }
                       className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-sm hover:bg-stone/40 disabled:opacity-50"
                     >

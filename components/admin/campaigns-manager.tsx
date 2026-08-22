@@ -2,12 +2,17 @@
 
 import { useMemo, useState, useTransition, useEffect } from "react";
 import { sendStudentCampaign } from "@/app/admin/campaigns/actions";
+import { DeskAttachmentPicker } from "@/components/admin/desk-attachment-picker";
+import { DeskLoader, DeskLoaderOverlay } from "@/components/ui/desk-loader";
 import { useToast } from "@/components/ui/toast";
 import { buildCampaignPreview } from "@/lib/email/campaign-preview";
-import type { CampaignRecipient } from "@/lib/email/campaigns";
+import {
+  CAMPAIGN_MAX_ATTACHMENTS,
+  type CampaignRecipient,
+} from "@/lib/email/campaigns";
 import { isNationalAdmin, type AdminProfile } from "@/lib/admin/profile";
 import { formatBatchLabel, type Batch, type Parish } from "@/lib/parishes";
-import { DeskAttachmentPicker } from "@/components/admin/desk-attachment-picker";
+import { formatAttachmentSize } from "@/lib/desk-attachments";
 import { DeskPagination } from "@/lib/ui/desk-pagination";
 
 const CAMPAIGN_PAGE_SIZE = 8;
@@ -30,6 +35,8 @@ export function CampaignsManager({
 }: CampaignsManagerProps) {
   const { success, error, info } = useToast();
   const [pending, startTransition] = useTransition();
+  const [busyLabel, setBusyLabel] = useState<string | null>(null);
+  const busy = pending || Boolean(busyLabel);
   const national = isNationalAdmin(profile);
 
   const [parishFilter, setParishFilter] = useState(
@@ -144,35 +151,48 @@ export function CampaignsManager({
   }
 
   function runSend() {
-    setConfirmOpen(false);
+    if (busy) return;
     const ids = [...selected];
+    setBusyLabel("Sending campaign…");
     startTransition(async () => {
-      const result = await sendStudentCampaign({
-        studentIds: ids,
-        personalNote,
-        customSubject,
-        customHeadline,
-        customBody,
-        parishId: parishFilter || undefined,
-        batchId: batchFilter || undefined,
-        unpaidOnly: unpaidOnly || undefined,
-        attachmentIds: campaignAttachments.map((item) => item.id),
-      });
-      if (result.ok) {
-        success(result.message, "Campaigns");
-        if (typeof result.remaining === "number") {
-          info(`${result.remaining} emails left in this rate window.`, "Quota");
+      try {
+        const result = await sendStudentCampaign({
+          studentIds: ids,
+          personalNote,
+          customSubject,
+          customHeadline,
+          customBody,
+          parishId: parishFilter || undefined,
+          batchId: batchFilter || undefined,
+          unpaidOnly: unpaidOnly || undefined,
+          attachmentIds: campaignAttachments.map((item) => item.id),
+        });
+        if (result.ok) {
+          success(result.message, "Campaigns");
+          if (typeof result.remaining === "number") {
+            info(
+              `${result.remaining} emails left in this rate window.`,
+              "Quota",
+            );
+          }
+          setConfirmOpen(false);
+          setSelected(new Set());
+          setCampaignAttachments([]);
+        } else {
+          error(result.message, "Campaigns");
         }
-        setSelected(new Set());
-        setCampaignAttachments([]);
-      } else {
-        error(result.message, "Campaigns");
+      } finally {
+        setBusyLabel(null);
       }
     });
   }
 
   return (
-    <div className="space-y-5">
+    <div className="relative space-y-5" aria-busy={busy}>
+      <DeskLoaderOverlay
+        active={busy && !confirmOpen}
+        label={busyLabel ?? "Sending campaign…"}
+      />
       <section className="border border-stone bg-mist/40 p-4 sm:p-5">
         <p className="text-[0.65rem] font-medium uppercase tracking-[0.14em] text-celadon">
           Compose
@@ -189,6 +209,7 @@ export function CampaignsManager({
               onChange={(e) => setCustomSubject(e.target.value)}
               className={fieldClass}
               maxLength={180}
+              disabled={busy}
               placeholder="Subject line students will see"
             />
           </label>
@@ -199,6 +220,7 @@ export function CampaignsManager({
               onChange={(e) => setCustomHeadline(e.target.value)}
               className={fieldClass}
               maxLength={160}
+              disabled={busy}
               placeholder="Optional short headline in the email header"
             />
           </label>
@@ -209,6 +231,7 @@ export function CampaignsManager({
               onChange={(e) => setCustomBody(e.target.value)}
               className={`${fieldClass} min-h-28`}
               maxLength={5000}
+              disabled={busy}
               placeholder="Write the message."
             />
           </label>
@@ -219,6 +242,7 @@ export function CampaignsManager({
               onChange={(e) => setPersonalNote(e.target.value)}
               className={`${fieldClass} min-h-20`}
               maxLength={1200}
+              disabled={busy}
               placeholder="e.g. Payment due Friday, or Zoom opens at 7:25pm"
             />
           </label>
@@ -228,7 +252,8 @@ export function CampaignsManager({
               <DeskAttachmentPicker
                 value={campaignAttachments}
                 onChange={setCampaignAttachments}
-                disabled={pending}
+                disabled={busy}
+                maxFiles={CAMPAIGN_MAX_ATTACHMENTS}
               />
             </div>
           </div>
@@ -292,7 +317,7 @@ export function CampaignsManager({
             <button
               type="button"
               disabled={
-                pending ||
+                busy ||
                 selected.size === 0 ||
                 !customSubject.trim() ||
                 !customBody.trim()
@@ -411,7 +436,11 @@ export function CampaignsManager({
           aria-modal="true"
           aria-labelledby="campaign-confirm-title"
         >
-          <div className="w-full max-w-md border border-stone bg-mist p-5 shadow-lg">
+          <div className="relative w-full max-w-md border border-stone bg-mist p-5 shadow-lg">
+            <DeskLoaderOverlay
+              active={busy}
+              label={busyLabel ?? "Sending campaign…"}
+            />
             <p
               id="campaign-confirm-title"
               className="font-display text-xl text-pine"
@@ -426,21 +455,40 @@ export function CampaignsManager({
                 : ""}
               . Subject: <strong>{customSubject.trim()}</strong>
             </p>
+            {campaignAttachments.length > 0 ? (
+              <ul className="mt-3 space-y-1 border border-stone bg-white/60 px-3 py-2.5 text-sm text-ink/70">
+                {campaignAttachments.map((file) => (
+                  <li key={file.id} className="flex flex-wrap gap-x-2">
+                    <span className="min-w-0 truncate font-medium text-ink">
+                      {file.original_name}
+                    </span>
+                    <span className="text-[0.65rem] tabular-nums text-ink/45">
+                      {formatAttachmentSize(file.byte_size)}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            ) : null}
             <div className="mt-5 flex justify-end gap-2">
               <button
                 type="button"
+                disabled={busy}
                 onClick={() => setConfirmOpen(false)}
-                className="border border-stone px-3 py-2 text-sm text-ink"
+                className="border border-stone px-3 py-2 text-sm text-ink disabled:opacity-50"
               >
                 Cancel
               </button>
               <button
                 type="button"
-                disabled={pending}
+                disabled={busy}
                 onClick={runSend}
-                className="bg-pine px-3 py-2 text-sm font-medium text-mist disabled:opacity-50"
+                className="inline-flex min-h-[2.5rem] min-w-[8.5rem] items-center justify-center bg-pine px-3 py-2 text-sm font-medium text-mist disabled:opacity-50"
               >
-                {pending ? "Sending…" : "Confirm send"}
+                {busy ? (
+                  <DeskLoader label="Sending…" tone="mist" />
+                ) : (
+                  "Confirm send"
+                )}
               </button>
             </div>
           </div>

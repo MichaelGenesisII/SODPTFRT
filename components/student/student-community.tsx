@@ -19,7 +19,7 @@ import {
   type SupportChatMessage,
 } from "@/components/support/chat-thread";
 import { useToast } from "@/components/ui/toast";
-import { COMMUNITY_BODY_MAX, type CommunityMessage } from "@/lib/community/types";
+import { COMMUNITY_BODY_MAX, LISTENING_DESK_LABEL, type CommunityMessage } from "@/lib/community/types";
 import { createBrowserSupabaseClient } from "@/lib/supabase/client";
 import type { StudentProfile } from "@/lib/student/types";
 
@@ -32,14 +32,18 @@ function toChatMessages(
   rows: CommunityMessage[],
   userId: string,
 ): SupportChatMessage[] {
-  return rows.map((row) => ({
-    id: row.id,
-    body: row.body,
-    createdAt: row.created_at,
-    author: row.author_label,
-    side: row.author_user_id === userId ? "mine" : "theirs",
-    badge: row.author_kind === "admin" ? "Desk" : null,
-  }));
+  return rows.map((row) => {
+    const isDesk = row.author_kind === "admin";
+    return {
+      id: row.id,
+      body: row.body,
+      createdAt: row.created_at,
+      author: isDesk ? LISTENING_DESK_LABEL : row.author_label,
+      side: row.author_user_id === userId ? "mine" : "theirs",
+      // Desk name already shown as author — no second label.
+      badge: null,
+    };
+  });
 }
 
 export function StudentCommunityDesk({
@@ -115,7 +119,7 @@ export function StudentCommunityDesk({
   }
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col max-lg:h-full lg:mx-auto lg:max-w-2xl lg:flex-none">
+    <div className="flex min-h-0 flex-1 flex-col max-lg:h-full lg:mx-auto lg:w-full lg:max-w-4xl lg:flex-none">
       <section className="mb-6 hidden animate-fade-rise lg:block">
         <p className="text-[0.7rem] font-medium uppercase tracking-[0.18em] text-celadon">
           National channel

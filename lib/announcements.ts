@@ -41,7 +41,12 @@ export type AnnouncementAttachmentView = {
   name: string;
   mime: string;
   byteSize: number;
-  url: string;
+  /** view | download | both — set by admin when attaching. */
+  access: "view" | "download" | "both";
+  /** Inline / open-in-tab URL (signed). Present when access includes view. */
+  url?: string;
+  /** Force-download URL (signed). Present when access includes download. */
+  downloadUrl?: string;
 };
 
 export type AdminAnnouncementRecord = {

@@ -6,6 +6,7 @@ import {
   getAdminStudentCertificate,
   uploadStudentCertificate,
 } from "@/app/admin/students/certificate-actions";
+import { DeskLoader, DeskLoaderOverlay } from "@/components/ui/desk-loader";
 import { useToast } from "@/components/ui/toast";
 import type { StudentCertificateMeta } from "@/lib/student/certificates";
 
@@ -34,6 +35,7 @@ export function StudentCertificateDesk({
   const { success, error } = useToast();
   const inputRef = useRef<HTMLInputElement>(null);
   const [pending, startTransition] = useTransition();
+  const [busyLabel, setBusyLabel] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [meta, setMeta] = useState<StudentCertificateMeta | null>(null);
   const [downloadUrl, setDownloadUrl] = useState<string | null>(null);
@@ -73,9 +75,14 @@ export function StudentCertificateDesk({
     if (!file) return;
     const formData = new FormData();
     formData.set("file", file);
+    setBusyLabel("Uploading certificate…");
     startTransition(async () => {
-      applyResult(await uploadStudentCertificate(studentId, formData));
-      if (inputRef.current) inputRef.current.value = "";
+      try {
+        applyResult(await uploadStudentCertificate(studentId, formData));
+        if (inputRef.current) inputRef.current.value = "";
+      } finally {
+        setBusyLabel(null);
+      }
     });
   }
 
@@ -88,22 +95,32 @@ export function StudentCertificateDesk({
     ) {
       return;
     }
+    setBusyLabel("Removing certificate…");
     startTransition(async () => {
-      applyResult(await deleteStudentCertificate(studentId));
+      try {
+        applyResult(await deleteStudentCertificate(studentId));
+      } finally {
+        setBusyLabel(null);
+      }
     });
   }
 
   const uploadedLabel = formatUploadedAt(meta?.uploadedAt);
-  const busy = pending || loading;
+  const busy = pending || loading || Boolean(busyLabel);
 
   return (
     <div
       className={
         compact
-          ? "border border-stone bg-white/60 px-3 py-3"
-          : "border border-stone bg-mist/30 px-4 py-4"
+          ? "relative border border-stone bg-white/60 px-3 py-3"
+          : "relative border border-stone bg-mist/30 px-4 py-4"
       }
+      aria-busy={busy}
     >
+      <DeskLoaderOverlay
+        active={Boolean(busyLabel)}
+        label={busyLabel ?? "Working…"}
+      />
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div className="min-w-0">
           <p className="text-[0.65rem] font-medium uppercase tracking-[0.14em] text-celadon">
@@ -156,13 +173,15 @@ export function StudentCertificateDesk({
           type="button"
           disabled={busy}
           onClick={() => inputRef.current?.click()}
-          className="border border-pine/30 bg-white/80 px-3 py-1.5 text-sm font-medium text-pine disabled:opacity-50"
+          className="inline-flex min-h-[2rem] min-w-[8.5rem] items-center justify-center border border-pine/30 bg-white/80 px-3 py-1.5 text-sm font-medium text-pine disabled:opacity-50"
         >
-          {pending
-            ? "Saving…"
-            : meta?.available
-              ? "Replace file"
-              : "Upload certificate"}
+          {pending && busyLabel?.startsWith("Uploading") ? (
+            <DeskLoader label={busyLabel} />
+          ) : meta?.available ? (
+            "Replace file"
+          ) : (
+            "Upload certificate"
+          )}
         </button>
         {meta?.available && downloadUrl ? (
           <a
@@ -178,9 +197,13 @@ export function StudentCertificateDesk({
             type="button"
             disabled={busy}
             onClick={onDelete}
-            className="border border-red-800/20 px-3 py-1.5 text-sm font-medium text-red-900/80 disabled:opacity-50"
+            className="inline-flex min-h-[2rem] min-w-[5rem] items-center justify-center border border-red-800/20 px-3 py-1.5 text-sm font-medium text-red-900/80 disabled:opacity-50"
           >
-            Remove
+            {pending && busyLabel?.startsWith("Removing") ? (
+              <DeskLoader label={busyLabel} />
+            ) : (
+              "Remove"
+            )}
           </button>
         ) : null}
       </div>

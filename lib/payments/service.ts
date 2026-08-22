@@ -169,6 +169,16 @@ async function syncTuitionEnrolment(
   fullyPaid: boolean,
   pendingReview: boolean,
 ): Promise<void> {
+  const { data: enrolment } = await service
+    .from("enrolments")
+    .select("id, status")
+    .eq("user_id", userId)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (!enrolment?.id) return;
+
   const now = new Date().toISOString();
   if (fullyPaid) {
     await service
@@ -178,7 +188,7 @@ async function syncTuitionEnrolment(
         status: "paid",
         updated_at: now,
       })
-      .eq("user_id", userId);
+      .eq("id", enrolment.id);
     return;
   }
 
@@ -190,27 +200,19 @@ async function syncTuitionEnrolment(
         status: "payment_pending",
         updated_at: now,
       })
-      .eq("user_id", userId);
+      .eq("id", enrolment.id);
     return;
   }
-
-  const { data: enrolment } = await service
-    .from("enrolments")
-    .select("status")
-    .eq("user_id", userId)
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
 
   const patch: Record<string, string> = {
     payment_status: "unpaid",
     updated_at: now,
   };
-  if (enrolment?.status === "paid") {
+  if (enrolment.status === "paid") {
     patch.status = "accepted";
   }
 
-  await service.from("enrolments").update(patch).eq("user_id", userId);
+  await service.from("enrolments").update(patch).eq("id", enrolment.id);
 }
 
 export async function refreshFeeAccountStatus(
@@ -449,6 +451,11 @@ export async function markFeePendingReview(input: {
   await ensureStudentFeeRows(service, input.userId);
   const account = await getFeePayment(service, input.userId, input.feeType);
   if (!account) throw new Error("Fee account missing.");
+  if (account.status === "pending_review") {
+    throw new Error(
+      "A bank proof is already with the desk. Wait for a decision before sending another.",
+    );
+  }
 
   const { data, error } = await service
     .from("fee_transactions")

@@ -23,6 +23,7 @@ import { EvaluationManager } from "@/components/admin/evaluation-manager";
 import { ExamSamples } from "@/components/admin/exam-samples";
 import { ExamUpload } from "@/components/admin/exam-upload";
 import type { EvaluationAttemptRow } from "@/app/admin/evaluation/actions";
+import { DeskLoader, DeskLoaderOverlay } from "@/components/ui/desk-loader";
 import { useToast } from "@/components/ui/toast";
 import { isNationalAdmin, type AdminProfile } from "@/lib/admin/profile";
 import {
@@ -66,6 +67,8 @@ export function ExamsManager({
   const router = useRouter();
   const { success, error } = useToast();
   const [pending, startTransition] = useTransition();
+  const [busyLabel, setBusyLabel] = useState<string | null>(null);
+  const busy = pending || Boolean(busyLabel);
   const [deskTab, setDeskTab] = useState<DeskTab>(initialTab);
   const [selectedId, setSelectedId] = useState<string | null>(exams[0]?.id ?? null);
   const [detail, setDetail] = useState<{
@@ -127,16 +130,25 @@ export function ExamsManager({
     setCreating(false);
   }
 
-  function run(action: () => Promise<ExamActionResult>, then?: () => void) {
+  function run(
+    action: () => Promise<ExamActionResult>,
+    then?: () => void,
+    label = "Working…",
+  ) {
+    setBusyLabel(label);
     startTransition(async () => {
-      const next = await action();
-      if (next.ok) {
-        success(next.message, "Exams");
-        then?.();
-        router.refresh();
-        if (next.examId) setSelectedId(next.examId);
-      } else {
-        error(next.message, "Exams");
+      try {
+        const next = await action();
+        if (next.ok) {
+          success(next.message, "Exams");
+          then?.();
+          router.refresh();
+          if (next.examId) setSelectedId(next.examId);
+        } else {
+          error(next.message, "Exams");
+        }
+      } finally {
+        setBusyLabel(null);
       }
     });
   }
@@ -150,7 +162,11 @@ export function ExamsManager({
       binary += String.fromCharCode(b);
     });
     const base64 = btoa(binary);
-    run(() => importQuestionsToExam(selectedId, file.name, base64));
+    run(
+      () => importQuestionsToExam(selectedId, file.name, base64),
+      undefined,
+      "Importing questions…",
+    );
   }
 
   function copyLink(slug: string, audience: ExamAudience) {
@@ -343,21 +359,31 @@ export function ExamsManager({
         </aside>
 
         <section
-          className={`${workspaceClass} min-h-[16rem] border border-stone bg-mist sm:min-h-[22rem]`}
+          className={`${workspaceClass} relative min-h-[16rem] border border-stone bg-mist sm:min-h-[22rem]`}
+          aria-busy={busy}
         >
+          <DeskLoaderOverlay
+            active={busy}
+            label={busyLabel ?? "Working…"}
+          />
           {creating ? (
             <ExamMetaForm
               profile={profile}
               parishes={parishes}
               batches={batches}
-              pending={pending}
+              pending={busy}
+              busyLabel={busyLabel}
               onBack={backToDirectory}
               onCancel={backToDirectory}
               onSubmit={(values) =>
-                run(() => createExam(values), () => {
-                  setCreating(false);
-                  setMobileSurface("workspace");
-                })
+                run(
+                  () => createExam(values),
+                  () => {
+                    setCreating(false);
+                    setMobileSurface("workspace");
+                  },
+                  "Creating draft…",
+                )
               }
             />
           ) : !detail ? (
@@ -374,33 +400,57 @@ export function ExamsManager({
               profile={profile}
               parishes={parishes}
               batches={batches}
-              pending={pending}
+              pending={busy}
+              busyLabel={busyLabel}
               onBack={backToDirectory}
               onSaveMeta={(values) =>
-                run(() => updateExamMeta(detail.exam.id, values))
+                run(
+                  () => updateExamMeta(detail.exam.id, values),
+                  undefined,
+                  "Saving details…",
+                )
               }
               onStatus={(status) =>
-                run(() => setExamStatus(detail.exam.id, status))
+                run(
+                  () => setExamStatus(detail.exam.id, status),
+                  undefined,
+                  status === "published"
+                    ? "Publishing…"
+                    : status === "closed"
+                      ? "Closing…"
+                      : "Updating status…",
+                )
               }
               onDelete={() => {
                 if (!window.confirm("Delete this exam and all attempts?")) return;
-                run(() => deleteExam(detail.exam.id), () => {
-                  setSelectedId(null);
-                  setDetail(null);
-                  setMobileSurface("directory");
-                });
+                run(
+                  () => deleteExam(detail.exam.id),
+                  () => {
+                    setSelectedId(null);
+                    setDetail(null);
+                    setMobileSurface("directory");
+                  },
+                  "Deleting exam…",
+                );
               }}
               onCopyLink={() =>
                 copyLink(detail.exam.slug, detail.exam.audience)
               }
               onImport={onImport}
               onUpsertQuestion={(payload) =>
-                run(() =>
-                  upsertQuestion({ ...payload, exam_id: detail.exam.id }),
+                run(
+                  () =>
+                    upsertQuestion({ ...payload, exam_id: detail.exam.id }),
+                  undefined,
+                  "Saving question…",
                 )
               }
               onDeleteQuestion={(id) =>
-                run(() => deleteQuestion(id, detail.exam.id))
+                run(
+                  () => deleteQuestion(id, detail.exam.id),
+                  undefined,
+                  "Removing question…",
+                )
               }
             />
           )}
@@ -461,6 +511,7 @@ function ExamMetaForm({
   parishes,
   batches,
   pending,
+  busyLabel,
   initial,
   onSubmit,
   onCancel,
@@ -470,6 +521,7 @@ function ExamMetaForm({
   parishes: Pick<Parish, "id" | "name" | "region">[];
   batches: Batch[];
   pending: boolean;
+  busyLabel: string | null;
   initial?: Partial<MetaValues>;
   onSubmit: (values: MetaValues) => void;
   onCancel?: () => void;
@@ -702,15 +754,25 @@ function ExamMetaForm({
         <button
           type="submit"
           disabled={pending}
-          className="bg-pine px-4 py-2.5 text-sm font-medium text-mist disabled:opacity-60"
+          className="inline-flex min-h-[2.5rem] min-w-[8.5rem] items-center justify-center bg-pine px-4 py-2.5 text-sm font-medium text-mist disabled:opacity-60"
         >
-          {initial ? "Save details" : "Create draft"}
+          {pending ? (
+            <DeskLoader
+              label={busyLabel ?? (initial ? "Saving…" : "Creating…")}
+              tone="mist"
+            />
+          ) : initial ? (
+            "Save details"
+          ) : (
+            "Create draft"
+          )}
         </button>
         {onCancel ? (
           <button
             type="button"
+            disabled={pending}
             onClick={onCancel}
-            className="border border-stone px-4 py-2.5 text-sm text-ink/70"
+            className="border border-stone px-4 py-2.5 text-sm text-ink/70 disabled:opacity-60"
           >
             Cancel
           </button>
@@ -726,6 +788,7 @@ function ExamWorkspace({
   parishes,
   batches,
   pending,
+  busyLabel,
   onBack,
   onSaveMeta,
   onStatus,
@@ -740,6 +803,7 @@ function ExamWorkspace({
   parishes: Pick<Parish, "id" | "name" | "region">[];
   batches: Batch[];
   pending: boolean;
+  busyLabel: string | null;
   onBack?: () => void;
   onSaveMeta: (values: MetaValues) => void;
   onStatus: (status: Exam["status"]) => void;
@@ -804,18 +868,26 @@ function ExamWorkspace({
               type="button"
               disabled={pending}
               onClick={() => onStatus("published")}
-              className="bg-pine px-3 py-1.5 text-xs font-medium text-mist disabled:opacity-60"
+              className="inline-flex min-h-[1.85rem] min-w-[4.5rem] items-center justify-center bg-pine px-3 py-1.5 text-xs font-medium text-mist disabled:opacity-60"
             >
-              Publish
+              {pending && busyLabel?.startsWith("Publishing") ? (
+                <DeskLoader label={busyLabel} tone="mist" />
+              ) : (
+                "Publish"
+              )}
             </button>
           ) : (
             <button
               type="button"
               disabled={pending}
               onClick={() => onStatus("closed")}
-              className="border border-pine/30 px-3 py-1.5 text-xs font-medium text-pine"
+              className="inline-flex min-h-[1.85rem] min-w-[4rem] items-center justify-center border border-pine/30 px-3 py-1.5 text-xs font-medium text-pine disabled:opacity-60"
             >
-              Close
+              {pending && busyLabel?.startsWith("Closing") ? (
+                <DeskLoader label={busyLabel} />
+              ) : (
+                "Close"
+              )}
             </button>
           )}
           {detail.exam.status === "closed" ? (
@@ -823,7 +895,7 @@ function ExamWorkspace({
               type="button"
               disabled={pending}
               onClick={() => onStatus("draft")}
-              className="border border-stone px-3 py-1.5 text-xs text-ink/60"
+              className="border border-stone px-3 py-1.5 text-xs text-ink/60 disabled:opacity-60"
             >
               To draft
             </button>
@@ -863,6 +935,7 @@ function ExamWorkspace({
             parishes={parishes}
             batches={batches}
             pending={pending}
+            busyLabel={busyLabel}
             initial={{
               title: detail.exam.title,
               audience: detail.exam.audience,
@@ -882,8 +955,9 @@ function ExamWorkspace({
           <div className="border-t border-stone px-4 py-4 sm:px-6">
             <button
               type="button"
+              disabled={pending}
               onClick={onDelete}
-              className="text-sm text-red-800 hover:underline"
+              className="text-sm text-red-800 hover:underline disabled:opacity-60"
             >
               Delete exam
             </button>
@@ -902,12 +976,17 @@ function ExamWorkspace({
             >
               + Add question
             </button>
-            <label className="cursor-pointer border border-stone px-3 py-1.5 text-sm text-ink/70 hover:border-pine">
+            <label
+              className={`cursor-pointer border border-stone px-3 py-1.5 text-sm text-ink/70 hover:border-pine ${
+                pending ? "pointer-events-none opacity-60" : ""
+              }`}
+            >
               Import file
               <input
                 type="file"
                 accept=".csv,.xlsx,.xls,.json,.txt"
                 className="hidden"
+                disabled={pending}
                 onChange={(e) => {
                   const file = e.target.files?.[0];
                   if (file) onImport(file);
@@ -925,6 +1004,7 @@ function ExamWorkspace({
               key={editing?.id ?? "new"}
               initial={editing}
               pending={pending}
+              busyLabel={busyLabel}
               onCancel={() => {
                 setAdding(false);
                 setEditing(null);
@@ -989,11 +1069,13 @@ function ExamWorkspace({
 function QuestionEditor({
   initial,
   pending,
+  busyLabel,
   onSave,
   onCancel,
 }: {
   initial: ExamQuestion | null;
   pending: boolean;
+  busyLabel: string | null;
   onSave: (payload: {
     type: ExamQuestionType;
     prompt: string;
@@ -1156,14 +1238,19 @@ function QuestionEditor({
           onClick={() =>
             onSave({ type, prompt, points, payload: buildPayload() })
           }
-          className="bg-pine px-4 py-2 text-sm font-medium text-mist disabled:opacity-60"
+          className="inline-flex min-h-[2.25rem] min-w-[8rem] items-center justify-center bg-pine px-4 py-2 text-sm font-medium text-mist disabled:opacity-60"
         >
-          Save question
+          {pending && busyLabel?.includes("question") ? (
+            <DeskLoader label={busyLabel} tone="mist" />
+          ) : (
+            "Save question"
+          )}
         </button>
         <button
           type="button"
+          disabled={pending}
           onClick={onCancel}
-          className="border border-stone px-4 py-2 text-sm text-ink/60"
+          className="border border-stone px-4 py-2 text-sm text-ink/60 disabled:opacity-60"
         >
           Cancel
         </button>

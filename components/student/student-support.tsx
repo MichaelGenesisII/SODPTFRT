@@ -22,6 +22,7 @@ import {
   type SupportChatMessage,
 } from "@/components/support/chat-thread";
 import { useStudentSupportLive } from "@/components/student/support-live";
+import { DeskLoader, DeskLoaderOverlay } from "@/components/ui/desk-loader";
 import { useToast } from "@/components/ui/toast";
 import {
   formatTicketRelative,
@@ -69,6 +70,8 @@ export function StudentSupportDesk({
   const { markTicketRead } = useStudentSupportLive();
   const isDesktop = useIsDesktop();
   const [pending, startTransition] = useTransition();
+  const [busyLabel, setBusyLabel] = useState<string | null>(null);
+  const busy = pending || Boolean(busyLabel);
   const [panel, setPanel] = useState<Panel>("inbox");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [topic, setTopic] = useState<string>(SUPPORT_TOPICS[0]);
@@ -212,40 +215,50 @@ export function StudentSupportDesk({
 
   function onCompose(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    setBusyLabel("Opening conversation…");
     startTransition(async () => {
-      const result = await createStudentConversation(topic, message);
-      if (!result.ok) {
-        error(result.message);
-        return;
-      }
-      success(result.message, "Conversation opened");
-      setMessage("");
-      setPanel("inbox");
-      if (result.ticketId) {
-        pendingSelectRef.current = result.ticketId;
-        setSelectedId(result.ticketId);
-        if (isDesktop) {
-          setChatOpen(true);
-          window.localStorage.setItem(SUPPORT_CHAT_KEY, "1");
-        } else {
-          setMobileChatOpen(true);
+      try {
+        const result = await createStudentConversation(topic, message);
+        if (!result.ok) {
+          error(result.message);
+          return;
         }
+        success(result.message, "Conversation opened");
+        setMessage("");
+        setPanel("inbox");
+        if (result.ticketId) {
+          pendingSelectRef.current = result.ticketId;
+          setSelectedId(result.ticketId);
+          if (isDesktop) {
+            setChatOpen(true);
+            window.localStorage.setItem(SUPPORT_CHAT_KEY, "1");
+          } else {
+            setMobileChatOpen(true);
+          }
+        }
+        router.refresh();
+      } finally {
+        setBusyLabel(null);
       }
-      router.refresh();
     });
   }
 
   function onReply(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!selected) return;
+    setBusyLabel("Sending message…");
     startTransition(async () => {
-      const result = await replyStudentConversation(selected.id, reply);
-      if (!result.ok) {
-        error(result.message);
-        return;
+      try {
+        const result = await replyStudentConversation(selected.id, reply);
+        if (!result.ok) {
+          error(result.message);
+          return;
+        }
+        success(result.message);
+        setReply("");
+      } finally {
+        setBusyLabel(null);
       }
-      success(result.message);
-      setReply("");
     });
   }
 
@@ -341,7 +354,19 @@ export function StudentSupportDesk({
   );
 
   const chatPane = (
-    <section className="flex h-full min-h-0 flex-1 flex-col overflow-hidden border border-stone bg-mist lg:border">
+    <section
+      className="relative flex h-full min-h-0 flex-1 flex-col overflow-hidden border border-stone bg-mist lg:border"
+      aria-busy={busy && Boolean(selected)}
+    >
+      <DeskLoaderOverlay
+        active={
+          busy &&
+          Boolean(selected) &&
+          (Boolean(busyLabel?.startsWith("Sending")) ||
+            Boolean(busyLabel?.startsWith("Removing")))
+        }
+        label={busyLabel ?? "Working…"}
+      />
       {!selected ? (
         <div className="flex flex-1 flex-col items-center justify-center px-6 py-16 text-center">
           <p className="text-[0.7rem] font-medium uppercase tracking-[0.18em] text-celadon">
@@ -396,7 +421,7 @@ export function StudentSupportDesk({
                     {!pendingDelete ? (
                       <button
                         type="button"
-                        disabled={pending}
+                        disabled={busy}
                         onClick={() => setPendingDelete(true)}
                         className="text-[0.7rem] font-medium text-red-800 underline decoration-red-800/30 underline-offset-4 disabled:opacity-50"
                       >
@@ -406,7 +431,7 @@ export function StudentSupportDesk({
                       <div className="flex flex-wrap items-center justify-end gap-1.5">
                         <button
                           type="button"
-                          disabled={pending}
+                          disabled={busy}
                           onClick={() => setPendingDelete(false)}
                           className="border border-pine/25 px-2.5 py-1 text-[0.7rem] font-medium text-pine disabled:opacity-50"
                         >
@@ -414,25 +439,34 @@ export function StudentSupportDesk({
                         </button>
                         <button
                           type="button"
-                          disabled={pending}
+                          disabled={busy}
                           onClick={() => {
+                            setBusyLabel("Removing conversation…");
                             startTransition(async () => {
-                              const result = await deleteStudentConversation(
-                                selected.id,
-                              );
-                              if (!result.ok) {
-                                error(result.message);
-                                return;
+                              try {
+                                const result = await deleteStudentConversation(
+                                  selected.id,
+                                );
+                                if (!result.ok) {
+                                  error(result.message);
+                                  return;
+                                }
+                                success(result.message);
+                                setPendingDelete(false);
+                                setSelectedId(null);
+                                setMobileChatOpen(false);
+                              } finally {
+                                setBusyLabel(null);
                               }
-                              success(result.message);
-                              setPendingDelete(false);
-                              setSelectedId(null);
-                              setMobileChatOpen(false);
                             });
                           }}
-                          className="bg-red-800 px-2.5 py-1 text-[0.7rem] font-medium text-red-50 disabled:opacity-50"
+                          className="inline-flex min-h-[1.5rem] min-w-[3.5rem] items-center justify-center bg-red-800 px-2.5 py-1 text-[0.7rem] font-medium text-red-50 disabled:opacity-50"
                         >
-                          {pending ? "…" : "Confirm"}
+                          {busy && busyLabel?.startsWith("Removing") ? (
+                            <DeskLoader label="…" showLabel={false} tone="mist" />
+                          ) : (
+                            "Confirm"
+                          )}
                         </button>
                       </div>
                     )}
@@ -452,7 +486,7 @@ export function StudentSupportDesk({
                 value={reply}
                 onChange={setReply}
                 onSubmit={onReply}
-                pending={pending}
+                pending={busy}
                 disabled={!isActiveTicket(selected.status)}
                 maxLength={NOTE_MAX}
                 placeholder="Message the Listening Desk…"
@@ -513,8 +547,13 @@ export function StudentSupportDesk({
       {panel === "compose" ? (
         <form
           onSubmit={onCompose}
-          className="animate-panel-in border border-stone bg-mist/70 px-4 py-5 sm:px-7 sm:py-6"
+          className="relative animate-panel-in border border-stone bg-mist/70 px-4 py-5 sm:px-7 sm:py-6"
+          aria-busy={busy && Boolean(busyLabel?.startsWith("Opening"))}
         >
+          <DeskLoaderOverlay
+            active={busy && Boolean(busyLabel?.startsWith("Opening"))}
+            label={busyLabel ?? "Opening conversation…"}
+          />
           <div className="flex items-center justify-between gap-3">
             <div>
               <p className="text-[0.65rem] font-medium uppercase tracking-[0.14em] text-celadon">
@@ -526,8 +565,9 @@ export function StudentSupportDesk({
             </div>
             <button
               type="button"
+              disabled={busy}
               onClick={() => setPanel("inbox")}
-              className="shrink-0 border border-stone px-3 py-2 text-xs font-medium text-pine sm:hidden"
+              className="shrink-0 border border-stone px-3 py-2 text-xs font-medium text-pine disabled:opacity-50 sm:hidden"
             >
               Cancel
             </button>
@@ -538,7 +578,8 @@ export function StudentSupportDesk({
             <select
               value={topic}
               onChange={(event) => setTopic(event.target.value)}
-              className="w-full border border-stone bg-white/70 px-4 py-3 text-sm outline-none focus:border-pine"
+              disabled={busy}
+              className="w-full border border-stone bg-white/70 px-4 py-3 text-sm outline-none focus:border-pine disabled:opacity-50"
             >
               {SUPPORT_TOPICS.map((item) => (
                 <option key={item} value={item}>
@@ -557,8 +598,9 @@ export function StudentSupportDesk({
               onChange={(event) => setMessage(event.target.value)}
               rows={isDesktop ? 6 : 5}
               maxLength={MESSAGE_MAX}
+              disabled={busy}
               placeholder="Share enough detail for the desk to help you…"
-              className="w-full border border-stone bg-white/70 px-4 py-3 text-sm outline-none focus:border-pine"
+              className="w-full border border-stone bg-white/70 px-4 py-3 text-sm outline-none focus:border-pine disabled:opacity-50"
             />
             <span className="mt-1 block text-xs text-ink/45">
               {message.length}/{MESSAGE_MAX}
@@ -567,10 +609,14 @@ export function StudentSupportDesk({
 
           <button
             type="submit"
-            disabled={pending || message.trim().length < 10}
-            className="mt-4 w-full bg-pine px-5 py-3 text-sm font-medium text-mist transition-colors hover:bg-celadon disabled:opacity-50 sm:mt-5 sm:w-auto"
+            disabled={busy || message.trim().length < 10}
+            className="mt-4 inline-flex min-h-[2.75rem] min-w-[10rem] w-full items-center justify-center bg-pine px-5 py-3 text-sm font-medium text-mist transition-colors hover:bg-celadon disabled:opacity-50 sm:mt-5 sm:w-auto"
           >
-            {pending ? "Sending…" : "Open conversation"}
+            {busy && busyLabel?.startsWith("Opening") ? (
+              <DeskLoader label={busyLabel} tone="mist" />
+            ) : (
+              "Open conversation"
+            )}
           </button>
         </form>
       ) : isDesktop ? (

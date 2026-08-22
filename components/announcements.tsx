@@ -1,9 +1,12 @@
 import Link from "next/link";
+import { NoticeAttachmentList, NoticeFilesMark } from "@/components/notices/notice-attachments";
 import {
   formatAnnouncementDate,
-  getAnnouncements,
+  MAX_GENERAL_ANNOUNCEMENTS,
+  staticAnnouncements,
   type Announcement,
 } from "@/lib/announcements";
+import { fetchGeneralAnnouncements } from "@/lib/announcements-server";
 
 function isExternalHref(href: string) {
   return href.startsWith("http://") || href.startsWith("https://");
@@ -54,12 +57,14 @@ function AnnouncementLink({
 
 function LiveNotice({ item, index }: { item: Announcement; index: number }) {
   const dateLabel = formatAnnouncementDate(item.publishedAt);
+  const fileCount = item.attachments?.length ?? 0;
 
   return (
     <article
       className="animate-fade-rise group relative flex flex-col border-t border-mist/15 pt-6 first:border-t-0 first:pt-0 sm:border-t-0 sm:border-l sm:border-mist/15 sm:pt-0 sm:pl-6 first:sm:border-l-0 first:sm:pl-0"
       style={{ animationDelay: `${0.08 + index * 0.1}s` }}
     >
+      <NoticeFilesMark count={fileCount} tone="mist" className="-right-1 top-0 sm:top-0" />
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
         <span className="font-display text-sm tabular-nums text-celadon">
           {String(index + 1).padStart(2, "0")}
@@ -79,6 +84,10 @@ function LiveNotice({ item, index }: { item: Announcement; index: number }) {
       <p className="mt-2 flex-1 text-sm leading-relaxed text-mist/70">
         {item.body}
       </p>
+      <NoticeAttachmentList
+        files={item.attachments}
+        tone="mist"
+      />
       {item.href && item.hrefLabel ? (
         <AnnouncementLink href={item.href} label={item.hrefLabel} tone="mist" />
       ) : null}
@@ -92,6 +101,10 @@ function PinnedStep({ item, index }: { item: Announcement; index: number }) {
       className="animate-fade-rise relative min-w-0"
       style={{ animationDelay: `${0.12 + index * 0.1}s` }}
     >
+      <NoticeFilesMark
+        count={item.attachments?.length ?? 0}
+        className="-right-1"
+      />
       <div className="flex items-baseline gap-3">
         <span
           className="font-display text-3xl leading-none tracking-[-0.03em] text-celadon/70 tabular-nums"
@@ -110,6 +123,7 @@ function PinnedStep({ item, index }: { item: Announcement; index: number }) {
       <p className="mt-2 text-sm leading-relaxed text-ink/65 sm:text-[0.95rem]">
         {item.body}
       </p>
+      <NoticeAttachmentList files={item.attachments} />
       {item.href && item.hrefLabel ? (
         <AnnouncementLink href={item.href} label={item.hrefLabel} />
       ) : null}
@@ -118,7 +132,8 @@ function PinnedStep({ item, index }: { item: Announcement; index: number }) {
 }
 
 export async function AnnouncementsSection() {
-  const { pinned, live } = await getAnnouncements();
+  const live = await fetchGeneralAnnouncements(MAX_GENERAL_ANNOUNCEMENTS);
+  const pinned = staticAnnouncements;
   const hasLive = live.length > 0;
 
   return (

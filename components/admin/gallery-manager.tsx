@@ -1,838 +1,441 @@
 "use client";
-
-
-
 import { useRouter } from "next/navigation";
-
 import { useEffect, useState, useTransition } from "react";
-
 import {
-
   deleteGallerySelfie,
-
   flagGallerySelfie,
-
   restoreGallerySelfie,
-
   takeDownGallerySelfie,
-
   type AdminGalleryCounts,
-
   type AdminGalleryItem,
-
   type AdminGalleryTab,
-
 } from "@/app/admin/gallery/actions";
-
 import { useRefreshOnVisible } from "@/components/student/use-refresh-on-visible";
-
+import { DeskLoader, DeskLoaderOverlay } from "@/components/ui/desk-loader";
 import { useToast } from "@/components/ui/toast";
-
 import { DeskPagination } from "@/lib/ui/desk-pagination";
 
-
-
 type Props = {
-
   items: AdminGalleryItem[];
-
   total: number;
-
   page: number;
-
   pageSize: number;
-
   tab: AdminGalleryTab;
-
   search: string;
-
   openId: string | null;
-
   counts: AdminGalleryCounts;
-
   national: boolean;
-
 };
 
-
-
 function galleryHref(input: {
-
   tab?: AdminGalleryTab;
-
   page?: number;
-
   q?: string;
-
   open?: string | null;
-
 }) {
-
   const params = new URLSearchParams();
-
   if (input.tab && input.tab !== "all") params.set("tab", input.tab);
-
   if (input.page && input.page > 1) params.set("page", String(input.page));
-
   if (input.q?.trim()) params.set("q", input.q.trim());
-
   if (input.open) params.set("open", input.open);
-
   const qs = params.toString();
-
   return qs ? `/admin/gallery?${qs}` : "/admin/gallery";
-
 }
-
-
 
 export function AdminGalleryManager({
-
   items,
-
   total,
-
   page,
-
   pageSize,
-
   tab,
-
   search,
-
   openId: initialOpenId,
-
   counts,
-
   national,
-
 }: Props) {
-
   useRefreshOnVisible();
-
   const [openId, setOpenId] = useState<string | null>(initialOpenId);
-
   const [query, setQuery] = useState(search);
-
   const [note, setNote] = useState("");
-
   const [pending, startTransition] = useTransition();
-
+  const [busyLabel, setBusyLabel] = useState<string | null>(null);
+  const busy = pending || Boolean(busyLabel);
   const { success, error } = useToast();
-
   const router = useRouter();
-
-
-
   useEffect(() => {
-
     setOpenId(initialOpenId);
-
   }, [initialOpenId]);
-
-
-
   useEffect(() => {
-
     setQuery(search);
-
   }, [search]);
-
-
-
   const openItem = items.find((item) => item.userId === openId) ?? null;
-
-
-
   useEffect(() => {
-
     if (openItem) {
-
       setNote(openItem.moderationNote ?? "");
-
     }
-
   }, [openItem]);
-
-
-
   function navigate(input: {
-
     tab?: AdminGalleryTab;
-
     page?: number;
-
     q?: string;
-
     open?: string | null;
-
   }) {
-
     router.push(galleryHref({ tab, page, q: query, open: openId, ...input }));
-
   }
-
-
-
   function run(
-
     action: () => Promise<{ ok: boolean; message: string }>,
-
+    label: string,
     clearNote = true,
-
   ) {
-
+    setBusyLabel(label);
     startTransition(async () => {
-
-      const result = await action();
-
-      if (!result.ok) {
-
-        error(result.message);
-
-        return;
-
+      try {
+        const result = await action();
+        if (!result.ok) {
+          error(result.message);
+          return;
+        }
+        success(result.message);
+        if (clearNote) setNote("");
+        setOpenId(null);
+        router.refresh();
+      } finally {
+        setBusyLabel(null);
       }
-
-      success(result.message);
-
-      if (clearNote) setNote("");
-
-      setOpenId(null);
-
-      router.refresh();
-
     });
-
   }
-
-
 
   return (
-
-    <div className="space-y-4 sm:space-y-5">
-
+    <div className="relative space-y-4 sm:space-y-5" aria-busy={busy}>
+      <DeskLoaderOverlay active={busy} label={busyLabel ?? "Working…"} />
       <div className="grid grid-cols-3 gap-px border border-stone bg-stone sm:gap-0 sm:bg-mist/50">
-
         <MiniStat label="Portraits" value={String(counts.all)} />
-
         <MiniStat label="Flagged" value={String(counts.flagged)} />
-
         <MiniStat label="Taken down" value={String(counts.takenDown)} />
-
       </div>
-
-
-
       <form
-
         className="flex flex-wrap gap-2"
-
         onSubmit={(event) => {
-
           event.preventDefault();
-
           navigate({ page: 1, q: query, open: null });
-
         }}
-
       >
-
         <input
-
           type="search"
-
           value={query}
-
           onChange={(event) => setQuery(event.target.value)}
-
           placeholder="Search by name or email"
-
           className="min-w-0 flex-1 border border-stone bg-white/70 px-3 py-2 text-sm outline-none focus:border-pine sm:max-w-xs"
-
         />
-
         <button
-
           type="submit"
-
           className="border border-pine/30 px-3 py-2 text-sm font-medium text-pine"
-
         >
-
           Search
-
         </button>
-
         {search ? (
-
           <button
-
             type="button"
-
             onClick={() => {
-
               setQuery("");
-
               navigate({ page: 1, q: "", open: null });
-
             }}
-
             className="border border-stone px-3 py-2 text-sm text-ink/55"
-
           >
-
             Clear
-
           </button>
-
         ) : null}
-
       </form>
-
-
-
       <nav
-
         className="grid grid-cols-3 border border-stone bg-mist/40 sm:flex sm:gap-1 sm:border-0 sm:border-b sm:bg-transparent sm:pb-px"
-
         aria-label="Gallery filters"
-
       >
-
         {(
-
           [
-
             ["all", "All", counts.all],
-
             ["flagged", "Flagged", counts.flagged],
-
             ["taken_down", "Taken down", counts.takenDown],
-
           ] as const
-
         ).map(([id, label, count]) => {
-
           const active = tab === id;
-
           return (
-
             <button
-
               key={id}
-
               type="button"
-
               onClick={() => navigate({ tab: id, page: 1, open: null })}
-
               className={`relative min-h-12 px-2 py-3 text-center text-sm font-medium tracking-wide transition-colors sm:min-h-0 sm:shrink-0 sm:px-3 sm:py-2 sm:text-left ${
-
                 active
-
                   ? "bg-mist text-pine sm:bg-transparent"
-
                   : "text-ink/50 hover:text-ink/80"
-
               }`}
-
             >
-
               <span className="inline-flex items-center justify-center gap-1.5">
-
                 {label}
-
                 <span className="tabular-nums text-[0.65rem] text-ink/40">
-
                   {count}
-
                 </span>
-
               </span>
-
               <span
-
                 className={`absolute inset-x-2 bottom-0 h-0.5 bg-celadon transition-opacity ${
-
                   active ? "opacity-100" : "opacity-0"
-
                 }`}
-
                 aria-hidden
-
               />
-
             </button>
-
           );
-
         })}
-
       </nav>
-
-
-
       <section className="border border-stone bg-mist">
-
         <div className="border-b border-stone px-4 py-4 sm:px-5 sm:py-5">
-
           <p className="text-[0.6rem] font-medium uppercase tracking-[0.16em] text-celadon">
-
             {national ? "Network" : "Parish"} gallery
-
           </p>
-
           <h2 className="mt-1.5 font-display text-xl text-pine sm:text-2xl">
-
             Graduation selfies
-
           </h2>
-
           <p className="mt-1.5 max-w-xl text-sm leading-relaxed text-ink/60">
-
-            Tap a portrait to flag, take down with a reason, restore, or delete.
-
+            Tap a portrait to flag (hides it from students), take down with a
+            reason, restore, or delete.
           </p>
-
         </div>
-
-
-
         <div className="px-3 py-4 sm:px-5 sm:py-5">
-
           {items.length === 0 ? (
-
             <p className="border border-dashed border-stone px-4 py-10 text-center text-sm text-ink/50">
-
               No portraits in this view.
-
             </p>
-
           ) : (
-
             <ul className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 sm:gap-4 lg:grid-cols-4">
-
               {items.map((item) => {
-
                 const open = openId === item.userId;
-
                 return (
-
                   <li
-
                     key={item.userId}
-
                     className={
-
                       open
-
                         ? "col-span-2 sm:col-span-3 lg:col-span-4"
-
                         : undefined
-
                     }
-
                   >
-
                     <div
-
                       className={
-
                         open
-
                           ? "grid gap-3 border border-pine/30 bg-white/40 p-2 sm:grid-cols-[minmax(0,12rem)_1fr] sm:gap-4 sm:p-3 md:grid-cols-[minmax(0,14rem)_1fr]"
-
                           : undefined
-
                       }
-
                     >
-
                       <button
-
                         type="button"
-
                         onClick={() => {
-
                           const next = open ? null : item.userId;
-
                           setOpenId(next);
-
                           setNote(item.moderationNote ?? "");
-
                           navigate({ open: next });
-
                         }}
-
                         aria-expanded={open}
-
                         className={`group relative overflow-hidden border text-left transition-colors ${
-
                           open
-
                             ? "border-pine"
-
                             : "border-stone hover:border-pine/40"
-
                         }`}
-
                       >
-
                         <div className="aspect-[3/4] overflow-hidden bg-pine/5">
-
                           {item.imageUrl ? (
-
                             // eslint-disable-next-line @next/next/no-img-element
-
                             <img
-
                               src={item.imageUrl}
-
                               alt={`Graduation selfie of ${item.displayName}`}
-
                               className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-[1.03]"
-
                             />
-
                           ) : (
-
                             <span className="flex h-full w-full items-center justify-center bg-stone text-xs text-ink/40">
-
                               Removed
-
                             </span>
-
                           )}
-
                         </div>
-
                         <div className="absolute inset-x-0 top-0 flex justify-between gap-1 p-1.5 sm:p-2">
-
                           <span
-
                             className={`px-1.5 py-0.5 text-[0.6rem] font-semibold uppercase tracking-[0.08em] ${
-
                               item.moderationStatus === "flagged"
-
                                 ? "bg-[#efe8dc] text-[#6b4f2a]"
-
                                 : item.moderationStatus === "taken_down"
-
                                   ? "bg-red-50 text-red-900"
-
                                   : "bg-mist/90 text-pine"
-
                             }`}
-
                           >
-
                             {statusLabel(item.moderationStatus)}
-
                           </span>
-
                         </div>
-
                         <div className="absolute inset-x-0 bottom-0 bg-pine/90 px-2 py-2 sm:px-3 sm:py-2.5">
-
                           <p className="truncate font-display text-sm leading-snug text-mist sm:text-base">
-
                             {item.displayName}
-
                           </p>
-
                           <p className="mt-0.5 truncate text-[0.6rem] uppercase tracking-[0.08em] text-mist/65">
-
                             {item.batchLabel || "Batch"}
-
                             {national && item.parishName
-
                               ? ` · ${item.parishName}`
-
                               : ""}
-
                           </p>
-
                         </div>
-
                       </button>
-
-
-
                       {open ? (
-
                         <div className="space-y-3 px-1 py-1 sm:px-0 sm:py-0">
-
                           <div>
-
                             <p className="font-display text-lg text-pine">
-
                               {item.displayName}
-
                             </p>
-
                             <p className="mt-0.5 truncate text-xs text-ink/50">
-
                               {item.email}
-
                               {national && item.parishName
-
                                 ? ` · ${item.parishName}`
-
                                 : ""}
-
                             </p>
-
                           </div>
-
                           {item.moderationNote ? (
-
                             <p className="text-sm text-ink/65">
-
                               Last note: {item.moderationNote}
-
                             </p>
-
                           ) : null}
-
                           <label className="block text-sm font-medium text-ink">
-
                             Reason / note
-
                             <textarea
-
                               value={note}
-
                               onChange={(e) => setNote(e.target.value)}
-
                               rows={2}
-
                               maxLength={500}
-
+                              disabled={busy}
                               placeholder="Why this action is needed"
-
-                              className="mt-2 w-full border border-stone bg-mist/40 px-3 py-2 text-sm outline-none focus:border-pine"
-
+                              className="mt-2 w-full border border-stone bg-mist/40 px-3 py-2 text-sm outline-none focus:border-pine disabled:opacity-60"
                             />
-
                           </label>
-
                           <div className="flex flex-wrap gap-2">
-
                             {item.moderationStatus !== "flagged" &&
-
                             item.path ? (
-
                               <button
-
                                 type="button"
-
-                                disabled={pending}
-
+                                disabled={busy}
                                 onClick={() =>
-
-                                  run(() =>
-
-                                    flagGallerySelfie(item.userId, note),
-
+                                  run(
+                                    () => flagGallerySelfie(item.userId, note),
+                                    "Flagging portrait…",
                                   )
-
                                 }
-
-                                className="border border-[#c4a574] px-3 py-2 text-sm font-medium text-[#6b4f2a] disabled:opacity-60"
-
+                                className="inline-flex min-h-[2.25rem] min-w-[4rem] items-center justify-center border border-[#c4a574] px-3 py-2 text-sm font-medium text-[#6b4f2a] disabled:opacity-60"
                               >
-
-                                Flag
-
+                                {busy && busyLabel?.startsWith("Flagging") ? (
+                                  <DeskLoader label={busyLabel} />
+                                ) : (
+                                  "Flag"
+                                )}
                               </button>
-
                             ) : null}
-
                             {item.moderationStatus !== "taken_down" &&
-
                             item.path ? (
-
                               <button
-
                                 type="button"
-
-                                disabled={pending}
-
+                                disabled={busy}
                                 onClick={() =>
-
-                                  run(() =>
-
-                                    takeDownGallerySelfie(item.userId, note),
-
+                                  run(
+                                    () =>
+                                      takeDownGallerySelfie(item.userId, note),
+                                    "Taking down…",
                                   )
-
                                 }
-
-                                className="border border-pine/30 px-3 py-2 text-sm font-medium text-pine disabled:opacity-60"
-
+                                className="inline-flex min-h-[2.25rem] min-w-[5.5rem] items-center justify-center border border-pine/30 px-3 py-2 text-sm font-medium text-pine disabled:opacity-60"
                               >
-
-                                Take down
-
+                                {busy && busyLabel?.startsWith("Taking") ? (
+                                  <DeskLoader label={busyLabel} />
+                                ) : (
+                                  "Take down"
+                                )}
                               </button>
-
                             ) : null}
-
                             {item.moderationStatus !== "visible" &&
-
                             item.path ? (
-
                               <button
-
                                 type="button"
-
-                                disabled={pending}
-
+                                disabled={busy}
                                 onClick={() =>
-
-                                  run(() =>
-
-                                    restoreGallerySelfie(item.userId),
-
+                                  run(
+                                    () => restoreGallerySelfie(item.userId),
+                                    "Restoring…",
+                                    false,
                                   )
-
                                 }
-
-                                className="border border-stone px-3 py-2 text-sm font-medium text-ink/70 disabled:opacity-60"
-
+                                className="inline-flex min-h-[2.25rem] min-w-[5rem] items-center justify-center border border-stone px-3 py-2 text-sm font-medium text-ink/70 disabled:opacity-60"
                               >
-
-                                Restore
-
+                                {busy && busyLabel?.startsWith("Restoring") ? (
+                                  <DeskLoader label={busyLabel} />
+                                ) : (
+                                  "Restore"
+                                )}
                               </button>
-
                             ) : null}
-
                             <button
-
                               type="button"
-
-                              disabled={pending}
-
+                              disabled={busy}
                               onClick={() =>
-
-                                run(() =>
-
-                                  deleteGallerySelfie(item.userId, note),
-
+                                run(
+                                  () => deleteGallerySelfie(item.userId, note),
+                                  "Deleting…",
                                 )
-
                               }
-
-                              className="border border-red-800/30 px-3 py-2 text-sm font-medium text-red-900 disabled:opacity-60"
-
+                              className="inline-flex min-h-[2.25rem] min-w-[4.5rem] items-center justify-center border border-red-800/30 px-3 py-2 text-sm font-medium text-red-900 disabled:opacity-60"
                             >
-
-                              Delete
-
+                              {busy && busyLabel?.startsWith("Deleting") ? (
+                                <DeskLoader label={busyLabel} />
+                              ) : (
+                                "Delete"
+                              )}
                             </button>
-
                             <button
-
                               type="button"
-
+                              disabled={busy}
                               onClick={() => {
-
                                 setOpenId(null);
-
                                 navigate({ open: null });
-
                               }}
-
-                              className="border border-stone px-3 py-2 text-sm text-ink/55"
-
+                              className="border border-stone px-3 py-2 text-sm text-ink/55 disabled:opacity-60"
                             >
-
                               Close
-
                             </button>
-
                           </div>
-
                         </div>
-
                       ) : null}
-
                     </div>
-
                   </li>
-
                 );
-
               })}
-
             </ul>
-
           )}
-
-
-
           <DeskPagination
-
             page={page}
-
             totalItems={total}
-
             pageSize={pageSize}
-
             itemLabel="portraits"
-
             onPageChange={(nextPage) => navigate({ page: nextPage, open: null })}
-
             className="mt-4"
-
           />
-
         </div>
-
       </section>
-
     </div>
-
   );
-
 }
-
-
 
 function statusLabel(status: AdminGalleryItem["moderationStatus"]) {
-
   if (status === "flagged") return "Flagged";
-
   if (status === "taken_down") return "Taken down";
-
   return "Visible";
-
 }
-
-
 
 function MiniStat({ label, value }: { label: string; value: string }) {
-
   return (
-
     <div className="bg-mist/80 px-2.5 py-3 sm:bg-transparent sm:px-4 sm:py-3">
-
       <p className="text-[0.58rem] uppercase tracking-[0.1em] text-ink/40 sm:text-[0.6rem] sm:tracking-[0.12em]">
-
         {label}
-
       </p>
-
       <p className="mt-0.5 font-display text-lg tabular-nums text-pine sm:text-xl">
-
         {value}
-
       </p>
-
     </div>
-
   );
-
 }
-

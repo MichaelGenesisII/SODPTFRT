@@ -26,7 +26,7 @@ import {
 
 } from "@/lib/safe-action-message";
 
-import { deskPageFromSearchParams } from "@/lib/ui/desk-pagination";
+import { deskPageFromSearchParams } from "@/lib/ui/desk-page";
 
 
 

@@ -2,10 +2,12 @@
 
 import { useEffect, useState } from "react";
 import {
+  endActiveZoomMeetings,
   getInPortalHostSession,
   type ClassStudentOption,
 } from "@/app/admin/classes/actions";
 import { InPortalZoom } from "@/components/classes/in-portal-zoom";
+import { DeskLoader, DeskLoaderOverlay } from "@/components/ui/desk-loader";
 import { useToast } from "@/components/ui/toast";
 import {
   audienceLabel,
@@ -22,6 +24,7 @@ export function ClassWorkspace({
   item,
   roster,
   pending,
+  busyLabel,
   zoomReady,
   meetingSdkReady,
   onBack,
@@ -35,6 +38,7 @@ export function ClassWorkspace({
   item: ZoomClass;
   roster: ZoomClassAttendance[];
   pending: boolean;
+  busyLabel: string | null;
   zoomReady: boolean;
   meetingSdkReady: boolean;
   onBack: () => void;
@@ -45,13 +49,14 @@ export function ClassWorkspace({
   onStatus: (status: ZoomClass["status"]) => void;
   onDelete: () => void;
 }) {
-  const { error: toastError } = useToast();
+  const { success, error: toastError } = useToast();
   const [studentQuery, setStudentQuery] = useState("");
   const [hits, setHits] = useState<ClassStudentOption[]>([]);
   const [searching, setSearching] = useState(false);
   const [portalSession, setPortalSession] =
     useState<InPortalZoomSession | null>(null);
   const [hosting, setHosting] = useState(false);
+  const [endingLive, setEndingLive] = useState(false);
 
   useEffect(() => {
     const q = studentQuery.trim();
@@ -88,8 +93,37 @@ export function ClassWorkspace({
     setPortalSession(next.session);
   }
 
+  async function endLiveMeetings() {
+    const confirmed = window.confirm(
+      "End all live Zoom meetings on the school host account? Everyone still in those meetings will be disconnected.",
+    );
+    if (!confirmed) return;
+
+    setEndingLive(true);
+    setPortalSession(null);
+    try {
+      const result = await endActiveZoomMeetings({ classId: item.id });
+      if (!result.ok) {
+        toastError(result.message, "End Zoom");
+        return;
+      }
+      success(result.message, "End Zoom");
+    } finally {
+      setEndingLive(false);
+    }
+  }
+
   return (
-    <div className="animate-panel-in">
+    <div
+      className="relative animate-panel-in"
+      aria-busy={pending || hosting || endingLive}
+    >
+      <DeskLoaderOverlay
+        active={hosting || endingLive}
+        label={
+          endingLive ? "Ending live Zoom meetings…" : "Opening host session…"
+        }
+      />
       <header className="border-b border-stone px-3 py-4 sm:px-6">
         <button
           type="button"
@@ -162,14 +196,18 @@ export function ClassWorkspace({
               type="button"
               disabled={pending || hosting || !meetingSdkReady}
               onClick={() => void startInPortalHost()}
-              className="bg-pine px-3 py-1.5 text-xs font-medium text-mist disabled:opacity-40"
+              className="inline-flex min-h-[1.85rem] min-w-[7.5rem] items-center justify-center bg-pine px-3 py-1.5 text-xs font-medium text-mist disabled:opacity-40"
               title={
                 meetingSdkReady
                   ? "Host inside the Classes page"
                   : "In-portal Zoom is not configured yet"
               }
             >
-              {hosting ? "Opening…" : "Host in portal"}
+              {hosting ? (
+                <DeskLoader label="Opening…" tone="mist" />
+              ) : (
+                "Host in portal"
+              )}
             </button>
           ) : null}
           {item.zoom_start_url ? (
@@ -197,9 +235,28 @@ export function ClassWorkspace({
               type="button"
               disabled={pending || !zoomReady}
               onClick={onSync}
-              className="border border-celadon/40 px-3 py-1.5 text-xs font-medium text-pine disabled:opacity-40"
+              className="inline-flex min-h-[1.85rem] min-w-[5.5rem] items-center justify-center border border-celadon/40 px-3 py-1.5 text-xs font-medium text-pine disabled:opacity-40"
             >
-              Sync Zoom
+              {pending && busyLabel?.startsWith("Syncing") ? (
+                <DeskLoader label={busyLabel} />
+              ) : (
+                "Sync Zoom"
+              )}
+            </button>
+          ) : null}
+          {zoomReady ? (
+            <button
+              type="button"
+              disabled={pending || hosting || endingLive}
+              onClick={() => void endLiveMeetings()}
+              className="inline-flex min-h-[1.85rem] items-center justify-center border border-[#c4a574]/50 px-3 py-1.5 text-xs font-medium text-[#6b4f2a] disabled:opacity-40"
+              title="End live meetings on the Zoom host account so Host in portal can start cleanly"
+            >
+              {endingLive ? (
+                <DeskLoader label="Ending…" />
+              ) : (
+                "End live Zoom"
+              )}
             </button>
           ) : null}
           {item.status === "scheduled" ? (

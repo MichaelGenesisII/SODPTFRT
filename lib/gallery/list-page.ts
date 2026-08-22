@@ -7,6 +7,7 @@ import {
 import { formatBatchLabel } from "@/lib/parishes";
 import {
   GALLERY_SIGNED_URL_TTL_SEC,
+  signStudentPhotoUrl,
   signStudentPhotoUrls,
 } from "@/lib/student/photos";
 import { createServiceSupabaseClient } from "@/lib/supabase/service";
@@ -54,8 +55,9 @@ function scopeFilters(
     };
   }
   if (scope === "cohort") {
+    // National programme cohort — classmates across all parishes.
     return {
-      p_parish_id: enrolment.parish_id,
+      p_parish_id: null,
       p_batch_id: null,
       p_cohort_id: enrolment.cohort_id,
     };
@@ -153,22 +155,28 @@ export async function mapGalleryPhotos(
     GALLERY_SIGNED_URL_TTL_SEC,
   );
 
-  return rows
-    .map((row) => {
-      const url = row.selfie_path ? signed.get(row.selfie_path) : null;
-      if (!url) return null;
-      return {
-        userId: row.user_id,
-        displayName: displayName(row),
-        parishName: row.parish_name,
-        batchLabel: batchLabel(row),
-        cohortLabel: cohortLabel(row),
-        imageUrl: url,
-        isSelf: viewerUserId ? row.user_id === viewerUserId : undefined,
-        moderationStatus: row.moderation_status,
-      };
-    })
-    .filter((item): item is NonNullable<typeof item> => Boolean(item));
+  // Retry any paths the batch signer skipped so the page stays full.
+  for (const row of rows) {
+    const path = row.selfie_path;
+    if (!path || signed.has(path)) continue;
+    const retry = await signStudentPhotoUrl(path, GALLERY_SIGNED_URL_TTL_SEC);
+    if (retry) signed.set(path, retry);
+  }
+
+  return rows.map((row) => {
+    const url = row.selfie_path ? signed.get(row.selfie_path) ?? null : null;
+    return {
+      userId: row.user_id,
+      displayName: displayName(row),
+      parishName: row.parish_name,
+      batchLabel: batchLabel(row),
+      cohortLabel: cohortLabel(row),
+      imageUrl: url ?? "",
+      imageUnavailable: !url,
+      isSelf: viewerUserId ? row.user_id === viewerUserId : undefined,
+      moderationStatus: row.moderation_status,
+    };
+  });
 }
 
 export async function mapAdminGalleryItems(rows: GalleryPortraitRow[]) {
@@ -176,6 +184,13 @@ export async function mapAdminGalleryItems(rows: GalleryPortraitRow[]) {
     rows.map((row) => row.selfie_path),
     GALLERY_SIGNED_URL_TTL_SEC,
   );
+
+  for (const row of rows) {
+    const path = row.selfie_path;
+    if (!path || signed.has(path)) continue;
+    const retry = await signStudentPhotoUrl(path, GALLERY_SIGNED_URL_TTL_SEC);
+    if (retry) signed.set(path, retry);
+  }
 
   return rows.map((row) => {
     const status = row.moderation_status;

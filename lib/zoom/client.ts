@@ -31,6 +31,10 @@ export function zoomConfigured(): boolean {
 
 let cachedToken: { value: string; expiresAt: number } | null = null;
 
+export function clearZoomAccessTokenCache() {
+  cachedToken = null;
+}
+
 async function getAccessToken(): Promise<string> {
   if (cachedToken && cachedToken.expiresAt > Date.now() + 30_000) {
     return cachedToken.value;
@@ -74,6 +78,23 @@ async function getAccessToken(): Promise<string> {
   return cachedToken.value;
 }
 
+function isZoomScopeError(status: number, body: string): boolean {
+  return (
+    status === 400 &&
+    (/4711/.test(body) || /does not contain scopes/i.test(body))
+  );
+}
+
+function zoomScopeHint(body: string): string | null {
+  const match = body.match(/scopes:\s*\[([^\]]+)\]/i);
+  if (!match?.[1]) return null;
+  return match[1]
+    .split(",")
+    .map((s) => s.trim().replace(/^["']|["']$/g, ""))
+    .filter(Boolean)
+    .join(", ");
+}
+
 async function zoomFetch<T>(
   path: string,
   init?: RequestInit,
@@ -89,6 +110,16 @@ async function zoomFetch<T>(
   });
   if (!res.ok) {
     const text = await res.text();
+    if (isZoomScopeError(res.status, text)) {
+      // Force a fresh token after scopes are added + Activate.
+      clearZoomAccessTokenCache();
+      const missing = zoomScopeHint(text);
+      throw new Error(
+        missing
+          ? `Zoom App A is missing scopes: ${missing}. Add them on the Server-to-Server app, Activate again, then retry.`
+          : "Zoom App A is missing required meeting scopes. Add them on the Server-to-Server app, Activate again, then retry.",
+      );
+    }
     throw new Error(`Zoom API ${path} failed (${res.status}): ${text.slice(0, 280)}`);
   }
   if (res.status === 204) return undefined as T;
@@ -217,4 +248,76 @@ export async function fetchMeetingParticipants(input: {
   }
 
   throw lastError ?? new Error("Could not load Zoom participants.");
+}
+
+export type LiveZoomMeeting = {
+  id: string;
+  topic: string;
+};
+
+/** Live meetings currently running for the configured host user. */
+export async function listLiveHostMeetings(): Promise<LiveZoomMeeting[]> {
+  const host = process.env.ZOOM_HOST_USER_ID;
+  if (!host) {
+    throw new Error("ZOOM_HOST_USER_ID is not set.");
+  }
+
+  const encodedHost = encodeURIComponent(host);
+  const page = await zoomFetch<{
+    meetings?: { id?: number | string; topic?: string }[];
+  }>(`/users/${encodedHost}/meetings?type=live&page_size=100`);
+
+  return (page.meetings ?? [])
+    .map((row) => ({
+      id: String(row.id ?? "").trim(),
+      topic: (row.topic ?? "Untitled meeting").trim() || "Untitled meeting",
+    }))
+    .filter((row) => Boolean(row.id));
+}
+
+/** End one live meeting (kicks all participants). Idempotent if already ended. */
+export async function endZoomMeeting(meetingId: string): Promise<void> {
+  const id = String(meetingId).replace(/\s+/g, "");
+  if (!id) throw new Error("Missing Zoom meeting id.");
+
+  try {
+    await zoomFetch<void>(`/meetings/${encodeURIComponent(id)}/status`, {
+      method: "PUT",
+      body: JSON.stringify({ action: "end" }),
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    // Already ended / not found — treat as cleared.
+    if (/\(404\)|\(400\).*not (found|exist)|already/i.test(message)) {
+      return;
+    }
+    throw error;
+  }
+}
+
+/**
+ * End every live meeting on the host account.
+ * Optionally also force-end a known meeting id (this class) even if Zoom
+ * did not list it as live yet.
+ */
+export async function endAllLiveHostMeetings(options?: {
+  alsoMeetingId?: string | null;
+}): Promise<{ endedIds: string[]; topics: string[] }> {
+  const live = await listLiveHostMeetings();
+  const ids = new Set(live.map((m) => m.id));
+  const topics = new Map(live.map((m) => [m.id, m.topic]));
+
+  const also = options?.alsoMeetingId?.replace(/\s+/g, "") || "";
+  if (also) ids.add(also);
+
+  const endedIds: string[] = [];
+  for (const id of ids) {
+    await endZoomMeeting(id);
+    endedIds.push(id);
+  }
+
+  return {
+    endedIds,
+    topics: endedIds.map((id) => topics.get(id) ?? id),
+  };
 }

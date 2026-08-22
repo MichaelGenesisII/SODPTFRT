@@ -11,6 +11,7 @@ import {
   type AdminActionResult,
 } from "@/app/admin/actions";
 import { useToast } from "@/components/ui/toast";
+import { DeskLoader, DeskLoaderOverlay } from "@/components/ui/desk-loader";
 import {
   isNationalAdmin,
   isParishAdmin,
@@ -477,7 +478,7 @@ export function AccessManager({
 
             {panel === "invite" ? (
               <form
-                className="grid max-w-xl gap-4 sm:grid-cols-2"
+                className="relative grid max-w-xl gap-4 sm:grid-cols-2"
                 onSubmit={(event) => {
                   event.preventDefault();
                   const form = event.currentTarget;
@@ -488,6 +489,10 @@ export function AccessManager({
                   );
                 }}
               >
+                <DeskLoaderOverlay
+                  active={pending}
+                  label="Opening the desk…"
+                />
                 <div className="sm:col-span-2">
                   <label
                     className="mb-2 block text-sm font-medium text-ink"
@@ -495,7 +500,12 @@ export function AccessManager({
                   >
                     Full name
                   </label>
-                  <input id="fullName" name="fullName" className={fieldClass} />
+                  <input
+                    id="fullName"
+                    name="fullName"
+                    className={fieldClass}
+                    disabled={pending}
+                  />
                 </div>
                 <div>
                   <label
@@ -509,6 +519,7 @@ export function AccessManager({
                     name="email"
                     type="email"
                     required
+                    disabled={pending}
                     className={fieldClass}
                   />
                 </div>
@@ -522,12 +533,13 @@ export function AccessManager({
                     </label>
                     <button
                       type="button"
+                      disabled={pending}
                       onClick={() => {
                         const next = createTemporaryPassword(12);
                         setInvitePassword(next);
                         info("Temporary password ready.", "Generated");
                       }}
-                      className="text-xs font-medium text-pine underline decoration-pine/30 underline-offset-4"
+                      className="text-xs font-medium text-pine underline decoration-pine/30 underline-offset-4 disabled:opacity-50"
                     >
                       Generate
                     </button>
@@ -543,6 +555,7 @@ export function AccessManager({
                     placeholder="Generate or type one"
                     className={`${fieldClass} font-mono`}
                     autoComplete="new-password"
+                    disabled={pending}
                   />
                 </div>
                 <div className="sm:col-span-2">
@@ -591,6 +604,7 @@ export function AccessManager({
                         name="parishId"
                         className={fieldClass}
                         defaultValue=""
+                        disabled={pending}
                       >
                         <option value="">National — all parishes</option>
                         {parishes.map((p) => (
@@ -607,13 +621,17 @@ export function AccessManager({
                     </>
                   )}
                 </div>
-                <div className="sm:col-span-2">
+                <div className="sm:col-span-2 flex flex-wrap items-center gap-3">
                   <button
                     type="submit"
                     disabled={pending || (parishDesk && !profile.parish_id)}
-                    className="w-full bg-pine px-5 py-3 text-sm font-medium text-mist transition-colors hover:bg-celadon disabled:opacity-60 sm:w-auto"
+                    className="inline-flex min-h-[2.75rem] min-w-[9.5rem] items-center justify-center bg-pine px-5 py-3 text-sm font-medium text-mist transition-colors hover:bg-celadon disabled:opacity-60 sm:w-auto"
                   >
-                    {pending ? "Creating…" : "Create admin"}
+                    {pending ? (
+                      <DeskLoader label="Creating…" tone="mist" />
+                    ) : (
+                      "Create admin"
+                    )}
                   </button>
                 </div>
               </form>
@@ -621,13 +639,17 @@ export function AccessManager({
 
             {panel === "password" ? (
               <form
-                className="grid max-w-md gap-4"
+                className="relative grid max-w-md gap-4"
                 onSubmit={(event) => {
                   event.preventDefault();
                   const form = event.currentTarget;
                   run(() => changeOwnPassword(new FormData(form)), form);
                 }}
               >
+                <DeskLoaderOverlay
+                  active={pending}
+                  label="Securing your key…"
+                />
                 <div>
                   <div className="mb-2 flex items-center justify-between gap-3">
                     <label
@@ -638,8 +660,9 @@ export function AccessManager({
                     </label>
                     <button
                       type="button"
+                      disabled={pending}
                       onClick={() => setShowPassword((value) => !value)}
-                      className="text-xs font-medium text-pine underline decoration-pine/30 underline-offset-4"
+                      className="text-xs font-medium text-pine underline decoration-pine/30 underline-offset-4 disabled:opacity-50"
                     >
                       {showPassword ? "Hide" : "Show"}
                     </button>
@@ -649,6 +672,7 @@ export function AccessManager({
                     name="currentPassword"
                     type={showPassword ? "text" : "password"}
                     required
+                    disabled={pending}
                     autoComplete="current-password"
                     className={fieldClass}
                   />
@@ -666,6 +690,7 @@ export function AccessManager({
                     type={showPassword ? "text" : "password"}
                     required
                     minLength={8}
+                    disabled={pending}
                     autoComplete="new-password"
                     className={fieldClass}
                   />
@@ -683,6 +708,7 @@ export function AccessManager({
                     type={showPassword ? "text" : "password"}
                     required
                     minLength={8}
+                    disabled={pending}
                     autoComplete="new-password"
                     className={fieldClass}
                   />
@@ -690,9 +716,13 @@ export function AccessManager({
                 <button
                   type="submit"
                   disabled={pending}
-                  className="mt-1 bg-pine px-5 py-3 text-sm font-medium text-mist transition-colors hover:bg-celadon disabled:opacity-60"
+                  className="mt-1 inline-flex min-h-[2.75rem] min-w-[10rem] items-center justify-center bg-pine px-5 py-3 text-sm font-medium text-mist transition-colors hover:bg-celadon disabled:opacity-60"
                 >
-                  {pending ? "Updating…" : "Update password"}
+                  {pending ? (
+                    <DeskLoader label="Updating…" tone="mist" />
+                  ) : (
+                    "Update password"
+                  )}
                 </button>
               </form>
             ) : null}

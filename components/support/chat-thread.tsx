@@ -8,6 +8,7 @@ import {
   type ReactNode,
 } from "react";
 import { EmojiPickerButton } from "@/components/support/emoji-picker";
+import { DeskLoader } from "@/components/ui/desk-loader";
 import {
   formatTicketClock,
   formatTicketDayLabel,
@@ -62,10 +63,13 @@ export function SupportChatTranscript({
   messages,
   emptyLabel = "No messages yet.",
   emptyHint,
+  onLongPressMessage,
 }: {
   messages: SupportChatMessage[];
   emptyLabel?: string;
   emptyHint?: string;
+  /** When set (e.g. national Community moderators), press-and-hold opens moderation. */
+  onLongPressMessage?: (message: SupportChatMessage) => void;
 }) {
   const endRef = useRef<HTMLDivElement>(null);
   const signature = messages.map((item) => item.id).join("|");
@@ -116,6 +120,11 @@ export function SupportChatTranscript({
             <ChatBubble
               message={message}
               style={{ animationDelay: `${Math.min(index, 8) * 35}ms` }}
+              onLongPress={
+                onLongPressMessage
+                  ? () => onLongPressMessage(message)
+                  : undefined
+              }
             />
           </div>
         );
@@ -125,15 +134,61 @@ export function SupportChatTranscript({
   );
 }
 
+const LONG_PRESS_MS = 520;
+const LONG_PRESS_MOVE_PX = 10;
+
 function ChatBubble({
   message,
   style,
+  onLongPress,
 }: {
   message: SupportChatMessage;
   style?: CSSProperties;
+  onLongPress?: () => void;
 }) {
   const mine = message.side === "mine";
   const tone = message.tone ?? "portal";
+  const timerRef = useRef<number | null>(null);
+  const originRef = useRef<{ x: number; y: number } | null>(null);
+  const firedRef = useRef(false);
+
+  function clearPressTimer() {
+    if (timerRef.current != null) {
+      window.clearTimeout(timerRef.current);
+      timerRef.current = null;
+    }
+    originRef.current = null;
+  }
+
+  function beginPress(clientX: number, clientY: number) {
+    if (!onLongPress) return;
+    clearPressTimer();
+    firedRef.current = false;
+    originRef.current = { x: clientX, y: clientY };
+    timerRef.current = window.setTimeout(() => {
+      firedRef.current = true;
+      timerRef.current = null;
+      originRef.current = null;
+      if (typeof navigator !== "undefined" && "vibrate" in navigator) {
+        try {
+          navigator.vibrate(12);
+        } catch {
+          // ignore
+        }
+      }
+      onLongPress();
+    }, LONG_PRESS_MS);
+  }
+
+  function movePress(clientX: number, clientY: number) {
+    const origin = originRef.current;
+    if (!origin || timerRef.current == null) return;
+    const dx = Math.abs(clientX - origin.x);
+    const dy = Math.abs(clientY - origin.y);
+    if (dx > LONG_PRESS_MOVE_PX || dy > LONG_PRESS_MOVE_PX) {
+      clearPressTimer();
+    }
+  }
 
   const shell =
     tone === "margin"
@@ -156,9 +211,45 @@ function ChatBubble({
       style={style}
     >
       <div
-        className={`group relative max-w-[min(100%,20rem)] sm:max-w-[min(100%,28rem)] ${
+        className={`group relative max-w-[min(100%,20rem)] select-none sm:max-w-[min(100%,28rem)] ${
           mine ? "origin-bottom-right" : "origin-bottom-left"
-        }`}
+        } ${onLongPress ? "touch-manipulation" : ""}`}
+        onPointerDown={
+          onLongPress
+            ? (event) => {
+                if (event.button !== 0) return;
+                beginPress(event.clientX, event.clientY);
+              }
+            : undefined
+        }
+        onPointerMove={
+          onLongPress
+            ? (event) => movePress(event.clientX, event.clientY)
+            : undefined
+        }
+        onPointerUp={onLongPress ? () => clearPressTimer() : undefined}
+        onPointerCancel={onLongPress ? () => clearPressTimer() : undefined}
+        onPointerLeave={onLongPress ? () => clearPressTimer() : undefined}
+        onContextMenu={
+          onLongPress
+            ? (event) => {
+                event.preventDefault();
+                if (!firedRef.current) onLongPress();
+              }
+            : undefined
+        }
+        onClick={
+          onLongPress
+            ? (event) => {
+                // Swallow the click that follows a successful long-press.
+                if (firedRef.current) {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  firedRef.current = false;
+                }
+              }
+            : undefined
+        }
       >
         {!mine ? (
           <div className="mb-1 flex items-center gap-2 px-1">
@@ -351,7 +442,11 @@ export function SupportChatComposer({
           aria-label={submitLabel}
           className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-[1rem] bg-pine text-mist transition-colors hover:bg-celadon disabled:opacity-40 sm:h-11 sm:w-11 sm:rounded-[1.1rem]"
         >
-          {pending ? <Spinner /> : <SendIcon />}
+          {pending ? (
+            <DeskLoader label="Sending…" showLabel={false} tone="mist" />
+          ) : (
+            <SendIcon />
+          )}
         </button>
       </div>
       <div className="mt-1 flex items-center justify-between px-1 sm:mt-1.5">
@@ -441,11 +536,3 @@ function ChatGlyph() {
   );
 }
 
-function Spinner() {
-  return (
-    <span
-      className="h-4 w-4 animate-spin rounded-[50%] border-2 border-mist/30 border-t-mist"
-      aria-hidden
-    />
-  );
-}

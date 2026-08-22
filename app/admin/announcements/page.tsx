@@ -6,7 +6,7 @@ import {
 } from "@/app/admin/parishes/actions";
 import {
   listAnnouncementAttachmentsForAdmin,
-  signedDeskAttachmentUrl,
+  signedNoticeAttachmentUrls,
 } from "@/app/admin/desk-attachments/actions";
 import { AnnouncementsManager } from "@/components/admin/announcements-manager";
 import { getSessionAdmin, isNationalAdmin } from "@/lib/admin/auth";
@@ -66,16 +66,27 @@ export default async function AdminAnnouncementsPage() {
 
     for (const item of announcements) {
       const files = attachmentMap.get(item.id) ?? [];
-      item.attachments = await Promise.all(
-        files.map(async (file) => ({
-          id: file.id,
-          name: file.original_name,
-          mime: file.mime,
-          byteSize: file.byte_size,
-          url: (await signedDeskAttachmentUrl(file.storage_path)) ?? "",
-        })),
-      );
-      item.attachments = item.attachments.filter((file) => file.url);
+      item.attachments = (
+        await Promise.all(
+          files.map(async (file) => {
+            const urls = await signedNoticeAttachmentUrls(
+              file.storage_path,
+              file.original_name,
+              file.access_mode,
+            );
+            if (!urls.url && !urls.downloadUrl) return null;
+            return {
+              id: file.id,
+              name: file.original_name,
+              mime: file.mime,
+              byteSize: file.byte_size,
+              access: file.access_mode,
+              url: urls.url,
+              downloadUrl: urls.downloadUrl,
+            };
+          }),
+        )
+      ).filter((file): file is NonNullable<typeof file> => Boolean(file));
     }
   }
 

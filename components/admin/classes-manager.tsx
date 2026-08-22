@@ -22,10 +22,12 @@ import {
   type ClassInvitePreview,
 } from "@/app/admin/classes/actions";
 import { ClassWorkspace, ClassesInsight } from "@/components/admin/class-workspace";
+import { DeskLoader, DeskLoaderOverlay } from "@/components/ui/desk-loader";
 import { useToast } from "@/components/ui/toast";
 import { isNationalAdmin, type AdminProfile } from "@/lib/admin/profile";
 import {
   audienceLabel,
+  DEFAULT_ATTENDANCE_THRESHOLD,
   type ClassAudience,
   type ZoomClass,
   type ZoomClassAttendance,
@@ -63,6 +65,8 @@ export function ClassesManager({
   const router = useRouter();
   const { success, error } = useToast();
   const [pending, startTransition] = useTransition();
+  const [busyLabel, setBusyLabel] = useState<string | null>(null);
+  const busy = pending || Boolean(busyLabel);
   const national = isNationalAdmin(profile);
   const [creating, setCreating] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(
@@ -111,9 +115,10 @@ export function ClassesManager({
   }, [query]);
 
   useEffect(() => {
+    if (selectedId && classes.some((c) => c.id === selectedId)) return;
     if (selectedId && filtered.some((c) => c.id === selectedId)) return;
-    setSelectedId(filtered[0]?.id ?? null);
-  }, [filtered, selectedId]);
+    setSelectedId(filtered[0]?.id ?? classes[0]?.id ?? null);
+  }, [filtered, classes, selectedId]);
 
   const selected =
     filtered.find((c) => c.id === selectedId) ??
@@ -121,37 +126,56 @@ export function ClassesManager({
     null;
 
   function reloadRoster(id: string) {
-    void getClassAttendance(id).then(setRoster);
+    if (!classes.some((c) => c.id === id)) {
+      setRoster([]);
+      return;
+    }
+    void getClassAttendance(id)
+      .then(setRoster)
+      .catch(() => setRoster([]));
   }
 
   useEffect(() => {
-    if (!selectedId || creating) {
+    if (!selectedId || creating || !classes.some((c) => c.id === selectedId)) {
       setRoster([]);
       return;
     }
     let cancelled = false;
-    void getClassAttendance(selectedId).then((rows) => {
-      if (!cancelled) setRoster(rows);
-    });
+    void getClassAttendance(selectedId)
+      .then((rows) => {
+        if (!cancelled) setRoster(rows);
+      })
+      .catch(() => {
+        if (!cancelled) setRoster([]);
+      });
     return () => {
       cancelled = true;
     };
   }, [selectedId, creating, classes]);
 
-  function run(action: () => Promise<ClassActionResult>, then?: () => void) {
+  function run(
+    action: () => Promise<ClassActionResult>,
+    then?: () => void,
+    label = "Working…",
+  ) {
+    setBusyLabel(label);
     startTransition(async () => {
-      const next = await action();
-      if (next.ok) {
-        success(next.message, "Classes");
-        then?.();
-        router.refresh();
-        if (next.classId) {
-          setSelectedId(next.classId);
-          setCreating(false);
-          setMobileSurface("workspace");
+      try {
+        const next = await action();
+        if (next.ok) {
+          success(next.message, "Classes");
+          then?.();
+          router.refresh();
+          if (next.classId) {
+            setSelectedId(next.classId);
+            setCreating(false);
+            setMobileSurface("workspace");
+          }
+        } else {
+          error(next.message, "Classes");
         }
-      } else {
-        error(next.message, "Classes");
+      } finally {
+        setBusyLabel(null);
       }
     });
   }
@@ -312,8 +336,13 @@ export function ClassesManager({
             </aside>
 
             <section
-              className={`${workspaceClass} min-h-[16rem] border border-stone bg-mist sm:min-h-[22rem]`}
+              className={`${workspaceClass} relative min-h-[16rem] border border-stone bg-mist sm:min-h-[22rem]`}
+              aria-busy={busy}
             >
+              <DeskLoaderOverlay
+                active={busy}
+                label={busyLabel ?? "Working…"}
+              />
               {creating ? (
                 <CreateClassForm
                   profile={profile}
@@ -322,12 +351,21 @@ export function ClassesManager({
                   cohorts={cohorts}
                   national={national}
                   zoomReady={zoomReady}
-                  pending={pending}
+                  pending={busy}
+                  busyLabel={busyLabel}
                   onBack={() => {
                     setCreating(false);
                     setMobileSurface("directory");
                   }}
-                  onSubmit={(values) => run(() => createZoomClass(values))}
+                  onSubmit={(values) =>
+                    run(
+                      () => createZoomClass(values),
+                      undefined,
+                      values.send_email
+                        ? "Saving class & sending…"
+                        : "Saving class…",
+                    )
+                  }
                 />
               ) : !selected ? (
                 <div className="flex min-h-[16rem] flex-col items-center justify-center px-5 py-12 text-center sm:min-h-[22rem]">
@@ -341,17 +379,26 @@ export function ClassesManager({
                 <ClassWorkspace
                   item={selected}
                   roster={roster}
-                  pending={pending}
+                  pending={busy}
+                  busyLabel={busyLabel}
                   zoomReady={zoomReady}
                   meetingSdkReady={meetingSdkReady}
                   onBack={() => setMobileSurface("directory")}
                   onSync={() =>
-                    run(() => syncZoomClassAttendance(selected.id), () => {
-                      reloadRoster(selected.id);
-                    })
+                    run(
+                      () => syncZoomClassAttendance(selected.id),
+                      () => {
+                        reloadRoster(selected.id);
+                      },
+                      "Syncing Zoom…",
+                    )
                   }
                   onRegenCode={() =>
-                    run(() => regenerateClassAttendanceCode(selected.id))
+                    run(
+                      () => regenerateClassAttendanceCode(selected.id),
+                      undefined,
+                      "Updating check-in code…",
+                    )
                   }
                   onManual={(userId, present) =>
                     run(
@@ -362,11 +409,16 @@ export function ClassesManager({
                           present,
                         }),
                       () => reloadRoster(selected.id),
+                      "Updating attendance…",
                     )
                   }
                   onSearchStudents={(q) => searchClassStudents(selected.id, q)}
                   onStatus={(status) =>
-                    run(() => setZoomClassStatus(selected.id, status))
+                    run(
+                      () => setZoomClassStatus(selected.id, status),
+                      undefined,
+                      "Updating status…",
+                    )
                   }
                   onDelete={() => {
                     if (
@@ -376,10 +428,14 @@ export function ClassesManager({
                     ) {
                       return;
                     }
-                    run(() => deleteZoomClass(selected.id), () => {
-                      setSelectedId(null);
-                      setMobileSurface("directory");
-                    });
+                    run(
+                      () => deleteZoomClass(selected.id),
+                      () => {
+                        setSelectedId(null);
+                        setMobileSurface("directory");
+                      },
+                      "Removing class…",
+                    );
                   }}
                 />
               )}
@@ -428,6 +484,7 @@ function CreateClassForm({
   national,
   zoomReady,
   pending,
+  busyLabel,
   onBack,
   onSubmit,
 }: {
@@ -438,6 +495,7 @@ function CreateClassForm({
   national: boolean;
   zoomReady: boolean;
   pending: boolean;
+  busyLabel: string | null;
   onBack: () => void;
   onSubmit: (values: {
     title: string;
@@ -792,7 +850,9 @@ function CreateClassForm({
           className={`mt-1 ${fieldClass}`}
         />
         <span className="mt-1 block text-xs text-ink/45">
-          Zoom present rule: ≥ {Math.ceil(duration * 0.75)} minutes (75%).
+          Zoom present rule: ≥{" "}
+          {Math.ceil(duration * (DEFAULT_ATTENDANCE_THRESHOLD / 100))} minutes (
+          {DEFAULT_ATTENDANCE_THRESHOLD}%).
           Code / manual marks write present directly to Records.
         </span>
       </label>
@@ -894,14 +954,24 @@ function CreateClassForm({
         <button
           type="submit"
           disabled={pending}
-          className="bg-pine px-4 py-2.5 text-sm font-medium text-mist disabled:opacity-60"
+          className="inline-flex min-h-[2.5rem] min-w-[8.5rem] items-center justify-center bg-pine px-4 py-2.5 text-sm font-medium text-mist disabled:opacity-60"
         >
-          {pending ? "Saving…" : sendEmail ? "Review & save" : "Save class"}
+          {pending && !sendEmail ? (
+            <DeskLoader
+              label={busyLabel ?? "Saving…"}
+              tone="mist"
+            />
+          ) : sendEmail ? (
+            "Review & save"
+          ) : (
+            "Save class"
+          )}
         </button>
         <button
           type="button"
+          disabled={pending}
           onClick={onBack}
-          className="border border-stone px-4 py-2.5 text-sm text-ink/70"
+          className="border border-stone px-4 py-2.5 text-sm text-ink/70 disabled:opacity-60"
         >
           Cancel
         </button>
@@ -997,15 +1067,22 @@ function CreateClassForm({
                 setVerifyOpen(false);
                 onSubmit(buildPayload());
               }}
-              className="bg-pine px-4 py-2.5 text-sm font-medium text-mist disabled:opacity-60"
+              className="inline-flex min-h-[2.5rem] min-w-[11rem] items-center justify-center bg-pine px-4 py-2.5 text-sm font-medium text-mist disabled:opacity-60"
             >
-              {pending ? "Sending…" : "Confirm & send emails"}
+              {pending ? (
+                <DeskLoader
+                  label={busyLabel ?? "Sending…"}
+                  tone="mist"
+                />
+              ) : (
+                "Confirm & send emails"
+              )}
             </button>
             <button
               type="button"
               disabled={pending}
               onClick={() => setVerifyOpen(false)}
-              className="border border-stone px-4 py-2.5 text-sm text-ink/70"
+              className="border border-stone px-4 py-2.5 text-sm text-ink/70 disabled:opacity-60"
             >
               Back to edit
             </button>

@@ -8,6 +8,12 @@ import {
   updateAnnouncement,
   type AnnouncementActionResult,
 } from "@/app/admin/announcements/actions";
+import {
+  attachmentLinksField,
+  DeskAttachmentPicker,
+} from "@/components/admin/desk-attachment-picker";
+import { NoticeAttachmentList, NoticeFilesMark } from "@/components/notices/notice-attachments";
+import { DeskLoader, DeskLoaderOverlay } from "@/components/ui/desk-loader";
 import { useToast } from "@/components/ui/toast";
 import {
   ANNOUNCEMENT_BODY_MAX,
@@ -22,10 +28,6 @@ import {
 } from "@/lib/announcements";
 import { isNationalAdmin, type AdminProfile } from "@/lib/admin/profile";
 import { formatBatchLabel, type Batch, type Parish } from "@/lib/parishes";
-import {
-  attachmentIdsField,
-  DeskAttachmentPicker,
-} from "@/components/admin/desk-attachment-picker";
 
 const NOTIC_PAGE_SIZE = 8;
 
@@ -328,6 +330,8 @@ export function AnnouncementsManager({
   const national = isNationalAdmin(profile);
   const [panel, setPanel] = useState<Panel>("live");
   const [pending, startTransition] = useTransition();
+  const [busyLabel, setBusyLabel] = useState<string | null>(null);
+  const busy = pending || Boolean(busyLabel);
   const [editing, setEditing] = useState<AdminAnnouncementRecord | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [pendingDelete, setPendingDelete] =
@@ -347,7 +351,13 @@ export function AnnouncementsManager({
   const [livePage, setLivePage] = useState(1);
   const [draftPage, setDraftPage] = useState(1);
   const [composeAttachments, setComposeAttachments] = useState<
-    { id: string; original_name: string; byte_size: number; mime: string }[]
+    {
+      id: string;
+      original_name: string;
+      byte_size: number;
+      mime: string;
+      access?: "view" | "download" | "both";
+    }[]
   >([]);
 
   const composeBatches = useMemo(
@@ -445,7 +455,7 @@ export function AnnouncementsManager({
   useEffect(() => {
     if (!pendingDelete) return;
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setPendingDelete(null);
+      if (event.key === "Escape" && !busy) setPendingDelete(null);
     };
     document.addEventListener("keydown", onKey);
     document.body.style.overflow = "hidden";
@@ -453,33 +463,39 @@ export function AnnouncementsManager({
       document.removeEventListener("keydown", onKey);
       document.body.style.overflow = "";
     };
-  }, [pendingDelete]);
+  }, [pendingDelete, busy]);
 
   function run(
     action: () => Promise<AnnouncementActionResult>,
     form?: HTMLFormElement | null,
-    options?: { keepCompose?: boolean },
+    options?: { keepCompose?: boolean; label?: string },
   ) {
+    const label = options?.label ?? "Working…";
+    setBusyLabel(label);
     startTransition(async () => {
-      const next = await action();
-      if (next.ok) {
-        success(next.message, "Notices");
-        setPendingDelete(null);
-        setExpandedId(null);
-        if (options?.keepCompose) {
-          return;
+      try {
+        const next = await action();
+        if (next.ok) {
+          success(next.message, "Notices");
+          setPendingDelete(null);
+          setExpandedId(null);
+          if (options?.keepCompose) {
+            return;
+          }
+          form?.reset();
+          setEditing(null);
+          setTitleLen(0);
+          setBodyLen(0);
+          setComposeAudience(defaultComposeAudience());
+          setComposeParishId(profile.parish_id ?? "");
+          setComposeBatchId("");
+          setComposeAttachments([]);
+          setPanel("live");
+        } else {
+          error(next.message, "Notices");
         }
-        form?.reset();
-        setEditing(null);
-        setTitleLen(0);
-        setBodyLen(0);
-        setComposeAudience(defaultComposeAudience());
-        setComposeParishId(profile.parish_id ?? "");
-        setComposeBatchId("");
-        setComposeAttachments([]);
-        setPanel("live");
-      } else {
-        error(next.message, "Notices");
+      } finally {
+        setBusyLabel(null);
       }
     });
   }
@@ -507,6 +523,7 @@ export function AnnouncementsManager({
         original_name: file.name,
         byte_size: file.byteSize,
         mime: file.mime,
+        access: file.access ?? "both",
       })),
     );
     setExpandedId(null);
@@ -535,7 +552,11 @@ export function AnnouncementsManager({
     composeAudience === "general" ? generalLive : studentLiveManaged;
 
   return (
-    <div className="mx-auto max-w-2xl">
+    <div className="relative mx-auto max-w-2xl" aria-busy={busy}>
+      <DeskLoaderOverlay
+        active={busy && !pendingDelete}
+        label={busyLabel ?? "Working…"}
+      />
       <div className="flex flex-col gap-4 border-b border-stone pb-4 sm:flex-row sm:items-end sm:justify-between">
         <div className="flex min-w-0 flex-1 flex-col gap-4 sm:flex-row sm:gap-6">
           {national ? (
@@ -654,15 +675,21 @@ export function AnnouncementsManager({
                   : "No drafts in this lane."
               }
               mode={panel}
-              pending={pending}
+              pending={busy}
               expandedId={expandedId}
               atCapacityFor={atCapacityFor}
               canManage={(item) => canManageNotice(profile, item)}
               onExpand={setExpandedId}
               onEdit={openCompose}
               onToggle={(item) =>
-                run(() =>
-                  setAnnouncementPublished(item.id, !item.is_published),
+                run(
+                  () => setAnnouncementPublished(item.id, !item.is_published),
+                  null,
+                  {
+                    label: item.is_published
+                      ? "Unpublishing…"
+                      : "Publishing…",
+                  },
                 )
               }
               onDelete={setPendingDelete}
@@ -758,8 +785,12 @@ export function AnnouncementsManager({
                         return (
                           <li
                             key={item.id}
-                            className="border-t border-mist/15 py-4 first:border-t-0 first:pt-0 last:pb-0"
+                            className="relative border-t border-mist/15 py-4 first:border-t-0 first:pt-0 last:pb-0"
                           >
+                            <NoticeFilesMark
+                              count={item.attachments?.length ?? 0}
+                              tone="mist"
+                            />
                             <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
                               {dateLabel ? (
                                 <time className="text-[0.7rem] font-medium uppercase tracking-[0.14em] text-mist/50">
@@ -776,6 +807,10 @@ export function AnnouncementsManager({
                             <p className="mt-1.5 text-sm leading-relaxed text-mist/70">
                               {item.body}
                             </p>
+                            <NoticeAttachmentList
+                              files={item.attachments}
+                              tone="mist"
+                            />
                           </li>
                         );
                       })}
@@ -810,8 +845,12 @@ export function AnnouncementsManager({
                         return (
                           <li
                             key={item.id}
-                            className="border-t border-[#c4a574]/20 py-4 first:border-t-0 first:pt-0 last:pb-0"
+                            className="relative border-t border-[#c4a574]/20 py-4 first:border-t-0 first:pt-0 last:pb-0"
                           >
+                            <NoticeFilesMark
+                              count={item.attachments?.length ?? 0}
+                              tone="parchment"
+                            />
                             <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
                               <span className="font-display text-sm tabular-nums text-[#c4a574]">
                                 {String(index + 1).padStart(2, "0")}
@@ -828,6 +867,10 @@ export function AnnouncementsManager({
                             <p className="mt-1.5 text-sm leading-relaxed text-ink/65">
                               {item.body}
                             </p>
+                            <NoticeAttachmentList
+                              files={item.attachments}
+                              tone="parchment"
+                            />
                           </li>
                         );
                       })}
@@ -859,12 +902,16 @@ export function AnnouncementsManager({
               const form = event.currentTarget;
               const formData = new FormData(form);
               formData.set("audience", composeAudience);
-              formData.set("attachmentIds", attachmentIdsField(composeAttachments));
+              formData.set("attachmentLinks", attachmentLinksField(composeAttachments));
               if (editing) {
                 formData.set("id", editing.id);
-                run(() => updateAnnouncement(formData), form);
+                run(() => updateAnnouncement(formData), form, {
+                  label: "Saving changes…",
+                });
               } else {
-                run(() => createAnnouncement(formData), form);
+                run(() => createAnnouncement(formData), form, {
+                  label: "Saving notice…",
+                });
               }
             }}
           >
@@ -885,8 +932,8 @@ export function AnnouncementsManager({
             <input type="hidden" name="batchId" value={composeBatchId} />
             <input
               type="hidden"
-              name="attachmentIds"
-              value={attachmentIdsField(composeAttachments)}
+              name="attachmentLinks"
+              value={attachmentLinksField(composeAttachments)}
             />
 
             <fieldset>
@@ -1032,12 +1079,15 @@ export function AnnouncementsManager({
                 <LaneCapacityGate
                   audience={composeAudience}
                   occupied={occupiedForCompose}
-                  pending={pending}
+                  pending={busy}
                   onUnpublish={(item) =>
                     run(
                       () => setAnnouncementPublished(item.id, false),
                       null,
-                      { keepCompose: true },
+                      {
+                        keepCompose: true,
+                        label: "Freeing a slot…",
+                      },
                     )
                   }
                   onEdit={(item) => openCompose(item)}
@@ -1071,6 +1121,7 @@ export function AnnouncementsManager({
                 maxLength={ANNOUNCEMENT_TITLE_MAX}
                 defaultValue={editing?.title ?? ""}
                 onChange={(event) => setTitleLen(event.target.value.length)}
+                disabled={busy}
                 className={fieldClass}
               />
             </div>
@@ -1101,16 +1152,21 @@ export function AnnouncementsManager({
                 maxLength={ANNOUNCEMENT_BODY_MAX}
                 defaultValue={editing?.body ?? ""}
                 onChange={(event) => setBodyLen(event.target.value.length)}
+                disabled={busy}
                 className={`${fieldClass} resize-y`}
               />
             </div>
 
             <div>
               <p className="mb-2 text-sm font-medium text-ink">Attachments</p>
+              <p className="mb-2 text-xs text-ink/50">
+                Choose View, Download, or Both for each file.
+              </p>
               <DeskAttachmentPicker
                 value={composeAttachments}
                 onChange={setComposeAttachments}
-                disabled={pending}
+                disabled={busy}
+                enableAccessMode
               />
             </div>
 
@@ -1128,6 +1184,7 @@ export function AnnouncementsManager({
                   type="url"
                   placeholder="Optional"
                   defaultValue={editing?.href ?? ""}
+                  disabled={busy}
                   className={fieldClass}
                 />
               </div>
@@ -1144,6 +1201,7 @@ export function AnnouncementsManager({
                   placeholder="Optional"
                   maxLength={40}
                   defaultValue={editing?.href_label ?? ""}
+                  disabled={busy}
                   className={fieldClass}
                 />
               </div>
@@ -1196,13 +1254,23 @@ export function AnnouncementsManager({
             <div className="flex flex-wrap gap-3">
               <button
                 type="submit"
-                disabled={pending}
-                className="bg-pine px-5 py-2.5 text-sm font-medium text-mist transition-colors hover:bg-celadon disabled:opacity-60"
+                disabled={busy}
+                className="inline-flex min-h-[2.5rem] min-w-[8.5rem] items-center justify-center bg-pine px-5 py-2.5 text-sm font-medium text-mist transition-colors hover:bg-celadon disabled:opacity-60"
               >
-                {pending ? "Saving…" : editing ? "Save changes" : "Save notice"}
+                {busy ? (
+                  <DeskLoader
+                    label={busyLabel ?? "Saving…"}
+                    tone="mist"
+                  />
+                ) : editing ? (
+                  "Save changes"
+                ) : (
+                  "Save notice"
+                )}
               </button>
               <button
                 type="button"
+                disabled={busy}
                 onClick={() => {
                   setEditing(null);
                   setComposeAudience(defaultComposeAudience());
@@ -1210,7 +1278,7 @@ export function AnnouncementsManager({
                   setComposeBatchId("");
                   setPanel("live");
                 }}
-                className="border border-pine/25 px-4 py-2.5 text-sm font-medium text-pine transition-colors hover:border-pine"
+                className="border border-pine/25 px-4 py-2.5 text-sm font-medium text-pine transition-colors hover:border-pine disabled:opacity-60"
               >
                 Cancel
               </button>
@@ -1223,15 +1291,19 @@ export function AnnouncementsManager({
         <div
           className="fixed inset-0 z-[90] flex items-end justify-center bg-ink/45 p-4 sm:items-center"
           role="presentation"
-          onClick={() => !pending && setPendingDelete(null)}
+          onClick={() => !busy && setPendingDelete(null)}
         >
           <div
             role="dialog"
             aria-modal="true"
             aria-labelledby="delete-announcement-title"
-            className="animate-fade-rise w-full max-w-md border border-stone bg-mist p-6 text-ink shadow-[0_16px_48px_rgba(20,53,44,0.2)] sm:p-7"
+            className="relative animate-fade-rise w-full max-w-md border border-stone bg-mist p-6 text-ink shadow-[0_16px_48px_rgba(20,53,44,0.2)] sm:p-7"
             onClick={(event) => event.stopPropagation()}
           >
+            <DeskLoaderOverlay
+              active={busy}
+              label={busyLabel ?? "Removing notice…"}
+            />
             <p className="text-[0.65rem] font-medium uppercase tracking-[0.16em] text-red-800/80">
               Delete notice
             </p>
@@ -1251,7 +1323,7 @@ export function AnnouncementsManager({
             <div className="mt-7 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
               <button
                 type="button"
-                disabled={pending}
+                disabled={busy}
                 onClick={() => setPendingDelete(null)}
                 className="border border-pine/25 px-4 py-2.5 text-sm font-medium text-pine transition-colors hover:border-pine disabled:opacity-60"
               >
@@ -1259,15 +1331,20 @@ export function AnnouncementsManager({
               </button>
               <button
                 type="button"
-                disabled={pending}
+                disabled={busy}
                 onClick={() =>
                   run(() => deleteAnnouncement(pendingDelete.id), null, {
                     keepCompose: panel === "compose",
+                    label: "Removing notice…",
                   })
                 }
-                className="bg-[#5c2a2a] px-4 py-2.5 text-sm font-medium text-mist transition-colors hover:bg-red-900 disabled:opacity-60"
+                className="inline-flex min-h-[2.5rem] min-w-[9rem] items-center justify-center bg-[#5c2a2a] px-4 py-2.5 text-sm font-medium text-mist transition-colors hover:bg-red-900 disabled:opacity-60"
               >
-                {pending ? "Deleting…" : "Delete permanently"}
+                {busy ? (
+                  <DeskLoader label="Deleting…" tone="mist" />
+                ) : (
+                  "Delete permanently"
+                )}
               </button>
             </div>
           </div>
@@ -1319,11 +1396,15 @@ function NoticeList({
         const blocked =
           mode === "drafts" && atCapacityFor(audience) && manageable;
         return (
-          <li key={item.id}>
+          <li key={item.id} className="relative">
+            <NoticeFilesMark
+              count={item.attachments?.length ?? 0}
+              className="top-2"
+            />
             <button
               type="button"
               onClick={() => onExpand(open ? null : item.id)}
-              className="flex w-full items-start gap-3 py-3.5 text-left transition-colors hover:bg-mist/70"
+              className="flex w-full items-start gap-3 py-3.5 pr-14 text-left transition-colors hover:bg-mist/70"
               aria-expanded={open}
             >
               <span className="min-w-0 flex-1">
@@ -1340,7 +1421,11 @@ function NoticeList({
               </span>
             </button>
             {open ? (
-              <div className="animate-panel-in flex flex-wrap gap-2 border-t border-stone/70 bg-mist/40 pb-4 pt-3">
+              <div className="animate-panel-in space-y-3 border-t border-stone/70 bg-mist/40 px-0 pb-4 pt-3">
+                {item.attachments?.length ? (
+                  <NoticeAttachmentList files={item.attachments} />
+                ) : null}
+                <div className="flex flex-wrap gap-2">
                 {manageable ? (
                   <>
                     <button
@@ -1375,6 +1460,7 @@ function NoticeList({
                     {audience === "general" ? " (home page)" : ""}.
                   </p>
                 )}
+                </div>
               </div>
             ) : null}
           </li>

@@ -26,6 +26,7 @@ import {
   SupportChatTranscript,
   type SupportChatMessage,
 } from "@/components/support/chat-thread";
+import { DeskLoader, DeskLoaderOverlay } from "@/components/ui/desk-loader";
 import { useToast } from "@/components/ui/toast";
 import { defaultTicketEmailSubject } from "@/lib/email/subject";
 import {
@@ -150,6 +151,8 @@ export function TicketsManager({
   const router = useRouter();
   const { success, error, info } = useToast();
   const [pending, startTransition] = useTransition();
+  const [busyLabel, setBusyLabel] = useState<string | null>(null);
+  const busy = pending || Boolean(busyLabel);
   const isDesktop = useIsDesktop();
   const mounted = useMounted();
 
@@ -374,15 +377,21 @@ export function TicketsManager({
 
   function run(
     action: () => Promise<TicketActionResult>,
-    options?: { quiet?: boolean },
+    options?: { quiet?: boolean; label?: string },
   ) {
+    const label = options?.label ?? "Working on this note…";
+    setBusyLabel(label);
     startTransition(async () => {
-      const next = await action();
-      if (next.ok) {
-        if (!options?.quiet) success(next.message, "Desk");
-        router.refresh();
-      } else {
-        error(next.message, "Desk");
+      try {
+        const next = await action();
+        if (next.ok) {
+          if (!options?.quiet) success(next.message, "Desk");
+          router.refresh();
+        } else {
+          error(next.message, "Desk");
+        }
+      } finally {
+        setBusyLabel(null);
       }
     });
   }
@@ -410,6 +419,8 @@ export function TicketsManager({
       const result = await addTicketNote(selected.id, body, isInternal);
       if (result.ok) setNoteDraft("");
       return result;
+    }, {
+      label: isInternal ? "Saving margin note…" : "Sending reply…",
     });
   }
 
@@ -428,7 +439,7 @@ export function TicketsManager({
         );
       }
       return result;
-    });
+    }, { label: "Sending NoReply email…" });
   }
 
   async function copyValue(value: string, label: string) {
@@ -467,7 +478,8 @@ export function TicketsManager({
     <TicketDetail
       ticket={selected}
       currentAdminId={currentAdminId}
-      pending={pending}
+      pending={busy}
+      busyLabel={busyLabel}
       tab={tab}
       onTab={setTab}
       noteDraft={noteDraft}
@@ -478,17 +490,32 @@ export function TicketsManager({
       emailMessage={emailMessage}
       onEmailMessage={setEmailMessage}
       onSubmitEmail={onSubmitEmail}
-      onStatus={(status) => run(() => updateTicketStatus(selected.id, status))}
+      onStatus={(status) =>
+        run(() => updateTicketStatus(selected.id, status), {
+          label: `Moving to ${STATUS_META[status].label}…`,
+        })
+      }
       onPriority={() =>
-        run(() =>
-          updateTicketPriority(
-            selected.id,
-            selected.priority === "high" ? "normal" : "high",
-          ),
+        run(
+          () =>
+            updateTicketPriority(
+              selected.id,
+              selected.priority === "high" ? "normal" : "high",
+            ),
+          {
+            label:
+              selected.priority === "high"
+                ? "Clearing urgent…"
+                : "Marking urgent…",
+          },
         )
       }
-      onClaim={() => run(() => claimTicket(selected.id))}
-      onRelease={() => run(() => releaseTicket(selected.id))}
+      onClaim={() =>
+        run(() => claimTicket(selected.id), { label: "Claiming note…" })
+      }
+      onRelease={() =>
+        run(() => releaseTicket(selected.id), { label: "Releasing note…" })
+      }
       onDelete={() => setPendingDelete(selected)}
       onCopy={copyValue}
       variant={isDesktop ? "desktop" : "sheet"}
@@ -950,13 +977,14 @@ export function TicketsManager({
               <button
                 type="button"
                 onClick={() => setPendingDelete(null)}
-                className="border border-stone px-3.5 py-2 text-sm text-ink/70"
+                disabled={busy}
+                className="border border-stone px-3.5 py-2 text-sm text-ink/70 disabled:opacity-50"
               >
                 Keep
               </button>
               <button
                 type="button"
-                disabled={pending}
+                disabled={busy}
                 onClick={() => {
                   const id = pendingDelete.id;
                   run(async () => {
@@ -967,11 +995,15 @@ export function TicketsManager({
                       if (selectedId === id) setSelectedId(null);
                     }
                     return result;
-                  });
+                  }, { label: "Removing from desk…" });
                 }}
-                className="bg-[#3a1f1f] px-3.5 py-2 text-sm font-medium text-red-50 disabled:opacity-60"
+                className="inline-flex min-h-[2.5rem] min-w-[8.5rem] items-center justify-center bg-[#3a1f1f] px-3.5 py-2 text-sm font-medium text-red-50 disabled:opacity-60"
               >
-                Delete forever
+                {busy ? (
+                  <DeskLoader label="Deleting…" tone="mist" />
+                ) : (
+                  "Delete forever"
+                )}
               </button>
             </div>
           </div>
@@ -1126,6 +1158,7 @@ function TicketDetail({
   ticket,
   currentAdminId,
   pending,
+  busyLabel,
   tab,
   onTab,
   noteDraft,
@@ -1147,6 +1180,7 @@ function TicketDetail({
   ticket: TicketWithMeta;
   currentAdminId: string;
   pending: boolean;
+  busyLabel: string | null;
   tab: DetailTab;
   onTab: (tab: DetailTab) => void;
   noteDraft: string;
@@ -1275,6 +1309,10 @@ function TicketDetail({
         sheet ? "h-full border-0" : "h-full border border-stone"
       }`}
     >
+      <DeskLoaderOverlay
+        active={pending}
+        label={busyLabel ?? "Working on this note…"}
+      />
       <header
         className={`shrink-0 border-b border-stone ${
           sheet ? "hidden" : "px-3 py-3 sm:px-5 sm:py-3.5"
@@ -1506,7 +1544,8 @@ function TicketDetail({
                     value={emailSubject}
                     onChange={(e) => onEmailSubject(e.target.value)}
                     maxLength={180}
-                    className="w-full border border-stone bg-white/85 px-3 py-2.5 text-sm outline-none focus:border-pine"
+                    disabled={pending}
+                    className="w-full border border-stone bg-white/85 px-3 py-2.5 text-sm outline-none focus:border-pine disabled:opacity-60"
                   />
                 </label>
                 <label className="block">
@@ -1518,8 +1557,9 @@ function TicketDetail({
                     onChange={(e) => onEmailMessage(e.target.value)}
                     maxLength={5000}
                     rows={sheet ? 3 : 4}
+                    disabled={pending}
                     placeholder="Write the body of your reply. Greeting and NoReply footer are added automatically…"
-                    className="w-full resize-y border border-stone bg-white/85 px-3 py-2.5 text-sm outline-none focus:border-pine"
+                    className="w-full resize-y border border-stone bg-white/85 px-3 py-2.5 text-sm outline-none focus:border-pine disabled:opacity-60"
                   />
                 </label>
                 <div className="flex flex-wrap items-center justify-between gap-3">
@@ -1533,9 +1573,13 @@ function TicketDetail({
                       emailSubject.trim().length < 3 ||
                       emailMessage.trim().length < 10
                     }
-                    className="inline-flex items-center gap-2 bg-pine px-4 py-2.5 text-sm font-medium text-mist transition-colors hover:bg-celadon disabled:opacity-50"
+                    className="inline-flex min-h-[2.5rem] min-w-[10.5rem] items-center justify-center gap-2 bg-pine px-4 py-2.5 text-sm font-medium text-mist transition-colors hover:bg-celadon disabled:opacity-50"
                   >
-                    {pending ? "Sending…" : "Send NoReply email"}
+                    {pending ? (
+                      <DeskLoader label="Sending…" tone="mist" />
+                    ) : (
+                      "Send NoReply email"
+                    )}
                   </button>
                 </div>
               </form>

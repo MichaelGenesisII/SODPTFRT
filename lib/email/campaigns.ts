@@ -3,6 +3,9 @@ export type CampaignTemplateId = "custom";
 /** Max recipients sent to the email backend in one request. */
 export const CAMPAIGN_BATCH_SIZE = 40;
 
+/** Matches sod_portal_be campaign attachment cap. */
+export const CAMPAIGN_MAX_ATTACHMENTS = 5;
+
 export function isCampaignTemplateId(
   value: string,
 ): value is CampaignTemplateId {

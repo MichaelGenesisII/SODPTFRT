@@ -16,10 +16,12 @@ import {
   type AnnouncementAudience,
 } from "@/lib/announcements";
 import { publicActionMessage } from "@/lib/safe-action-message";
-import { parseAttachmentIds } from "@/lib/desk-attachments";
+import { parseNoticeAttachmentLinks } from "@/lib/desk-attachments";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import {
   linkAnnouncementAttachments,
+  listAnnouncementAttachmentIds,
+  purgeAnnouncementAttachments,
   replaceAnnouncementAttachments,
 } from "@/app/admin/desk-attachments/actions";
 
@@ -286,7 +288,7 @@ export async function createAnnouncement(
 
     const supabase = await createServerSupabaseClient();
     const now = new Date().toISOString();
-    const attachmentIds = parseAttachmentIds(formData);
+    const attachmentLinks = parseNoticeAttachmentLinks(formData);
     const { data: created, error } = await supabase
       .from("announcements")
       .insert({
@@ -309,7 +311,7 @@ export async function createAnnouncement(
       return failMessage(error, "Could not save this notice. Please try again.");
     }
 
-    await linkAnnouncementAttachments(created.id as string, attachmentIds);
+    await linkAnnouncementAttachments(created.id as string, attachmentLinks);
 
     revalidateAnnouncementPaths();
     return {
@@ -407,7 +409,7 @@ export async function updateAnnouncement(
       return failMessage(error, "Could not update this notice. Please try again.");
     }
 
-    await replaceAnnouncementAttachments(id, parseAttachmentIds(formData));
+    await replaceAnnouncementAttachments(id, parseNoticeAttachmentLinks(formData));
 
     revalidateAnnouncementPaths();
     return { ok: true, message: "Notice updated." };
@@ -515,11 +517,16 @@ export async function deleteAnnouncement(
       };
     }
 
+    const attachmentIds = await listAnnouncementAttachmentIds(id);
+
     const { error } = await supabase.from("announcements").delete().eq("id", id);
 
     if (error) {
       return failMessage(error, "Could not delete this notice. Please try again.");
     }
+
+    // Junction rows cascade with the notice; purge orphaned storage + rows.
+    await purgeAnnouncementAttachments(attachmentIds);
 
     revalidateAnnouncementPaths();
     return { ok: true, message: "Notice deleted." };

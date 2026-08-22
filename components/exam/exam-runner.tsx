@@ -12,6 +12,7 @@ import {
   submitAttempt,
   type TakeActionResult,
 } from "@/app/exam/actions";
+import { DeskLoaderOverlay } from "@/components/ui/desk-loader";
 import type {
   Exam,
   ExamAnswer,
@@ -36,7 +37,9 @@ export function ExamRunner({
   onSubmitted,
 }: Props) {
   const [index, setIndex] = useState(0);
-  const [pending, startTransition] = useTransition();
+  const [, startTransition] = useTransition();
+  const [busyLabel, setBusyLabel] = useState<string | null>(null);
+  const submitting = Boolean(busyLabel?.startsWith("Submitting"));
   const [message, setMessage] = useState<string | null>(null);
   const [answers, setAnswers] = useState<Record<string, Record<string, unknown>>>(
     () => {
@@ -102,13 +105,18 @@ export function ExamRunner({
   }
 
   function doSubmit() {
+    setBusyLabel("Submitting exam…");
     startTransition(async () => {
-      const result: TakeActionResult = await submitAttempt(
-        attempt.id,
-        attempt.attempt_token,
-      );
-      setMessage(result.message);
-      if (result.ok) onSubmitted?.();
+      try {
+        const result: TakeActionResult = await submitAttempt(
+          attempt.id,
+          attempt.attempt_token,
+        );
+        setMessage(result.message);
+        if (result.ok) onSubmitted?.();
+      } finally {
+        setBusyLabel(null);
+      }
     });
   }
 
@@ -130,7 +138,14 @@ export function ExamRunner({
   }
 
   return (
-    <div className="exam-runner relative flex min-h-dvh flex-col overflow-hidden bg-[radial-gradient(120%_80%_at_10%_0%,#1f4a3c_0%,#14352c_45%,#0f2820_100%)] text-mist">
+    <div
+      className="exam-runner relative flex min-h-dvh flex-col overflow-hidden bg-[radial-gradient(120%_80%_at_10%_0%,#1f4a3c_0%,#14352c_45%,#0f2820_100%)] text-mist"
+      aria-busy={submitting}
+    >
+      <DeskLoaderOverlay
+        active={submitting}
+        label={busyLabel ?? "Submitting exam…"}
+      />
       <div
         className="pointer-events-none absolute inset-0 opacity-[0.07]"
         style={{
@@ -188,7 +203,9 @@ export function ExamRunner({
             <QuestionInput
               question={question}
               value={answers[question.id] ?? {}}
-              disabled={expired || pending || attempt.status !== "in_progress"}
+              disabled={
+                expired || submitting || attempt.status !== "in_progress"
+              }
               onChange={setResponse}
             />
           </div>
@@ -201,7 +218,7 @@ export function ExamRunner({
         <div className="mt-auto flex flex-wrap items-center justify-between gap-3 pt-8">
           <button
             type="button"
-            disabled={index === 0}
+            disabled={index === 0 || submitting}
             onClick={() => setIndex((i) => Math.max(0, i - 1))}
             className="border border-white/20 px-4 py-2.5 text-sm font-medium text-mist/90 transition hover:border-white/50 disabled:opacity-30"
           >
@@ -211,21 +228,22 @@ export function ExamRunner({
             {index < questions.length - 1 ? (
               <button
                 type="button"
+                disabled={submitting}
                 onClick={() =>
                   setIndex((i) => Math.min(questions.length - 1, i + 1))
                 }
-                className="bg-mist px-5 py-2.5 text-sm font-medium text-pine transition hover:bg-white"
+                className="bg-mist px-5 py-2.5 text-sm font-medium text-pine transition hover:bg-white disabled:opacity-50"
               >
                 Next
               </button>
             ) : (
               <button
                 type="button"
-                disabled={pending || attempt.status !== "in_progress"}
+                disabled={submitting || attempt.status !== "in_progress"}
                 onClick={doSubmit}
                 className="bg-celadon px-5 py-2.5 text-sm font-medium text-pine transition hover:brightness-110 disabled:opacity-50"
               >
-                {pending ? "Submitting…" : "Submit exam"}
+                {submitting ? "Submitting…" : "Submit exam"}
               </button>
             )}
           </div>

@@ -181,9 +181,8 @@ export function StudentGallery({
 
           <p className="mt-2 max-w-lg text-sm leading-relaxed text-ink/65 sm:mt-3">
 
-            Graduation selfies from your cohort, batch, or parish — manage your
-
-            own portrait anytime, and browse classmates.
+            Graduation selfies from your national cohort, parish batch, or parish —
+            manage your own portrait anytime, and browse classmates.
 
           </p>
 
@@ -411,15 +410,30 @@ export function StudentGallery({
 
                   <button
                     type="button"
-                    onClick={() => setLightbox(photo)}
-                    className="aspect-[3/4] w-full overflow-hidden bg-pine/5 text-left"
+                    onClick={() => {
+                      if (photo.imageUnavailable) return;
+                      setLightbox(photo);
+                    }}
+                    disabled={photo.imageUnavailable}
+                    className="aspect-[3/4] w-full overflow-hidden bg-pine/5 text-left disabled:cursor-default"
                   >
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img
-                      src={photo.imageUrl}
-                      alt={`Graduation selfie of ${photo.displayName}`}
-                      className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-[1.03]"
-                    />
+                    {photo.imageUnavailable ? (
+                      <div className="flex h-full w-full flex-col items-center justify-center gap-1 px-3 text-center">
+                        <span className="font-display text-sm text-pine/70">
+                          Portrait unavailable
+                        </span>
+                        <span className="text-[0.65rem] uppercase tracking-[0.08em] text-ink/40">
+                          Try again later
+                        </span>
+                      </div>
+                    ) : (
+                      /* eslint-disable-next-line @next/next/no-img-element */
+                      <img
+                        src={photo.imageUrl}
+                        alt={`Graduation selfie of ${photo.displayName}`}
+                        className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-[1.03]"
+                      />
+                    )}
                   </button>
 
                   <div className="absolute inset-x-0 bottom-0 bg-pine/90 px-2 py-2 sm:bg-pine/85 sm:px-3 sm:py-2.5">
@@ -440,7 +454,7 @@ export function StudentGallery({
 
                         : scope === "cohort"
 
-                          ? photo.batchLabel || "Batch"
+                          ? photo.parishName || photo.batchLabel || "Parish"
 
                           : photo.parishName || "Parish"}
 

@@ -227,6 +227,15 @@ export async function submitBankProof(
             : "jpg";
     const path = `${profile.id}/${feeType}-${Date.now()}.${ext}`;
     const buffer = Buffer.from(await file.arrayBuffer());
+    const service = createServiceSupabaseClient();
+
+    if (current.status === "pending_review") {
+      return {
+        ok: false,
+        message:
+          "A bank proof is already with the desk. Wait for a decision before sending another.",
+      };
+    }
 
     const { error: uploadError } = await supabase.storage
       .from("payment-proofs")
@@ -237,18 +246,28 @@ export async function submitBankProof(
       return fail(uploadError, "Could not upload proof.");
     }
 
-    const { transaction } = await markFeePendingReview({
-      userId: profile.id,
-      feeType,
-      amountGbp: amount,
-      proofPath: path,
-      proofMime: file.type,
-      proofNote: note || null,
-    });
+    let transaction: Awaited<
+      ReturnType<typeof markFeePendingReview>
+    >["transaction"];
+    try {
+      const marked = await markFeePendingReview({
+        userId: profile.id,
+        feeType,
+        amountGbp: amount,
+        proofPath: path,
+        proofMime: file.type,
+        proofNote: note || null,
+      });
+      transaction = marked.transaction;
+    } catch (markError) {
+      console.error("[student/payments/proof-save]", markError);
+      await service.storage.from("payment-proofs").remove([path]);
+      return fail(markError, "Could not upload proof.");
+    }
 
     const fee = feeDefinition(feeType);
     const reference = await studentReference(profile.id);
-    await sendPaymentProofReceivedEmail({
+    void sendPaymentProofReceivedEmail({
       to: profile.email,
       firstName: profile.first_name,
       feeLabel: fee.label,
@@ -259,6 +278,8 @@ export async function submitBankProof(
       portalSupportUrl: `${portalBaseUrl()}/student/support`,
       siteUrl: SOD_SITE,
       feeType,
+    }).catch((mailError) => {
+      console.error("[student/payments/proof-email]", mailError);
     });
 
     revalidatePath("/student");

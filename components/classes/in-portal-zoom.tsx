@@ -8,8 +8,19 @@ type Props = {
   onLeave: () => void;
 };
 
+/** Keep in sync with Zoom Meeting SDK web releases. */
 const ZOOM_SDK_VERSION = "6.2.0";
-const ZOOM_EMBED_SRC = `https://source.zoom.us/${ZOOM_SDK_VERSION}/zoom-meeting-embedded-${ZOOM_SDK_VERSION}.min.js`;
+
+const ZOOM_VENDOR_SCRIPTS = [
+  `https://source.zoom.us/${ZOOM_SDK_VERSION}/lib/vendor/react.min.js`,
+  `https://source.zoom.us/${ZOOM_SDK_VERSION}/lib/vendor/react-dom.min.js`,
+  `https://source.zoom.us/${ZOOM_SDK_VERSION}/lib/vendor/redux.min.js`,
+  `https://source.zoom.us/${ZOOM_SDK_VERSION}/lib/vendor/redux-thunk.min.js`,
+  `https://source.zoom.us/${ZOOM_SDK_VERSION}/lib/vendor/lodash.min.js`,
+] as const;
+
+/** Official CDN path (not versioned folder) — see Zoom get-started docs. */
+const ZOOM_EMBED_SRC = `https://source.zoom.us/zoom-meeting-embedded-${ZOOM_SDK_VERSION}.min.js`;
 
 type ZoomEmbeddedClient = {
   init: (opts: {
@@ -19,14 +30,14 @@ type ZoomEmbeddedClient = {
   }) => Promise<void>;
   join: (opts: {
     signature: string;
-    sdkKey: string;
     meetingNumber: string;
     password: string;
     userName: string;
     userEmail: string;
     zak?: string;
   }) => Promise<void>;
-  leaveMeeting?: () => void;
+  leaveMeeting?: () => void | Promise<void>;
+  destroy?: () => void | Promise<void>;
 };
 
 type ZoomEmbeddedFactory = {
@@ -39,48 +50,116 @@ declare global {
   }
 }
 
-function loadZoomEmbeddedScript(): Promise<ZoomEmbeddedFactory> {
-  if (typeof window === "undefined") {
-    return Promise.reject(new Error("Zoom embed is browser-only."));
-  }
-  if (window.ZoomMtgEmbedded) {
-    return Promise.resolve(window.ZoomMtgEmbedded);
-  }
-
-  const existing = document.querySelector<HTMLScriptElement>(
-    `script[data-zoom-embedded="${ZOOM_SDK_VERSION}"]`,
-  );
-  if (existing) {
-    return new Promise((resolve, reject) => {
-      existing.addEventListener("load", () => {
-        if (window.ZoomMtgEmbedded) resolve(window.ZoomMtgEmbedded);
-        else reject(new Error("Zoom embed script loaded without ZoomMtgEmbedded."));
-      });
-      existing.addEventListener("error", () =>
-        reject(new Error("Failed to load Zoom Meeting SDK script.")),
-      );
-    });
-  }
-
+function loadScriptOnce(src: string, marker: string): Promise<void> {
   return new Promise((resolve, reject) => {
+    const existing = document.querySelector<HTMLScriptElement>(
+      `script[data-zoom-sdk="${marker}"]`,
+    );
+    if (existing) {
+      if (existing.dataset.loaded === "1") {
+        resolve();
+        return;
+      }
+      existing.addEventListener("load", () => resolve(), { once: true });
+      existing.addEventListener(
+        "error",
+        () => reject(new Error(`Failed to load Zoom SDK asset (${marker}).`)),
+        { once: true },
+      );
+      return;
+    }
+
     const script = document.createElement("script");
-    script.src = ZOOM_EMBED_SRC;
-    script.async = true;
-    script.dataset.zoomEmbedded = ZOOM_SDK_VERSION;
+    script.src = src;
+    script.async = false;
+    script.dataset.zoomSdk = marker;
     script.onload = () => {
-      if (window.ZoomMtgEmbedded) resolve(window.ZoomMtgEmbedded);
-      else reject(new Error("Zoom embed script loaded without ZoomMtgEmbedded."));
+      script.dataset.loaded = "1";
+      resolve();
     };
     script.onerror = () =>
-      reject(new Error("Failed to load Zoom Meeting SDK from CDN."));
+      reject(new Error(`Failed to load Zoom SDK asset (${marker}).`));
     document.body.appendChild(script);
   });
 }
 
+async function loadZoomEmbeddedScript(): Promise<ZoomEmbeddedFactory> {
+  if (typeof window === "undefined") {
+    throw new Error("Zoom embed is browser-only.");
+  }
+  if (window.ZoomMtgEmbedded) {
+    return window.ZoomMtgEmbedded;
+  }
+
+  for (const [index, src] of ZOOM_VENDOR_SCRIPTS.entries()) {
+    await loadScriptOnce(src, `vendor-${ZOOM_SDK_VERSION}-${index}`);
+  }
+  await loadScriptOnce(ZOOM_EMBED_SRC, `embedded-${ZOOM_SDK_VERSION}`);
+
+  if (!window.ZoomMtgEmbedded) {
+    throw new Error("Zoom embed script loaded without ZoomMtgEmbedded.");
+  }
+  return window.ZoomMtgEmbedded;
+}
+
+/** Zoom SDK often rejects with plain objects, not Error instances. */
+function formatZoomEmbedError(error: unknown): string {
+  if (error instanceof Error && error.message) return error.message;
+  if (error && typeof error === "object") {
+    const row = error as {
+      reason?: unknown;
+      errorMessage?: unknown;
+      message?: unknown;
+      errorCode?: unknown;
+      type?: unknown;
+    };
+    const reason =
+      (typeof row.reason === "string" && row.reason) ||
+      (typeof row.errorMessage === "string" && row.errorMessage) ||
+      (typeof row.message === "string" && row.message) ||
+      "";
+    const code =
+      row.errorCode != null
+        ? ` (${String(row.errorCode)}${row.type ? ` · ${String(row.type)}` : ""})`
+        : "";
+    if (reason) return `${reason}${code}`;
+    try {
+      return JSON.stringify(error);
+    } catch {
+      // fall through
+    }
+  }
+  return "Could not start in-portal Zoom.";
+}
+
+function isMeetingInProgressError(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const row = error as { errorCode?: unknown; reason?: unknown };
+  if (row.errorCode === 3000) return true;
+  return (
+    typeof row.reason === "string" &&
+    /already has other meetings in progress/i.test(row.reason)
+  );
+}
+
+async function safeLeave(client: ZoomEmbeddedClient | null) {
+  if (!client) return;
+  try {
+    await client.leaveMeeting?.();
+  } catch {
+    // ignore — meeting may already be gone
+  }
+  try {
+    await client.destroy?.();
+  } catch {
+    // ignore
+  }
+}
+
 /**
- * Embeds Zoom Meeting SDK (component view) via Zoom's CDN.
- * Avoids bundling `@zoom/meetingsdk` through Turbopack (React 19 / missing
- * `@zoom/download-manager`). External Zoom app links remain the fallback.
+ * Embeds Zoom Meeting SDK (component view) via Zoom's CDN + vendor scripts.
+ * npm `@zoom/meetingsdk` peers React 18 and conflicts with this app's React 19,
+ * so CDN remains the supported path. External Zoom app links stay the fallback.
  */
 export function InPortalZoom({ session, onLeave }: Props) {
   const rootRef = useRef<HTMLDivElement>(null);
@@ -91,29 +170,50 @@ export function InPortalZoom({ session, onLeave }: Props) {
   useEffect(() => {
     let cancelled = false;
 
+    async function joinWithClient(
+      client: ZoomEmbeddedClient,
+      root: HTMLElement,
+    ) {
+      await client.init({
+        zoomAppRoot: root,
+        language: "en-US",
+        patchJsMedia: true,
+      });
+
+      // sdkKey removed from joinOptions since Meeting SDK v4 — key lives in the JWT.
+      await client.join({
+        signature: session.signature,
+        meetingNumber: session.meetingNumber,
+        password: session.password,
+        userName: session.userName,
+        userEmail: session.userEmail,
+        ...(session.zak ? { zak: session.zak } : {}),
+      });
+    }
+
     async function start() {
       try {
         const ZoomEmbed = await loadZoomEmbeddedScript();
         if (cancelled || !rootRef.current) return;
 
+        // Drop any prior in-page session (Strict Mode remount / retry).
+        await safeLeave(clientRef.current);
+        clientRef.current = null;
+
         const client = ZoomEmbed.createClient();
         clientRef.current = client;
 
-        await client.init({
-          zoomAppRoot: rootRef.current,
-          language: "en-US",
-          patchJsMedia: true,
-        });
-
-        await client.join({
-          signature: session.signature,
-          sdkKey: session.sdkKey,
-          meetingNumber: session.meetingNumber,
-          password: session.password,
-          userName: session.userName,
-          userEmail: session.userEmail,
-          ...(session.zak ? { zak: session.zak } : {}),
-        });
+        try {
+          await joinWithClient(client, rootRef.current);
+        } catch (firstError) {
+          if (!isMeetingInProgressError(firstError)) throw firstError;
+          // Clear sticky SDK state, then retry once.
+          await safeLeave(client);
+          if (cancelled || !rootRef.current) return;
+          const retry = ZoomEmbed.createClient();
+          clientRef.current = retry;
+          await joinWithClient(retry, rootRef.current);
+        }
 
         if (!cancelled) {
           setStatus("live");
@@ -125,10 +225,13 @@ export function InPortalZoom({ session, onLeave }: Props) {
         }
       } catch (error) {
         if (cancelled) return;
-        console.error("[in-portal-zoom]", error);
+        const detail = formatZoomEmbedError(error);
+        console.error("[in-portal-zoom]", detail, error);
         setStatus("error");
         setMessage(
-          "Could not start in-portal Zoom. Use the Zoom app link instead.",
+          /already has other meetings/i.test(detail)
+            ? "Another Zoom session is still open in this browser. Leave it or close other portal Zoom tabs, then try again — or use Host / Join in the Zoom app."
+            : `${detail} You can use the Zoom app link instead.`,
         );
       }
     }
@@ -137,12 +240,9 @@ export function InPortalZoom({ session, onLeave }: Props) {
 
     return () => {
       cancelled = true;
-      try {
-        clientRef.current?.leaveMeeting?.();
-      } catch {
-        // SDK may already have torn down
-      }
+      const client = clientRef.current;
       clientRef.current = null;
+      void safeLeave(client);
     };
   }, [session]);
 
@@ -153,12 +253,9 @@ export function InPortalZoom({ session, onLeave }: Props) {
         <button
           type="button"
           onClick={() => {
-            try {
-              clientRef.current?.leaveMeeting?.();
-            } catch {
-              // ignore
-            }
-            onLeave();
+            const client = clientRef.current;
+            clientRef.current = null;
+            void safeLeave(client).finally(onLeave);
           }}
           className="border border-stone px-2.5 py-1 text-xs text-ink/70"
         >

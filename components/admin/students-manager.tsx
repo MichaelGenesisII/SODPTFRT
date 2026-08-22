@@ -13,6 +13,7 @@ import {
   type StudentActionResult,
 } from "@/app/admin/students/actions";
 import { StudentDossier } from "@/components/admin/student-dossier";
+import { DeskLoader, DeskLoaderOverlay } from "@/components/ui/desk-loader";
 import { useToast } from "@/components/ui/toast";
 import {
   ENROLMENT_STATUS_META,
@@ -95,6 +96,8 @@ export function StudentsManager({
 }: StudentsManagerProps) {
   const { success, error, info } = useToast();
   const [pending, startTransition] = useTransition();
+  const [busyLabel, setBusyLabel] = useState<string | null>(null);
+  const busy = pending || Boolean(busyLabel);
   const [pageView, setPageView] = useState<PageView>("desk");
   const [lane, setLane] = useState<PathLane>("all");
   const [query, setQuery] = useState("");
@@ -243,24 +246,29 @@ export function StudentsManager({
 
   function run(
     action: () => Promise<StudentActionResult>,
-    options?: { clearPassword?: boolean },
+    options?: { clearPassword?: boolean; label?: string },
   ) {
+    setBusyLabel(options?.label ?? "Working…");
     startTransition(async () => {
-      const next = await action();
-      if (next.ok) {
-        success(next.message, "Students");
-        if (next.temporaryPassword) {
-          setRevealedPassword(next.temporaryPassword);
-          info(
-            `Temporary password: ${next.temporaryPassword}`,
-            "Share securely",
-          );
-        } else if (options?.clearPassword) {
-          setRevealedPassword(null);
+      try {
+        const next = await action();
+        if (next.ok) {
+          success(next.message, "Students");
+          if (next.temporaryPassword) {
+            setRevealedPassword(next.temporaryPassword);
+            info(
+              `Temporary password: ${next.temporaryPassword}`,
+              "Share securely",
+            );
+          } else if (options?.clearPassword) {
+            setRevealedPassword(null);
+          }
+          if (pendingDelete) setPendingDelete(null);
+        } else {
+          error(next.message, "Students");
         }
-        if (pendingDelete) setPendingDelete(null);
-      } else {
-        error(next.message, "Students");
+      } finally {
+        setBusyLabel(null);
       }
     });
   }
@@ -453,18 +461,27 @@ export function StudentsManager({
               <span>{bulkSelected.length} selected</span>
               <button
                 type="button"
-                disabled={pending}
-                onClick={() =>
+                disabled={busy}
+                onClick={() => {
+                  setBusyLabel("Marking manuals sent…");
                   startTransition(async () => {
-                    const result = await bulkSetManualsSent(bulkSelected);
-                    if (result.ok) success(result.message);
-                    else error(result.message);
-                    setBulkSelected([]);
-                  })
-                }
-                className="border border-pine px-3 py-1.5 text-xs font-medium text-pine hover:bg-pine hover:text-mist disabled:opacity-50"
+                    try {
+                      const result = await bulkSetManualsSent(bulkSelected);
+                      if (result.ok) success(result.message);
+                      else error(result.message);
+                      setBulkSelected([]);
+                    } finally {
+                      setBusyLabel(null);
+                    }
+                  });
+                }}
+                className="inline-flex min-h-[1.85rem] min-w-[8.5rem] items-center justify-center border border-pine px-3 py-1.5 text-xs font-medium text-pine hover:bg-pine hover:text-mist disabled:opacity-50"
               >
-                Mark manuals sent
+                {busy && busyLabel?.startsWith("Marking manuals") ? (
+                  <DeskLoader label={busyLabel} />
+                ) : (
+                  "Mark manuals sent"
+                )}
               </button>
             </div>
           ) : null}
@@ -603,8 +620,13 @@ export function StudentsManager({
             </section>
 
             <section
-              className={`${workspaceClass} min-h-[16rem] border border-stone bg-mist sm:min-h-[24rem]`}
+              className={`${workspaceClass} relative min-h-[16rem] border border-stone bg-mist sm:min-h-[24rem]`}
+              aria-busy={busy}
             >
+              <DeskLoaderOverlay
+                active={busy && !pendingDelete}
+                label={busyLabel ?? "Working…"}
+              />
               {!selected ? (
                 <div className="flex min-h-[16rem] flex-col items-center justify-center px-5 py-12 text-center sm:min-h-[24rem] sm:px-6 sm:py-16">
                   <p className="text-[0.7rem] font-medium uppercase tracking-[0.18em] text-celadon">
@@ -624,7 +646,8 @@ export function StudentsManager({
                   profile={profile}
                   parishes={parishes}
                   batches={batches}
-                  pending={pending}
+                  pending={busy}
+                  busyLabel={busyLabel}
                   revealedPassword={revealedPassword}
                   onBack={() => setMobileSurface("directory")}
                   onRun={run}
@@ -661,22 +684,28 @@ export function StudentsManager({
             <div className="mt-6 flex flex-wrap justify-end gap-2">
               <button
                 type="button"
+                disabled={busy}
                 onClick={() => setPendingDelete(null)}
-                className="border border-pine/25 px-4 py-2.5 text-sm font-medium text-pine"
+                className="border border-pine/25 px-4 py-2.5 text-sm font-medium text-pine disabled:opacity-50"
               >
                 Keep student
               </button>
               <button
                 type="button"
-                disabled={pending}
+                disabled={busy}
                 onClick={() =>
                   run(() => deleteStudentAccount(pendingDelete.id), {
                     clearPassword: true,
+                    label: "Removing student…",
                   })
                 }
-                className="bg-red-800 px-4 py-2.5 text-sm font-medium text-red-50 disabled:opacity-50"
+                className="inline-flex min-h-[2.5rem] min-w-[10rem] items-center justify-center bg-red-800 px-4 py-2.5 text-sm font-medium text-red-50 disabled:opacity-50"
               >
-                {pending ? "Removing…" : "Remove permanently"}
+                {busy && busyLabel?.startsWith("Removing") ? (
+                  <DeskLoader label={busyLabel} tone="mist" />
+                ) : (
+                  "Remove permanently"
+                )}
               </button>
             </div>
           </div>

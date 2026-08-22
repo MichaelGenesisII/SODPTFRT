@@ -34,6 +34,8 @@ export type GalleryPhoto = {
   batchLabel: string | null;
   cohortLabel?: string | null;
   imageUrl: string;
+  /** True when the signed URL could not be minted for this tile. */
+  imageUnavailable?: boolean;
   isSelf?: boolean;
   moderationStatus?: string | null;
 };
@@ -225,6 +227,7 @@ export async function uploadGraduationSelfie(
 
     if (updateError) {
       console.error("[student/photos/selfie-save]", updateError);
+      await service.storage.from(STUDENT_PHOTOS_BUCKET).remove([path]);
       return fail(updateError, "Could not save your photograph.");
     }
 

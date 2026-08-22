@@ -246,7 +246,7 @@ export async function flagGallerySelfie(
     }
 
     revalidateGallery();
-    return { ok: true, message: "Portrait flagged for review." };
+    return { ok: true, message: "Portrait flagged. It is hidden from the student gallery until restored or taken down." };
   } catch (error) {
     console.error("[admin/gallery/flag]", error);
     return fail(error, "Could not flag this portrait.");

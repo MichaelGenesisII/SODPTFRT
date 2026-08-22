@@ -7,6 +7,7 @@ import {
   type AlumniActionResult,
 } from "@/app/admin/alumni/actions";
 import { upgradeAlumniToStudent } from "@/app/admin/students/actions";
+import { DeskLoader, DeskLoaderOverlay } from "@/components/ui/desk-loader";
 import { useToast } from "@/components/ui/toast";
 import { studentFullName, type AdminStudentRecord } from "@/lib/admin/students";
 import { SHEET_COHORT_HINTS, type AlumniImportPreview } from "@/lib/alumni/types";
@@ -24,6 +25,8 @@ type AlumniManagerProps = {
 export function AlumniManager({ alumni, cohorts }: AlumniManagerProps) {
   const { success, error, info } = useToast();
   const [pending, startTransition] = useTransition();
+  const [busyLabel, setBusyLabel] = useState<string | null>(null);
+  const busy = pending || Boolean(busyLabel);
   const [preview, setPreview] = useState<AlumniImportPreview | null>(null);
   const [cohortBySheet, setCohortBySheet] = useState<
     Record<string, string | null>
@@ -47,42 +50,62 @@ export function AlumniManager({ alumni, cohorts }: AlumniManagerProps) {
     });
   }, [alumni, query]);
 
-  function run(action: () => Promise<AlumniActionResult | { ok: boolean; message: string }>) {
+  function run(
+    action: () => Promise<
+      AlumniActionResult | { ok: boolean; message: string }
+    >,
+    label: string,
+  ) {
+    setBusyLabel(label);
     startTransition(async () => {
-      const result = await action();
-      if (result.ok) success(result.message);
-      else error(result.message);
+      try {
+        const result = await action();
+        if (result.ok) success(result.message);
+        else error(result.message);
+      } finally {
+        setBusyLabel(null);
+      }
     });
   }
 
   async function onPreview(formData: FormData) {
+    setBusyLabel("Parsing spreadsheet…");
     startTransition(async () => {
-      const result = await previewAlumniImport(formData);
-      if (!result.ok || !("preview" in result)) {
-        error(result.message);
-        return;
+      try {
+        const result = await previewAlumniImport(formData);
+        if (!result.ok || !("preview" in result)) {
+          error(result.message);
+          return;
+        }
+        setPreview(result.preview);
+        const initial: Record<string, string | null> = {};
+        for (const sheet of result.preview.sheetCounts) {
+          const hint = SHEET_COHORT_HINTS[sheet.sheet.trim().toLowerCase()];
+          const match = hint
+            ? cohorts.find((c) =>
+                c.name.toLowerCase().includes(hint.toLowerCase()),
+              )
+            : null;
+          initial[sheet.sheet] = match?.id ?? null;
+        }
+        setCohortBySheet(initial);
+        info(
+          `Found ${result.preview.rows.length} valid rows (${result.preview.skipped.length} skipped in preview).`,
+          "Import preview",
+        );
+      } finally {
+        setBusyLabel(null);
       }
-      setPreview(result.preview);
-      const initial: Record<string, string | null> = {};
-      for (const sheet of result.preview.sheetCounts) {
-        const hint = SHEET_COHORT_HINTS[sheet.sheet.trim().toLowerCase()];
-        const match = hint
-          ? cohorts.find((c) => c.name.toLowerCase().includes(hint.toLowerCase()))
-          : null;
-        initial[sheet.sheet] = match?.id ?? null;
-      }
-      setCohortBySheet(initial);
-      info(
-        `Found ${result.preview.rows.length} valid rows (${result.preview.skipped.length} skipped in preview).`,
-        "Import preview",
-      );
     });
   }
 
   return (
-    <div className="space-y-8">
+    <div className="relative space-y-8" aria-busy={busy}>
+      <DeskLoaderOverlay active={busy} label={busyLabel ?? "Working…"} />
       <section className="border border-stone/80 bg-white/50 p-5">
-        <h2 className="font-display text-xl text-pine">Import legacy spreadsheet</h2>
+        <h2 className="font-display text-xl text-pine">
+          Import legacy spreadsheet
+        </h2>
         <p className="mt-2 text-sm leading-relaxed text-ink/60">
           Upload the Excel workbook (~526 rows). Invalid or duplicate emails are
           skipped with a report. Alumni sign in via forgot password — no
@@ -101,16 +124,21 @@ export function AlumniManager({ alumni, cohorts }: AlumniManagerProps) {
               type="file"
               name="file"
               accept=".xlsx,.xls"
-              className={`mt-1 block ${fieldClass}`}
+              disabled={busy}
+              className={`mt-1 block ${fieldClass} disabled:opacity-50`}
               required
             />
           </label>
           <button
             type="submit"
-            disabled={pending}
-            className="border border-pine px-4 py-2.5 text-sm font-medium text-pine hover:bg-pine hover:text-mist disabled:opacity-50"
+            disabled={busy}
+            className="inline-flex min-h-[2.5rem] min-w-[8.5rem] items-center justify-center border border-pine px-4 py-2.5 text-sm font-medium text-pine hover:bg-pine hover:text-mist disabled:opacity-50"
           >
-            Preview import
+            {busy && busyLabel?.startsWith("Parsing") ? (
+              <DeskLoader label={busyLabel} />
+            ) : (
+              "Preview import"
+            )}
           </button>
         </form>
 
@@ -125,13 +153,14 @@ export function AlumniManager({ alumni, cohorts }: AlumniManagerProps) {
                 Cohort for “{sheet.sheet}” ({sheet.valid} rows)
                 <select
                   value={cohortBySheet[sheet.sheet] ?? ""}
+                  disabled={busy}
                   onChange={(e) =>
                     setCohortBySheet((prev) => ({
                       ...prev,
                       [sheet.sheet]: e.target.value || null,
                     }))
                   }
-                  className={`mt-1 ${fieldClass}`}
+                  className={`mt-1 ${fieldClass} disabled:opacity-50`}
                 >
                   <option value="">No cohort (assign later)</option>
                   {cohorts.map((c) => (
@@ -160,18 +189,24 @@ export function AlumniManager({ alumni, cohorts }: AlumniManagerProps) {
 
             <button
               type="button"
-              disabled={pending || preview.rows.length === 0}
+              disabled={busy || preview.rows.length === 0}
               onClick={() =>
-                run(async () =>
-                  commitAlumniImport({
-                    rows: preview.rows,
-                    cohortBySheet,
-                  }),
+                run(
+                  async () =>
+                    commitAlumniImport({
+                      rows: preview.rows,
+                      cohortBySheet,
+                    }),
+                  "Importing alumni…",
                 )
               }
-              className="border border-pine bg-pine px-4 py-2.5 text-sm font-medium text-mist hover:bg-pine/90 disabled:opacity-50"
+              className="inline-flex min-h-[2.5rem] min-w-[10rem] items-center justify-center border border-pine bg-pine px-4 py-2.5 text-sm font-medium text-mist hover:bg-pine/90 disabled:opacity-50"
             >
-              Import {preview.rows.length} alumni
+              {busy && busyLabel?.startsWith("Importing") ? (
+                <DeskLoader label={busyLabel} tone="mist" />
+              ) : (
+                `Import ${preview.rows.length} alumni`
+              )}
             </button>
           </div>
         ) : null}
@@ -190,7 +225,8 @@ export function AlumniManager({ alumni, cohorts }: AlumniManagerProps) {
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Search name, email, legacy ref…"
-            className={`max-w-xs ${fieldClass}`}
+            disabled={busy}
+            className={`max-w-xs ${fieldClass} disabled:opacity-50`}
           />
         </div>
 
@@ -214,11 +250,20 @@ export function AlumniManager({ alumni, cohorts }: AlumniManagerProps) {
                 </div>
                 <button
                   type="button"
-                  disabled={pending}
-                  onClick={() => run(() => upgradeAlumniToStudent(row.id))}
-                  className="border border-pine/25 px-3 py-2 text-xs font-medium text-pine hover:border-pine disabled:opacity-50"
+                  disabled={busy}
+                  onClick={() =>
+                    run(
+                      () => upgradeAlumniToStudent(row.id),
+                      "Upgrading to student…",
+                    )
+                  }
+                  className="inline-flex min-h-[2rem] min-w-[8.5rem] items-center justify-center border border-pine/25 px-3 py-2 text-xs font-medium text-pine hover:border-pine disabled:opacity-50"
                 >
-                  Upgrade to student
+                  {busy && busyLabel?.startsWith("Upgrading") ? (
+                    <DeskLoader label={busyLabel} />
+                  ) : (
+                    "Upgrade to student"
+                  )}
                 </button>
               </li>
             );

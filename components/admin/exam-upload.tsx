@@ -6,6 +6,7 @@ import {
   importQuestionsToExam,
   type ExamActionResult,
 } from "@/app/admin/exams/actions";
+import { DeskLoader, DeskLoaderOverlay } from "@/components/ui/desk-loader";
 import { useToast } from "@/components/ui/toast";
 import type { Exam } from "@/lib/exams/types";
 
@@ -35,6 +36,8 @@ function fileToBase64(file: File): Promise<string> {
 export function ExamUpload({ exams, onOpenedExam, onOpenSamples }: Props) {
   const { success, error } = useToast();
   const [pending, startTransition] = useTransition();
+  const [busyLabel, setBusyLabel] = useState<string | null>(null);
+  const busy = pending || Boolean(busyLabel);
   const [dragOver, setDragOver] = useState(false);
   const [targetExamId, setTargetExamId] = useState<string>("");
   const [examTitle, setExamTitle] = useState("");
@@ -44,14 +47,20 @@ export function ExamUpload({ exams, onOpenedExam, onOpenSamples }: Props) {
 
   function run(
     action: () => Promise<ExamActionResult & { imported?: number }>,
+    label = "Parsing file…",
   ) {
+    setBusyLabel(label);
     startTransition(async () => {
-      const next = await action();
-      if (next.ok) {
-        success(next.message, "Exams");
-        if (next.examId) onOpenedExam(next.examId);
-      } else {
-        error(next.message, "Exams");
+      try {
+        const next = await action();
+        if (next.ok) {
+          success(next.message, "Exams");
+          if (next.examId) onOpenedExam(next.examId);
+        } else {
+          error(next.message, "Exams");
+        }
+      } finally {
+        setBusyLabel(null);
       }
     });
   }
@@ -62,12 +71,17 @@ export function ExamUpload({ exams, onOpenedExam, onOpenSamples }: Props) {
     try {
       const base64 = await fileToBase64(file);
       if (targetExamId) {
-        run(() => importQuestionsToExam(targetExamId, file.name, base64));
+        run(
+          () => importQuestionsToExam(targetExamId, file.name, base64),
+          "Importing into draft…",
+        );
       } else {
-        run(() =>
-          createExamFromQuestionFile(file.name, base64, {
-            title: examTitle.trim() || undefined,
-          }),
+        run(
+          () =>
+            createExamFromQuestionFile(file.name, base64, {
+              title: examTitle.trim() || undefined,
+            }),
+          "Creating draft from file…",
         );
       }
     } catch (e) {
@@ -77,7 +91,11 @@ export function ExamUpload({ exams, onOpenedExam, onOpenSamples }: Props) {
 
   return (
     <div className="space-y-4 sm:space-y-5">
-      <section className="border border-stone bg-mist">
+      <section className="relative border border-stone bg-mist" aria-busy={busy}>
+        <DeskLoaderOverlay
+          active={busy}
+          label={busyLabel ?? "Parsing file…"}
+        />
         <div className="border-b border-stone px-3 py-4 sm:px-5">
           <p className="text-[0.6rem] font-medium uppercase tracking-[0.16em] text-celadon">
             Bring it back
@@ -112,7 +130,7 @@ export function ExamUpload({ exams, onOpenedExam, onOpenSamples }: Props) {
               <input
                 value={examTitle}
                 onChange={(e) => setExamTitle(e.target.value)}
-                disabled={Boolean(targetExamId) || pending}
+                disabled={Boolean(targetExamId) || busy}
                 placeholder="Defaults from file name or JSON title"
                 className="mt-1 w-full border border-stone bg-white/70 px-3 py-2 text-sm outline-none focus:border-pine disabled:opacity-50"
               />
@@ -122,7 +140,7 @@ export function ExamUpload({ exams, onOpenedExam, onOpenSamples }: Props) {
               <select
                 value={targetExamId}
                 onChange={(e) => setTargetExamId(e.target.value)}
-                disabled={pending}
+                disabled={busy}
                 className="mt-1 w-full border border-stone bg-white/70 px-3 py-2 text-sm outline-none focus:border-pine"
               >
                 <option value="">Create new draft from file</option>
@@ -164,20 +182,26 @@ export function ExamUpload({ exams, onOpenedExam, onOpenSamples }: Props) {
               dragOver
                 ? "border-pine bg-pine/5"
                 : "border-stone bg-white/50 hover:border-pine/50"
-            } ${pending ? "pointer-events-none opacity-60" : ""}`}
+            } ${busy ? "pointer-events-none opacity-60" : ""}`}
           >
-            <p className="text-sm font-medium text-pine">
-              {pending ? "Parsing…" : "Drop file or browse"}
-            </p>
-            <p className="mt-1 text-[0.7rem] text-ink/45">
-              .xlsx · .csv · .json · .txt
-            </p>
+            {busy ? (
+              <DeskLoader label={busyLabel ?? "Parsing…"} />
+            ) : (
+              <>
+                <p className="text-sm font-medium text-pine">
+                  Drop file or browse
+                </p>
+                <p className="mt-1 text-[0.7rem] text-ink/45">
+                  .xlsx · .csv · .json · .txt
+                </p>
+              </>
+            )}
             <input
               ref={inputRef}
               type="file"
               accept=".csv,.xlsx,.xls,.json,.txt"
               className="sr-only"
-              disabled={pending}
+              disabled={busy}
               onChange={(e) => {
                 void handleFiles(e.target.files);
                 e.target.value = "";

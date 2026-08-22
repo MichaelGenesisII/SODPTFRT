@@ -34,6 +34,7 @@ export default async function StudentPortalPage() {
 
   let enrolment: Awaited<ReturnType<typeof getStudentEnrolment>> = null;
   let tuitionFeeStatus: FeePaymentStatus | null = null;
+  let tuitionPaidGbp = 0;
   let passportUnlocked = false;
   let loadError: string | null = null;
 
@@ -46,9 +47,14 @@ export default async function StudentPortalPage() {
         const fee = await getFeePayment(supabase, profile.id, "tuition");
         passportUnlocked = hasTuitionInstallmentPaid(fee);
         tuitionFeeStatus = fee?.status ?? null;
+        tuitionPaidGbp = fee?.amount_paid_gbp ?? 0;
       } catch (feeError) {
         console.error("[student/home/fees]", feeError);
         tuitionFeeStatus = enrolment.payment_status;
+        // Keep unlock consistent with enrolment when fee rows cannot load.
+        if (enrolment.payment_status === "paid") {
+          passportUnlocked = true;
+        }
       }
     }
   } catch (error) {
@@ -60,10 +66,15 @@ export default async function StudentPortalPage() {
   }
 
   let notices: Awaited<ReturnType<typeof fetchStudentAnnouncements>> = [];
+  let noticesError: string | null = null;
   try {
     notices = await fetchStudentAnnouncements();
   } catch (error) {
     console.error("[student/home/notices]", error);
+    noticesError = publicActionMessage(
+      error,
+      "Notices are temporarily unavailable.",
+    );
   }
 
   return (
@@ -71,8 +82,10 @@ export default async function StudentPortalPage() {
       profile={profile}
       enrolment={enrolment}
       tuitionFeeStatus={tuitionFeeStatus}
+      tuitionPaidGbp={tuitionPaidGbp}
       passportUnlocked={passportUnlocked}
       notices={notices}
+      noticesError={noticesError}
       loadError={loadError}
     />
   );

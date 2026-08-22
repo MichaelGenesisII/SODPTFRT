@@ -14,7 +14,7 @@ import { signStudentPhotoUrl } from "@/lib/student/photos";
 
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 
-import { deskPageFromSearchParams } from "@/lib/ui/desk-pagination";
+import { deskPageFromSearchParams } from "@/lib/ui/desk-page";
 
 import type { GalleryScope } from "@/lib/gallery/constants";
 

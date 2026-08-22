@@ -14,8 +14,10 @@ import { isAddressLookupReady } from "@/lib/address/lookup";
 import {
   ATTENDANCE_MODES,
   COUNTRIES,
+  ENROL_PARISH_OTHER_VALUE,
   ENROL_STEPS,
   initialEnrolFormData,
+  isEnrolParishOther,
   MARITAL_STATUSES,
   NATIONALITIES,
   OCCUPATIONS,
@@ -37,6 +39,7 @@ import {
   TextArea,
   TextInput,
 } from "@/components/enrol/fields";
+import { DeskLoader, DeskLoaderOverlay } from "@/components/ui/desk-loader";
 import { useToast } from "@/components/ui/toast";
 import { publicActionMessage } from "@/lib/safe-action-message";
 
@@ -160,15 +163,20 @@ export function EnrolWizard({
     [data.attendanceMode],
   );
 
-  const parishLabel = useMemo(
-    () => parishes.find((p) => p.id === data.parishId)?.name ?? "",
-    [parishes, data.parishId],
-  );
+  const parishLabel = useMemo(() => {
+    if (isEnrolParishOther(data.parishId)) {
+      return data.parishOther.trim() || "Not listed (manual)";
+    }
+    return parishes.find((p) => p.id === data.parishId)?.name ?? "";
+  }, [parishes, data.parishId, data.parishOther]);
 
   const batchLabel = useMemo(() => {
+    if (isEnrolParishOther(data.parishId)) {
+      return "To be assigned";
+    }
     const batch = batches.find((b) => b.id === data.batchId);
     return batch ? formatBatchLabel(batch) : "";
-  }, [batches, data.batchId]);
+  }, [batches, data.batchId, data.parishId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -182,8 +190,9 @@ export function EnrolWizard({
 
   useEffect(() => {
     let cancelled = false;
-    if (!data.parishId) {
+    if (!data.parishId || isEnrolParishOther(data.parishId)) {
       setBatches([]);
+      setBatchesLoading(false);
       return;
     }
     setBatchesLoading(true);
@@ -300,7 +309,11 @@ export function EnrolWizard({
   }
 
   return (
-    <div className="border border-stone bg-mist">
+    <div className="relative border border-stone bg-mist" aria-busy={submitting}>
+      <DeskLoaderOverlay
+        active={submitting}
+        label="Submitting your application…"
+      />
       <div className="border-b border-stone px-5 py-6 sm:px-8 sm:py-7">
         <StepProgress currentIndex={stepIndex} />
         <h2
@@ -827,7 +840,7 @@ export function EnrolWizard({
               <FieldLabel
                 htmlFor="parishId"
                 required
-                hint="Choose the parish running your School of Disciples course."
+                hint="Choose the parish running your School of Disciples course, or add yours if it is not listed."
               >
                 Parish / church
               </FieldLabel>
@@ -839,52 +852,87 @@ export function EnrolWizard({
                     ...prev,
                     parishId: value,
                     batchId: "",
+                    parishOther: isEnrolParishOther(value)
+                      ? prev.parishOther
+                      : "",
                   }));
                 }}
                 placeholder={
                   parishes.length === 0
-                    ? "No parishes open yet"
+                    ? "No listed parishes yet — add yours below"
                     : "Select parish"
                 }
-                options={parishes.map((p) => ({
-                  value: p.id,
-                  label: p.region ? `${p.name} — ${p.region}` : p.name,
-                }))}
+                options={[
+                  ...parishes.map((p) => ({
+                    value: p.id,
+                    label: p.region ? `${p.name} — ${p.region}` : p.name,
+                  })),
+                  {
+                    value: ENROL_PARISH_OTHER_VALUE,
+                    label: "My parish / church isn’t listed",
+                  },
+                ]}
                 error={errors.parishId}
               />
             </div>
-            <div>
-              <FieldLabel
-                htmlFor="batchId"
-                required
-                hint="Only batches currently open for enrolment are listed."
-              >
-                Batch
-              </FieldLabel>
-              <SelectInput
-                id="batchId"
-                value={data.batchId}
-                onChange={(value) => updateField(setData, "batchId", value)}
-                placeholder={
-                  !data.parishId
-                    ? "Select a parish first"
-                    : batchesLoading
-                      ? "Loading batches…"
-                      : batches.length === 0
-                        ? "No open batches for this parish"
-                        : "Select batch"
-                }
-                options={batches.map((b) => ({
-                  value: b.id,
-                  label: formatBatchLabel(b),
-                }))}
-                error={errors.batchId}
-              />
-            </div>
+            <Reveal show={isEnrolParishOther(data.parishId)}>
+              <div>
+                <FieldLabel
+                  htmlFor="parishOther"
+                  required
+                  hint="We will place you once the national desk confirms your parish."
+                >
+                  Parish or church name
+                </FieldLabel>
+                <TextInput
+                  id="parishOther"
+                  value={data.parishOther}
+                  onChange={(value) =>
+                    updateField(setData, "parishOther", value)
+                  }
+                  placeholder="e.g. Redeemed Christian Church — Manchester"
+                  error={errors.parishOther}
+                />
+              </div>
+            </Reveal>
+            {!isEnrolParishOther(data.parishId) ? (
+              <div>
+                <FieldLabel
+                  htmlFor="batchId"
+                  required
+                  hint="Only batches currently open for enrolment are listed."
+                >
+                  Batch
+                </FieldLabel>
+                <SelectInput
+                  id="batchId"
+                  value={data.batchId}
+                  onChange={(value) => updateField(setData, "batchId", value)}
+                  placeholder={
+                    !data.parishId
+                      ? "Select a parish first"
+                      : batchesLoading
+                        ? "Loading batches…"
+                        : batches.length === 0
+                          ? "No open batches for this parish"
+                          : "Select batch"
+                  }
+                  options={batches.map((b) => ({
+                    value: b.id,
+                    label: formatBatchLabel(b),
+                  }))}
+                  error={errors.batchId}
+                />
+              </div>
+            ) : null}
             <div>
               <FieldLabel
                 htmlFor="localChurch"
-                hint="Optional — assembly name or address if different from the parish."
+                hint={
+                  isEnrolParishOther(data.parishId)
+                    ? "Optional — assembly name or address if helpful."
+                    : "Optional — assembly name or address if different from the parish."
+                }
               >
                 Local assembly detail
               </FieldLabel>
@@ -983,7 +1031,17 @@ export function EnrolWizard({
               />
               <ReviewRow label="Parish" value={parishLabel} />
               <ReviewRow label="Batch" value={batchLabel} />
-              <ReviewRow label="Assembly detail" value={data.localChurch} />
+              <ReviewRow
+                label="Assembly detail"
+                value={
+                  isEnrolParishOther(data.parishId)
+                    ? [data.parishOther, data.localChurch]
+                        .map((v) => v.trim())
+                        .filter(Boolean)
+                        .join(" — ")
+                    : data.localChurch
+                }
+              />
               <ReviewRow label="Church leader" value={data.churchLeader} />
             </dl>
           </div>
@@ -1059,13 +1117,17 @@ export function EnrolWizard({
           type="button"
           onClick={goNext}
           disabled={submitting}
-          className="inline-flex items-center justify-center bg-pine px-6 py-3 text-sm font-medium tracking-wide text-mist transition-colors duration-300 hover:bg-celadon disabled:opacity-60"
+          className="inline-flex min-h-[2.75rem] min-w-[9.5rem] items-center justify-center bg-pine px-6 py-3 text-sm font-medium tracking-wide text-mist transition-colors duration-300 hover:bg-celadon disabled:opacity-60"
         >
-          {step.id === "declaration"
-            ? submitting
-              ? "Submitting…"
-              : "Submit application"
-            : "Continue"}
+          {step.id === "declaration" ? (
+            submitting ? (
+              <DeskLoader label="Submitting…" tone="mist" />
+            ) : (
+              "Submit application"
+            )
+          ) : (
+            "Continue"
+          )}
         </button>
       </div>
     </div>

@@ -2,6 +2,7 @@
 
 import {
   CAMPAIGN_BATCH_SIZE,
+  CAMPAIGN_MAX_ATTACHMENTS,
   type CampaignRecipient,
 } from "@/lib/email/campaigns";
 import {
@@ -14,6 +15,7 @@ import {
 } from "@/lib/email/unsubscribe";
 import {
   loadCampaignAttachmentPayload,
+  purgeDeskAttachments,
 } from "@/app/admin/desk-attachments/actions";
 import { isNationalAdmin, requireSessionAdmin } from "@/lib/admin/auth";
 import { SOD_SITE } from "@/lib/site-nav";
@@ -205,9 +207,19 @@ export async function sendStudentCampaign(input: {
     }
 
     const portalUrl = `${portalBaseUrl()}/student`;
-    const attachments = await loadCampaignAttachmentPayload(
-      input.attachmentIds ?? [],
-    );
+    const attachmentIds = [
+      ...new Set(
+        (input.attachmentIds ?? []).map((id) => id.trim()).filter(Boolean),
+      ),
+    ];
+    if (attachmentIds.length > CAMPAIGN_MAX_ATTACHMENTS) {
+      return {
+        ok: false,
+        message: `Attach at most ${CAMPAIGN_MAX_ATTACHMENTS} files per campaign.`,
+      };
+    }
+
+    const attachments = await loadCampaignAttachmentPayload(attachmentIds);
     let sent = 0;
     let failed = 0;
     let remaining: number | undefined;
@@ -250,6 +262,15 @@ export async function sendStudentCampaign(input: {
       if (!result.ok && (result.failed ?? 0) === chunk.length) {
         failureNotes.push(result.message);
         break;
+      }
+    }
+
+    // Campaign files are never linked to notices — free storage after a send.
+    if (sent > 0 && attachmentIds.length) {
+      try {
+        await purgeDeskAttachments(attachmentIds);
+      } catch (purgeError) {
+        console.error("[campaigns attachment purge]", purgeError);
       }
     }
 

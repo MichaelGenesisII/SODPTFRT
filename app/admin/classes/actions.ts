@@ -36,6 +36,7 @@ import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { createServiceSupabaseClient } from "@/lib/supabase/service";
 import {
   createZoomMeeting,
+  endAllLiveHostMeetings,
   fetchMeetingParticipants,
   zoomConfigured,
 } from "@/lib/zoom/client";
@@ -144,7 +145,7 @@ async function requireAccessibleClass(classId: string): Promise<
   if (!data) {
     return {
       ok: false,
-      message: "Class not found or outside your parish scope.",
+      message: "Class not found. It may have been removed.",
     };
   }
 
@@ -157,10 +158,17 @@ async function requireAccessibleClass(classId: string): Promise<
         message: "Parish desk is not assigned to a parish.",
       };
     }
-    if (!klass.parish_id || klass.parish_id !== actor.parish_id) {
+    // National / cohort-wide classes (no parish) are national-desk only.
+    if (!klass.parish_id) {
       return {
         ok: false,
-        message: "Class not found or outside your parish scope.",
+        message: "This class is managed by the national desk.",
+      };
+    }
+    if (klass.parish_id !== actor.parish_id) {
+      return {
+        ok: false,
+        message: "This class is outside your parish scope.",
       };
     }
   }
@@ -463,6 +471,65 @@ export async function getInPortalHostSession(
   }
 }
 
+/**
+ * End live Zoom meetings on the configured host account so in-portal Host
+ * can start cleanly (clears “Already has other meetings in progress”).
+ */
+export async function endActiveZoomMeetings(input?: {
+  classId?: string;
+}): Promise<ClassActionResult & { endedCount?: number }> {
+  try {
+    await requireSessionAdmin();
+    if (!zoomConfigured()) {
+      return {
+        ok: false,
+        message:
+          "Zoom API is not configured. Set App A credentials before ending meetings.",
+      };
+    }
+
+    let alsoMeetingId: string | null = null;
+    if (input?.classId) {
+      const access = await requireAccessibleClass(input.classId);
+      if (!access.ok) return { ok: false, message: access.message };
+      alsoMeetingId = access.klass.zoom_meeting_id;
+    }
+
+    const { endedIds, topics } = await endAllLiveHostMeetings({
+      alsoMeetingId,
+    });
+
+    revalidatePath("/admin/classes");
+
+    if (!endedIds.length) {
+      return {
+        ok: true,
+        message: "No live Zoom meetings were found on the host account.",
+        endedCount: 0,
+      };
+    }
+
+    const sample = topics.slice(0, 3).join(", ");
+    return {
+      ok: true,
+      message:
+        endedIds.length === 1
+          ? `Ended live meeting${sample ? ` (${sample})` : ""}.`
+          : `Ended ${endedIds.length} live meetings${sample ? ` (e.g. ${sample})` : ""}.`,
+      endedCount: endedIds.length,
+    };
+  } catch (error) {
+    console.error("[classes/end-live-zoom]", error);
+    return {
+      ok: false,
+      message: publicActionMessage(
+        error,
+        "Could not end live Zoom meetings. On App A add meeting:update:status:admin and meeting:read:list_meetings:admin, Activate, then retry.",
+      ),
+    };
+  }
+}
+
 export async function listAdminClasses(): Promise<ZoomClass[]> {
   const actor = await requireSessionAdmin();
   // Service role: desk needs attendance_code / zoom_start_url (revoked from JWT).
@@ -528,7 +595,9 @@ export async function getClassAttendance(
 ): Promise<ZoomClassAttendance[]> {
   const access = await requireAccessibleClass(classId);
   if (!access.ok) {
-    throw new Error(access.message);
+    // Soft-fail: UI often refetches after delete / filter change.
+    console.error("[classes/attendance]", access.message, classId);
+    return [];
   }
 
   const { supabase } = access;
@@ -541,7 +610,7 @@ export async function getClassAttendance(
 
   if (error) {
     console.error("classes:", error.message);
-    throw new Error(publicActionMessage(error, "Could not load classes."));
+    return [];
   }
 
   const userIds = [
@@ -1173,7 +1242,6 @@ export async function syncZoomClassAttendance(
     const email = participant.user_email.trim().toLowerCase();
     const userId = emailToUser.get(email) ?? null;
     const present = isPresentByDuration(participant.duration, required);
-    if (present) presentCount += 1;
     if (!userId) unmatched += 1;
 
     if (userId) {
@@ -1195,6 +1263,9 @@ export async function syncZoomClassAttendance(
         synced += 1;
         continue;
       }
+
+      // Only count present for matched, in-audience students (Records credit).
+      if (present) presentCount += 1;
 
       const saved = await upsertClassAttendanceRow({
         classId,

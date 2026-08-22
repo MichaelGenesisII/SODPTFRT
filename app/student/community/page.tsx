@@ -30,7 +30,7 @@ export default async function StudentCommunityPage() {
 
   if (loadError) {
     return (
-      <div className="mx-auto max-w-2xl">
+      <div className="mx-auto max-w-4xl">
         <section className="mb-6">
           <h1 className="font-display text-3xl text-pine">Community</h1>
         </section>

@@ -17,6 +17,7 @@ import {
   upsertAttendanceSession,
 } from "@/app/admin/records/actions";
 import { StudentCertificateDesk } from "@/components/admin/student-certificate-desk";
+import { DeskLoader, DeskLoaderOverlay } from "@/components/ui/desk-loader";
 import { useToast } from "@/components/ui/toast";
 import { isNationalAdmin, type AdminProfile } from "@/lib/admin/profile";
 import type { RecordBundle } from "@/lib/exams/records";
@@ -46,6 +47,8 @@ export function RecordsManager({
   const router = useRouter();
   const { success, error } = useToast();
   const [pending, startTransition] = useTransition();
+  const [busyLabel, setBusyLabel] = useState<string | null>(null);
+  const busy = pending || Boolean(busyLabel);
   const national = isNationalAdmin(profile);
   const [parishId, setParishId] = useState(
     national ? "" : profile.parish_id ?? "",
@@ -137,12 +140,29 @@ export function RecordsManager({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedUserId]);
 
-  function refreshBundle() {
-    if (!bundle) return;
+  function run(
+    action: () => Promise<{ ok: boolean; message: string }>,
+    label: string,
+    options?: { refresh?: boolean },
+  ) {
+    const recordId = bundle?.record.id;
+    setBusyLabel(label);
     startTransition(async () => {
-      const next = await getRecordBundle(bundle.record.id);
-      setBundle(next);
-      router.refresh();
+      try {
+        const next = await action();
+        if (next.ok) {
+          success(next.message, "Records");
+          if (options?.refresh !== false && recordId) {
+            const updated = await getRecordBundle(recordId);
+            setBundle(updated);
+            router.refresh();
+          }
+        } else {
+          error(next.message, "Records");
+        }
+      } finally {
+        setBusyLabel(null);
+      }
     });
   }
 
@@ -289,16 +309,27 @@ export function RecordsManager({
         </aside>
 
         <section
-          className={`${workspaceClass} min-h-[16rem] border border-stone bg-mist sm:min-h-[22rem]`}
+          className={`${workspaceClass} relative min-h-[16rem] border border-stone bg-mist sm:min-h-[22rem]`}
+          aria-busy={busy}
         >
+          <DeskLoaderOverlay
+            active={Boolean(busyLabel)}
+            label={busyLabel ?? "Working…"}
+          />
           {!bundle ? (
             <div className="flex min-h-[16rem] items-center justify-center px-5 text-center text-sm text-ink/50 sm:min-h-[22rem]">
-              {pending ? "Loading scorecard…" : "Select a student"}
+              {pending ? (
+                <DeskLoader label="Loading scorecard…" size="md" />
+              ) : (
+                "Select a student"
+              )}
             </div>
           ) : (
             <Scorecard
               bundle={bundle}
-              pending={pending}
+              pending={busy}
+              busyLabel={busyLabel}
+              onBusyLabel={setBusyLabel}
               onBack={() => setMobileSurface("directory")}
               onEmailScorecard={() => {
                 const email = bundle.record.student_email?.trim();
@@ -313,74 +344,53 @@ export function RecordsManager({
                 ) {
                   return;
                 }
-                startTransition(async () => {
-                  const next = await emailStudentScorecard(bundle.record.id);
-                  if (next.ok) success(next.message, "Records");
-                  else error(next.message, "Records");
-                });
+                run(
+                  () => emailStudentScorecard(bundle.record.id),
+                  "Emailing scorecard…",
+                  { refresh: false },
+                );
               }}
               onSaveDates={(dates) => {
-                startTransition(async () => {
-                  const next = await updateScorecardDates({
-                    recordId: bundle.record.id,
-                    ...dates,
-                  });
-                  if (next.ok) {
-                    success(next.message, "Records");
-                    refreshBundle();
-                  } else error(next.message, "Records");
-                });
+                run(
+                  () =>
+                    updateScorecardDates({
+                      recordId: bundle.record.id,
+                      ...dates,
+                    }),
+                  "Saving dates…",
+                );
               }}
               onAttendance={(input) => {
-                startTransition(async () => {
-                  const next = await upsertAttendanceSession({
-                    recordId: bundle.record.id,
-                    ...input,
-                  });
-                  if (next.ok) {
-                    success(next.message, "Records");
-                    refreshBundle();
-                  } else error(next.message, "Records");
-                });
+                run(
+                  () =>
+                    upsertAttendanceSession({
+                      recordId: bundle.record.id,
+                      ...input,
+                    }),
+                  "Updating attendance…",
+                );
               }}
               onDeleteSession={(id) => {
-                startTransition(async () => {
-                  const next = await deleteAttendanceSession(id);
-                  if (next.ok) {
-                    success(next.message, "Records");
-                    refreshBundle();
-                  } else error(next.message, "Records");
-                });
+                run(() => deleteAttendanceSession(id), "Removing session…");
               }}
               onAddEntry={(input) => {
-                startTransition(async () => {
-                  const next = await addManualEntry({
-                    recordId: bundle.record.id,
-                    ...input,
-                  });
-                  if (next.ok) {
-                    success(next.message, "Records");
-                    refreshBundle();
-                  } else error(next.message, "Records");
-                });
+                run(
+                  () =>
+                    addManualEntry({
+                      recordId: bundle.record.id,
+                      ...input,
+                    }),
+                  "Adding score…",
+                );
               }}
               onToggleInclude={(id, include) => {
-                startTransition(async () => {
-                  const next = await setEntryInclude(id, include);
-                  if (next.ok) {
-                    success(next.message, "Records");
-                    refreshBundle();
-                  } else error(next.message, "Records");
-                });
+                run(
+                  () => setEntryInclude(id, include),
+                  "Updating score…",
+                );
               }}
               onDeleteEntry={(id) => {
-                startTransition(async () => {
-                  const next = await deleteRecordEntry(id);
-                  if (next.ok) {
-                    success(next.message, "Records");
-                    refreshBundle();
-                  } else error(next.message, "Records");
-                });
+                run(() => deleteRecordEntry(id), "Removing score…");
               }}
             />
           )}
@@ -395,6 +405,8 @@ export function RecordsManager({
 function Scorecard({
   bundle,
   pending,
+  busyLabel,
+  onBusyLabel,
   onBack,
   onEmailScorecard,
   onSaveDates,
@@ -406,6 +418,8 @@ function Scorecard({
 }: {
   bundle: RecordBundle;
   pending: boolean;
+  busyLabel: string | null;
+  onBusyLabel: (label: string | null) => void;
   onBack?: () => void;
   onEmailScorecard: () => void;
   onSaveDates: (input: {
@@ -514,14 +528,18 @@ function Scorecard({
                 type="button"
                 disabled={pending || !bundle.record.student_email}
                 onClick={onEmailScorecard}
-                className="border border-pine/30 bg-white/70 px-3 py-1.5 text-sm font-medium text-pine disabled:opacity-50"
+                className="inline-flex min-h-[2rem] min-w-[8.5rem] items-center justify-center border border-pine/30 bg-white/70 px-3 py-1.5 text-sm font-medium text-pine disabled:opacity-50"
                 title={
                   bundle.record.student_email
                     ? `Email formal scorecard to ${bundle.record.student_email}`
                     : "Student has no email on file"
                 }
               >
-                Email scorecard
+                {pending && busyLabel?.startsWith("Emailing") ? (
+                  <DeskLoader label={busyLabel} />
+                ) : (
+                  "Email scorecard"
+                )}
               </button>
             </div>
           </div>
@@ -560,9 +578,13 @@ function Scorecard({
           <button
             type="submit"
             disabled={pending}
-            className="border border-pine/25 px-3 py-1.5 text-sm text-pine disabled:opacity-60"
+            className="inline-flex min-h-[2rem] min-w-[5.5rem] items-center justify-center border border-pine/25 px-3 py-1.5 text-sm text-pine disabled:opacity-60"
           >
-            Save dates
+            {pending && busyLabel?.startsWith("Saving dates") ? (
+              <DeskLoader label={busyLabel} />
+            ) : (
+              "Save dates"
+            )}
           </button>
           <p className="sm:col-span-3 text-xs text-ink/45">
             These appear on the emailed scorecard. Leave completed blank while
@@ -582,6 +604,8 @@ function Scorecard({
           userId={bundle.record.user_id}
           existingNote={bundle.record.graduation_gate_override_note}
           pending={pending}
+          busyLabel={busyLabel}
+          onBusyLabel={onBusyLabel}
         />
       </header>
 
@@ -621,9 +645,13 @@ function Scorecard({
             <button
               type="submit"
               disabled={pending}
-              className="bg-pine px-3 py-1.5 text-sm text-mist disabled:opacity-60"
+              className="inline-flex min-h-[2rem] min-w-[3.5rem] items-center justify-center bg-pine px-3 py-1.5 text-sm text-mist disabled:opacity-60"
             >
-              Add
+              {pending && busyLabel?.startsWith("Updating attendance") ? (
+                <DeskLoader label="Adding…" tone="mist" />
+              ) : (
+                "Add"
+              )}
             </button>
           </form>
           <ul className="mt-3 max-h-56 divide-y divide-stone overflow-y-auto border-y border-stone">
@@ -647,7 +675,7 @@ function Scorecard({
                         present: !s.present,
                       })
                     }
-                    className={`font-mono text-xs uppercase ${
+                    className={`font-mono text-xs uppercase disabled:opacity-60 ${
                       s.present ? "text-celadon" : "text-ink/35"
                     }`}
                   >
@@ -658,8 +686,9 @@ function Scorecard({
                   </span>
                   <button
                     type="button"
+                    disabled={pending}
                     onClick={() => onDeleteSession(s.id)}
-                    className="text-xs text-red-800"
+                    className="text-xs text-red-800 disabled:opacity-60"
                   >
                     Remove
                   </button>
@@ -705,9 +734,13 @@ function Scorecard({
             <button
               type="submit"
               disabled={pending}
-              className="bg-pine px-3 py-1.5 text-sm text-mist disabled:opacity-60"
+              className="inline-flex min-h-[2rem] min-w-[3.5rem] items-center justify-center bg-pine px-3 py-1.5 text-sm text-mist disabled:opacity-60"
             >
-              Add
+              {pending && busyLabel?.startsWith("Adding score") ? (
+                <DeskLoader label="Adding…" tone="mist" />
+              ) : (
+                "Add"
+              )}
             </button>
           </form>
           <ul className="mt-3 max-h-56 divide-y divide-stone overflow-y-auto border-y border-stone">
@@ -731,6 +764,7 @@ function Scorecard({
                     <input
                       type="checkbox"
                       checked={e.include_in_total}
+                      disabled={pending}
                       onChange={(ev) =>
                         onToggleInclude(e.id, ev.target.checked)
                       }
@@ -740,8 +774,9 @@ function Scorecard({
                   {e.source === "manual" ? (
                     <button
                       type="button"
+                      disabled={pending}
                       onClick={() => onDeleteEntry(e.id)}
-                      className="text-xs text-red-800"
+                      className="text-xs text-red-800 disabled:opacity-60"
                     >
                       Remove
                     </button>
@@ -834,10 +869,14 @@ function GraduationGatePanel({
   userId,
   existingNote,
   pending,
+  busyLabel,
+  onBusyLabel,
 }: {
   userId: string;
   existingNote?: string | null;
   pending: boolean;
+  busyLabel: string | null;
+  onBusyLabel: (label: string | null) => void;
 }) {
   const router = useRouter();
   const { success, error } = useToast();
@@ -869,7 +908,8 @@ function GraduationGatePanel({
           onChange={(event) => setNote(event.target.value)}
           rows={2}
           maxLength={500}
-          className="mt-1 w-full border border-stone bg-mist/40 px-3 py-2 text-sm outline-none focus:border-pine"
+          disabled={pending || saving}
+          className="mt-1 w-full border border-stone bg-mist/40 px-3 py-2 text-sm outline-none focus:border-pine disabled:opacity-60"
           placeholder="Why this student may graduate early"
         />
       </label>
@@ -877,43 +917,61 @@ function GraduationGatePanel({
         <button
           type="button"
           disabled={pending || saving}
-          onClick={() =>
+          onClick={() => {
+            onBusyLabel("Saving override…");
             startSave(async () => {
-              const result = await setGraduationGateOverride({
-                userId,
-                note,
-              });
-              if (result.ok) {
-                success(result.message, "Records");
-                router.refresh();
-              } else {
-                error(result.message, "Records");
+              try {
+                const result = await setGraduationGateOverride({
+                  userId,
+                  note,
+                });
+                if (result.ok) {
+                  success(result.message, "Records");
+                  router.refresh();
+                } else {
+                  error(result.message, "Records");
+                }
+              } finally {
+                onBusyLabel(null);
               }
-            })
-          }
-          className="border border-pine/30 px-3 py-1.5 text-sm font-medium text-pine disabled:opacity-60"
+            });
+          }}
+          className="inline-flex min-h-[2rem] min-w-[7.5rem] items-center justify-center border border-pine/30 px-3 py-1.5 text-sm font-medium text-pine disabled:opacity-60"
         >
-          Save override
+          {saving && busyLabel?.startsWith("Saving override") ? (
+            <DeskLoader label={busyLabel} />
+          ) : (
+            "Save override"
+          )}
         </button>
         {existingNote ? (
           <button
             type="button"
             disabled={pending || saving}
-            onClick={() =>
+            onClick={() => {
+              onBusyLabel("Clearing override…");
               startSave(async () => {
-                const result = await clearGraduationGateOverride(userId);
-                if (result.ok) {
-                  success(result.message, "Records");
-                  setNote("");
-                  router.refresh();
-                } else {
-                  error(result.message, "Records");
+                try {
+                  const result = await clearGraduationGateOverride(userId);
+                  if (result.ok) {
+                    success(result.message, "Records");
+                    setNote("");
+                    router.refresh();
+                  } else {
+                    error(result.message, "Records");
+                  }
+                } finally {
+                  onBusyLabel(null);
                 }
-              })
-            }
-            className="border border-stone px-3 py-1.5 text-sm text-ink/60 disabled:opacity-60"
+              });
+            }}
+            className="inline-flex min-h-[2rem] min-w-[7.5rem] items-center justify-center border border-stone px-3 py-1.5 text-sm text-ink/60 disabled:opacity-60"
           >
-            Clear override
+            {saving && busyLabel?.startsWith("Clearing") ? (
+              <DeskLoader label={busyLabel} />
+            ) : (
+              "Clear override"
+            )}
           </button>
         ) : null}
       </div>

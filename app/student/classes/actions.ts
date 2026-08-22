@@ -408,7 +408,7 @@ export async function getInPortalJoinSession(
   const { data: klass, error } = await service
     .from("zoom_classes")
     .select(
-      "id, title, audience, parish_id, batch_id, status, zoom_meeting_id, zoom_passcode",
+      "id, title, audience, parish_id, batch_id, cohort_id, year, status, zoom_meeting_id, zoom_passcode",
     )
     .eq("id", classId)
     .maybeSingle();

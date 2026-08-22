@@ -2,12 +2,12 @@
 
 import Link from "next/link";
 import { useState, type ReactNode } from "react";
+import { NoticeAttachmentList, NoticeFilesMark } from "@/components/notices/notice-attachments";
 import {
   formatAnnouncementDate,
   isSafeAnnouncementHref,
   type Announcement,
 } from "@/lib/announcements";
-import { formatAttachmentSize } from "@/lib/desk-attachments";
 
 type NoticesTab = "latest" | "earlier";
 
@@ -62,33 +62,12 @@ function NoticeAttachments({
   notice: Announcement;
   tone?: "pine" | "mist" | "parchment";
 }) {
-  if (!notice.attachments?.length) return null;
-
-  const linkClass =
-    tone === "mist"
-      ? "text-mist/85 underline-offset-2 hover:underline"
-      : tone === "parchment"
-        ? "text-[#6b4f2a] underline-offset-2 hover:underline"
-        : "text-pine underline-offset-2 hover:underline";
-
   return (
-    <ul className="mt-3 space-y-1.5">
-      {notice.attachments.map((file) => (
-        <li key={file.id}>
-          <a
-            href={file.url}
-            target="_blank"
-            rel="noopener noreferrer"
-            className={`inline-flex items-center gap-2 text-sm ${linkClass}`}
-          >
-            <span>{file.name}</span>
-            <span className="text-[0.65rem] opacity-70">
-              ({formatAttachmentSize(file.byteSize)})
-            </span>
-          </a>
-        </li>
-      ))}
-    </ul>
+    <NoticeAttachmentList
+      files={notice.attachments}
+      tone={tone}
+      className="mt-3"
+    />
   );
 }
 
@@ -108,7 +87,7 @@ export function StudentNoticesBoard({ notices }: { notices: Announcement[] }) {
   ];
 
   return (
-    <div className="mx-auto w-full max-w-4xl space-y-4 sm:space-y-5">
+    <div className="mx-auto w-full max-w-5xl space-y-4 sm:space-y-5">
       <section className="animate-fade-rise border border-[#c4a574]/30 bg-[#f7f1e6] px-4 py-5 sm:px-6 sm:py-7">
         <p className="text-[0.65rem] font-medium uppercase tracking-[0.18em] text-[#6b4f2a]/75">
           Student board
@@ -188,7 +167,11 @@ export function StudentNoticesBoard({ notices }: { notices: Announcement[] }) {
 
           {tab === "latest" && featured ? (
             <article className="animate-panel-in relative overflow-hidden border border-[#c4a574]/25 bg-pine text-mist">
-              <div className="relative px-4 py-5 sm:px-6 sm:py-8 md:px-8">
+              <NoticeFilesMark
+                count={featured.attachments?.length ?? 0}
+                tone="mist"
+              />
+              <div className="relative px-4 py-5 pr-16 sm:px-6 sm:py-8 sm:pr-20 md:px-8">
                 <div className="flex flex-col gap-1.5 sm:flex-row sm:flex-wrap sm:items-center sm:gap-3">
                   <p className="text-[0.6rem] font-medium uppercase tracking-[0.16em] text-[#c4a574]">
                     Latest update
@@ -234,7 +217,12 @@ export function StudentNoticesBoard({ notices }: { notices: Announcement[] }) {
                     const open = openId === notice.id;
                     const dateLabel = formatAnnouncementDate(notice.publishedAt);
                     return (
-                      <li key={notice.id} className="py-1 first:pt-0 last:pb-0">
+                      <li key={notice.id} className="relative py-1 first:pt-0 last:pb-0">
+                        <NoticeFilesMark
+                          count={notice.attachments?.length ?? 0}
+                          tone="parchment"
+                          className="top-2"
+                        />
                         <button
                           type="button"
                           onClick={() =>
@@ -243,7 +231,7 @@ export function StudentNoticesBoard({ notices }: { notices: Announcement[] }) {
                             )
                           }
                           aria-expanded={open}
-                          className="flex w-full items-start gap-3 py-3.5 text-left sm:gap-4"
+              className="flex w-full items-start gap-3 py-3.5 pr-16 text-left sm:gap-4 sm:pr-20"
                         >
                           <span className="mt-0.5 hidden w-8 shrink-0 font-display text-xl tabular-nums text-[#c4a574] sm:block">
                             {String(index + 2).padStart(2, "0")}

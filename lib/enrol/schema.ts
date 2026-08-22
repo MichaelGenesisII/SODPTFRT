@@ -160,9 +160,14 @@ export type EnrolFormData = {
   schoolsAttended: string;
   occupations: string[];
   occupationOther: string;
-  /** Organisational parish (required) */
+  /**
+   * Organisational parish id, or `ENROL_PARISH_OTHER_VALUE` when the visitor
+   * types a parish/church that is not in the list.
+   */
   parishId: string;
-  /** Open enrolment batch for that parish (required) */
+  /** Free-text parish/church when `parishId` is the other sentinel. */
+  parishOther: string;
+  /** Open enrolment batch for that parish (required unless parish is other). */
   batchId: string;
   /** Optional assembly / location detail */
   localChurch: string;
@@ -170,6 +175,13 @@ export type EnrolFormData = {
   churchActivities: string;
   declarationAccepted: boolean;
 };
+
+/** Sentinel parish select value — stores free-text in `parishOther` / `local_church`. */
+export const ENROL_PARISH_OTHER_VALUE = "__other__";
+
+export function isEnrolParishOther(parishId: string): boolean {
+  return parishId.trim() === ENROL_PARISH_OTHER_VALUE;
+}
 
 export const initialEnrolFormData: EnrolFormData = {
   attendanceMode: "",
@@ -202,6 +214,7 @@ export const initialEnrolFormData: EnrolFormData = {
   occupations: [],
   occupationOther: "",
   parishId: "",
+  parishOther: "",
   batchId: "",
   localChurch: "",
   churchLeader: "",
@@ -225,6 +238,23 @@ function validateAddressLines(
   if (!data.country) errors.country = "Country is required.";
   else if (!(COUNTRIES as readonly string[]).includes(data.country))
     errors.country = "Please choose a valid country.";
+}
+
+function rejectFutureDate(
+  value: string,
+  field: keyof EnrolFormData,
+  errors: Partial<Record<keyof EnrolFormData, string>>,
+) {
+  const trimmed = value.trim();
+  if (!trimmed) return;
+  const date = new Date(`${trimmed}T00:00:00`);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  if (Number.isNaN(date.getTime())) {
+    errors[field] = "Enter a valid date.";
+  } else if (date > today) {
+    errors[field] = "Date cannot be in the future.";
+  }
 }
 
 export function validateStep(
@@ -328,6 +358,7 @@ export function validateStep(
     else if (data.bornAgain === "Yes") {
       if (!data.bornAgainDate.trim())
         errors.bornAgainDate = "Please add the date.";
+      else rejectFutureDate(data.bornAgainDate, "bornAgainDate", errors);
       if (!data.bornAgainWhere.trim())
         errors.bornAgainWhere = "Please add where this happened.";
     }
@@ -338,6 +369,7 @@ export function validateStep(
     else if (data.baptisedHolySpirit === "Yes") {
       if (!data.holySpiritDate.trim())
         errors.holySpiritDate = "Please add the date.";
+      else rejectFutureDate(data.holySpiritDate, "holySpiritDate", errors);
       if (!data.holySpiritWhere.trim())
         errors.holySpiritWhere = "Please add where this happened.";
     }
@@ -348,6 +380,7 @@ export function validateStep(
     else if (data.baptisedWater === "Yes") {
       if (!data.waterBaptismDate.trim())
         errors.waterBaptismDate = "Please add the date.";
+      else rejectFutureDate(data.waterBaptismDate, "waterBaptismDate", errors);
       if (!data.waterBaptismWhere.trim())
         errors.waterBaptismWhere = "Please add where this happened.";
     }
@@ -376,8 +409,15 @@ export function validateStep(
       errors.occupations = "Please choose valid occupations.";
     if (data.occupations.includes("Other") && !data.occupationOther.trim())
       errors.occupationOther = "Please describe your occupation.";
-    if (!data.parishId) errors.parishId = "Please select your parish.";
-    if (!data.batchId) errors.batchId = "Please select an open batch.";
+    if (!data.parishId) {
+      errors.parishId = "Please select your parish, or add it manually.";
+    } else if (isEnrolParishOther(data.parishId)) {
+      if (!data.parishOther.trim()) {
+        errors.parishOther = "Please enter your parish or church name.";
+      }
+    } else if (!data.batchId) {
+      errors.batchId = "Please select an open batch.";
+    }
     if (!data.churchLeader.trim())
       errors.churchLeader = "Church leader name is required.";
   }
