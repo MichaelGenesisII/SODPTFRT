@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useState, type FormEvent } from "react";
 import { requestAdminPasswordReset } from "@/app/login/admin/actions";
 import { requestEnrolmentPasswordReset } from "@/app/enrol/actions";
+import { DeskLoader, DeskLoaderOverlay } from "@/components/ui/desk-loader";
 import { useToast } from "@/components/ui/toast";
 import {
   publicActionMessage,
@@ -273,8 +274,16 @@ export function LoginPanel({ role }: LoginPanelProps) {
     }
   }
 
+  const busy = status === "loading" || status === "forgot";
+  const busyLabel =
+    status === "forgot" ? "Sending reset email…" : "Signing in…";
+
   return (
-    <div className="flex flex-1 flex-col lg:grid lg:min-h-[min(70svh,44rem)] lg:grid-cols-2">
+    <div
+      className="relative flex flex-1 flex-col lg:grid lg:min-h-[min(70svh,44rem)] lg:grid-cols-2"
+      aria-busy={busy}
+    >
+      <DeskLoaderOverlay active={busy} label={busyLabel} />
       <aside className="grain relative isolate hidden overflow-hidden border-r border-stone bg-mist px-10 py-12 text-ink lg:flex lg:flex-col lg:justify-center lg:px-14">
         <div
           className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_top_right,_rgba(95,143,122,0.22),_transparent_55%),radial-gradient(ellipse_at_bottom_left,_rgba(20,53,44,0.08),_transparent_50%)]"
@@ -358,15 +367,16 @@ export function LoginPanel({ role }: LoginPanelProps) {
                   <button
                     type="button"
                     onClick={onForgotPassword}
-                    disabled={status !== "idle"}
+                    disabled={busy}
                     className="text-xs font-medium tracking-wide text-pine underline decoration-pine/30 underline-offset-4 disabled:opacity-50"
                   >
-                    {status === "forgot" ? "Sending…" : "Forgot password?"}
+                    Forgot password?
                   </button>
                   <button
                     type="button"
                     onClick={() => setShowPassword((value) => !value)}
-                    className="text-xs font-medium tracking-wide text-pine underline decoration-pine/30 underline-offset-4"
+                    disabled={busy}
+                    className="text-xs font-medium tracking-wide text-pine underline decoration-pine/30 underline-offset-4 disabled:opacity-50"
                   >
                     {showPassword ? "Hide" : "Show"}
                   </button>
@@ -396,10 +406,14 @@ export function LoginPanel({ role }: LoginPanelProps) {
 
             <button
               type="submit"
-              disabled={status === "loading"}
-              className="inline-flex w-full items-center justify-center bg-pine px-6 py-3.5 text-[0.95rem] font-medium tracking-wide text-mist transition-colors duration-300 hover:bg-celadon disabled:opacity-60"
+              disabled={busy}
+              className="inline-flex w-full min-h-[3rem] items-center justify-center bg-pine px-6 py-3.5 text-[0.95rem] font-medium tracking-wide text-mist transition-colors duration-300 hover:bg-celadon disabled:opacity-60"
             >
-              {status === "loading" ? "Signing in…" : content.submit}
+              {status === "loading" ? (
+                <DeskLoader label="Signing in…" tone="mist" />
+              ) : (
+                content.submit
+              )}
             </button>
           </form>
 

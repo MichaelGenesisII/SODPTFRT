@@ -2,6 +2,7 @@
 
 import { useEffect, useId, useRef, useState, useTransition } from "react";
 import { FieldError, FieldLabel } from "@/components/enrol/fields";
+import { DeskLoaderOverlay } from "@/components/ui/desk-loader";
 import {
   resolveAddressPlace,
   searchAddressSuggestions,
@@ -55,7 +56,6 @@ export function AddressSearchField({
   const [resolvePending, startResolve] = useTransition();
 
   const confirmed = Boolean(placeId);
-  const pending = searchPending || resolvePending;
 
   useEffect(() => {
     if (confirmed) return;
@@ -136,7 +136,11 @@ export function AddressSearchField({
   }
 
   return (
-    <div className="relative">
+    <div className="relative" aria-busy={resolvePending}>
+      <DeskLoaderOverlay
+        active={resolvePending}
+        label="Confirming address…"
+      />
       <FieldLabel
         htmlFor="address-search"
         required
@@ -155,6 +159,7 @@ export function AddressSearchField({
         aria-autocomplete="list"
         aria-invalid={Boolean(error)}
         autoComplete="off"
+        disabled={resolvePending}
         placeholder="Search street, building, or postcode"
         onChange={(event) => setQuery(event.target.value)}
         onFocus={() => {
@@ -163,13 +168,13 @@ export function AddressSearchField({
         onBlur={() => {
           window.setTimeout(() => setOpen(false), 150);
         }}
-        className={`w-full border bg-mist/60 px-4 py-3 text-[0.95rem] text-ink outline-none transition-[border-color,background-color] duration-300 placeholder:text-ink/35 focus:bg-mist ${
+        className={`w-full border bg-mist/60 px-4 py-3 text-[0.95rem] text-ink outline-none transition-[border-color,background-color] duration-300 placeholder:text-ink/35 focus:bg-mist disabled:opacity-60 ${
           error
             ? "border-red-700/50 focus:border-red-700"
             : "border-stone focus:border-pine"
         }`}
       />
-      {pending ? (
+      {searchPending ? (
         <p className="mt-2 text-sm text-ink/50">Searching…</p>
       ) : message ? (
         <p className="mt-2 text-sm text-ink/50">{message}</p>
