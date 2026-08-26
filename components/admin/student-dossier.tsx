@@ -816,7 +816,8 @@ function ManagePane({
             </h3>
             <p className="mt-2 text-sm leading-relaxed text-ink/60">
               Closed or retired batches stay available for late placement.
-              Previous scorecards are kept when you move cohort or batch.
+              Previous scorecards are kept when you move year (batch) or Saturday
+              cohort. Students may only switch Saturday temporarily themselves.
             </p>
             <div className="mt-4 flex flex-col gap-3">
               {national ? (

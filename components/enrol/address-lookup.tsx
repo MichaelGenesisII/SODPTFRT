@@ -3,6 +3,7 @@
 import { useEffect, useId, useRef, useState, useTransition } from "react";
 import { FieldError, FieldLabel } from "@/components/enrol/fields";
 import { DeskLoaderOverlay } from "@/components/ui/desk-loader";
+import { enrolFieldDomId } from "@/lib/enrol/schema";
 import {
   resolveAddressPlace,
   searchAddressSuggestions,
@@ -22,10 +23,19 @@ type AddressFields = {
 type Props = {
   placeId: string;
   formatted: AddressFields;
+  houseNumber: string;
+  onHouseNumberChange: (value: string) => void;
   onConfirm: (address: AddressSuggestion) => void;
   onClear: () => void;
   error?: string;
 };
+
+/** Loose UK postcode shape — enough to reveal house number early. */
+function looksLikeUkPostcode(value: string): boolean {
+  const compact = value.trim().replace(/\s+/g, " ").toUpperCase();
+  if (compact.length < 5) return false;
+  return /^[A-Z]{1,2}\d[A-Z\d]?\s*\d?[A-Z]{0,2}$/.test(compact);
+}
 
 function formatConfirmedAddress(fields: AddressFields): string[] {
   const lines: string[] = [];
@@ -37,9 +47,40 @@ function formatConfirmedAddress(fields: AddressFields): string[] {
   return lines;
 }
 
+function HouseNumberField({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  const id = enrolFieldDomId("houseNumber");
+  return (
+    <div className="mt-4">
+      <FieldLabel
+        htmlFor={id}
+        hint="Optional — flat, unit, or house number if it is not already in the address."
+      >
+        House / flat number
+      </FieldLabel>
+      <input
+        id={id}
+        type="text"
+        value={value}
+        autoComplete="address-line1"
+        onChange={(event) => onChange(event.target.value)}
+        placeholder="e.g. 12, Flat 3, or Unit B"
+        className="w-full border border-stone bg-mist/60 px-4 py-3 text-[0.95rem] text-ink outline-none transition-[border-color,background-color] duration-300 placeholder:text-ink/35 focus:border-pine focus:bg-mist"
+      />
+    </div>
+  );
+}
+
 export function AddressSearchField({
   placeId,
   formatted,
+  houseNumber,
+  onHouseNumberChange,
   onConfirm,
   onClear,
   error,
@@ -56,6 +97,7 @@ export function AddressSearchField({
   const [resolvePending, startResolve] = useTransition();
 
   const confirmed = Boolean(placeId);
+  const showHouseNumber = confirmed || looksLikeUkPostcode(query);
 
   useEffect(() => {
     if (confirmed) return;
@@ -108,12 +150,15 @@ export function AddressSearchField({
     const lines = formatConfirmedAddress(formatted);
     return (
       <div>
-        <FieldLabel htmlFor="address-search" required>
+        <FieldLabel htmlFor={enrolFieldDomId("addressPlaceId")} required>
           Your address
         </FieldLabel>
         <div className="border border-pine/25 bg-mist/50 px-4 py-3">
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0 space-y-0.5 text-sm leading-relaxed text-ink">
+              {houseNumber.trim() ? (
+                <p className="font-medium">{houseNumber.trim()}</p>
+              ) : null}
               {lines.map((line) => (
                 <p key={line}>{line}</p>
               ))}
@@ -130,6 +175,7 @@ export function AddressSearchField({
             Address confirmed. Use Change only if you picked the wrong one.
           </p>
         </div>
+        <HouseNumberField value={houseNumber} onChange={onHouseNumberChange} />
         <FieldError message={error} />
       </div>
     );
@@ -142,15 +188,15 @@ export function AddressSearchField({
         label="Confirming address…"
       />
       <FieldLabel
-        htmlFor="address-search"
+        htmlFor={enrolFieldDomId("addressPlaceId")}
         required
-        hint="Start typing your street or postcode, then choose your exact address from the list."
+        hint="Search postcode or street; after selecting, enter house number if needed."
       >
         Your address
       </FieldLabel>
       <input
         ref={inputRef}
-        id="address-search"
+        id={enrolFieldDomId("addressPlaceId")}
         type="search"
         value={query}
         role="combobox"
@@ -160,7 +206,7 @@ export function AddressSearchField({
         aria-invalid={Boolean(error)}
         autoComplete="off"
         disabled={resolvePending}
-        placeholder="Search street, building, or postcode"
+        placeholder="Search by postcode or street"
         onChange={(event) => setQuery(event.target.value)}
         onFocus={() => {
           if (suggestions.length > 0) setOpen(true);
@@ -199,6 +245,9 @@ export function AddressSearchField({
             </li>
           ))}
         </ul>
+      ) : null}
+      {showHouseNumber ? (
+        <HouseNumberField value={houseNumber} onChange={onHouseNumberChange} />
       ) : null}
       <FieldError message={error} />
     </div>

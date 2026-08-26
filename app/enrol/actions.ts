@@ -21,12 +21,14 @@ import {
   sendEnrolmentAccessRecoveryViaBackend,
   sendEnrolmentEmailViaBackend,
 } from "@/lib/email/backend";
+import { withSaturdayBalance } from "@/lib/cohorts/saturday";
 import {
   publicActionMessage,
 } from "@/lib/safe-action-message";
 import { SOD_SITE } from "@/lib/site-nav";
 import { findAuthUserIdByEmail } from "@/lib/supabase/auth-admin";
 import { createServiceSupabaseClient } from "@/lib/supabase/service";
+import { ensureParishYearBatch } from "@/app/enrol/saturday-actions";
 
 export type SubmitEnrolmentResult =
   | {
@@ -100,33 +102,72 @@ export async function submitEnrolment(
     const parishOther = data.parishOther.trim();
     const parishIsOther = isEnrolParishOther(parishIdRaw);
     const parishId = parishIsOther ? null : parishIdRaw;
-    const batchId = parishIsOther ? null : data.batchId.trim();
+    const saturdayCohortId = data.saturdayCohortId.trim();
+    let batchId: string | null = null;
     let cohortId: string | null = null;
 
     const service = createServiceSupabaseClient();
 
+    if (!saturdayCohortId) {
+      return enrolFail("Please choose which Saturday cohort you will attend.");
+    }
+
+    const { data: saturdayRow, error: saturdayError } = await service
+      .from("saturday_cohorts")
+      .select("id, programme_cohort_id, saturday_slot, label, is_active")
+      .eq("id", saturdayCohortId)
+      .maybeSingle();
+
+    if (saturdayError || !saturdayRow?.is_active) {
+      if (saturdayError) console.error("[enrol] saturday cohort", saturdayError);
+      return enrolFail("Selected Saturday cohort is not available.");
+    }
+
+    const { data: programme, error: programmeError } = await service
+      .from("cohorts")
+      .select("id, name, year_start, year_end, is_active")
+      .eq("id", saturdayRow.programme_cohort_id)
+      .maybeSingle();
+
+    if (programmeError || !programme?.is_active) {
+      if (programmeError) console.error("[enrol] programme year", programmeError);
+      return enrolFail("That programme year is not open for enrolment.");
+    }
+    cohortId = programme.id;
+
+    const { data: siblingSlots } = await service
+      .from("saturday_cohorts")
+      .select("id, programme_cohort_id, saturday_slot, label, is_active")
+      .eq("programme_cohort_id", cohortId)
+      .eq("is_active", true);
+
+    const counted = [];
+    for (const slot of siblingSlots ?? []) {
+      const { count } = await service
+        .from("enrolments")
+        .select("id", { count: "exact", head: true })
+        .eq("saturday_cohort_id", slot.id)
+        .neq("status", "rejected");
+      counted.push({
+        id: slot.id,
+        programme_cohort_id: slot.programme_cohort_id,
+        saturday_slot: slot.saturday_slot as 1 | 2 | 3 | 4,
+        label: slot.label,
+        is_active: slot.is_active,
+        enrolment_count: count ?? 0,
+      });
+    }
+    const balanced = withSaturdayBalance(counted);
+    const chosen = balanced.find((c) => c.id === saturdayCohortId);
+    if (!chosen?.selectable) {
+      return enrolFail(
+        "That Saturday cohort is currently full. Please choose another Saturday.",
+      );
+    }
+
     if (!parishIsOther) {
-      if (!parishId || !batchId) {
-        return enrolFail("Please select your parish and an open batch.");
-      }
-
-      const { data: batchRow, error: batchError } = await service
-        .from("batches")
-        .select("id, parish_id, cohort_id, enrolment_open, is_active, name, year")
-        .eq("id", batchId)
-        .maybeSingle();
-
-      if (batchError || !batchRow) {
-        if (batchError) console.error("[enrol] batch lookup", batchError);
-        return enrolFail(
-          "Selected batch was not found. Choose a parish and open batch again.",
-        );
-      }
-      if (batchRow.parish_id !== parishId) {
-        return enrolFail("Selected batch does not belong to that parish.");
-      }
-      if (!batchRow.is_active || !batchRow.enrolment_open) {
-        return enrolFail("That batch is not open for enrolment.");
+      if (!parishId) {
+        return enrolFail("Please select your parish, or add it manually.");
       }
 
       const { data: parishRow } = await service
@@ -139,14 +180,25 @@ export async function submitEnrolment(
         return enrolFail("Selected parish is not available.");
       }
 
-      cohortId = (batchRow.cohort_id as string | null) ?? null;
+      const yearLabel =
+        programme.year_start === programme.year_end
+          ? String(programme.year_start)
+          : `${programme.year_start}/${String(programme.year_end).slice(-2)}`;
+      const batchResult = await ensureParishYearBatch({
+        parishId,
+        programmeCohortId: cohortId,
+        year: programme.year_start,
+        yearLabel: `${programme.name} ${yearLabel}`.trim(),
+      });
+      if ("error" in batchResult) {
+        return enrolFail(batchResult.error);
+      }
+      batchId = batchResult.id;
     } else if (!parishOther) {
       return enrolFail("Please enter your parish or church name.");
     }
 
-    const localChurchStored = parishIsOther
-      ? [parishOther, data.localChurch.trim()].filter(Boolean).join(" — ")
-      : data.localChurch.trim();
+    const localChurchStored = parishIsOther ? parishOther : "";
 
     const { data: existingProfile } = await service
       .from("student_profiles")
@@ -287,6 +339,7 @@ export async function submitEnrolment(
       first_name: firstName,
       middle_name: emptyToNull(data.middleName),
       last_name: lastName,
+      gender: emptyToNull(data.gender),
       is_active: true,
     });
 
@@ -335,18 +388,21 @@ export async function submitEnrolment(
         baptised_holy_spirit: data.baptisedHolySpirit,
         holy_spirit_date: emptyToNullDate(data.holySpiritDate),
         holy_spirit_where: emptyToNull(data.holySpiritWhere),
-        baptised_water: data.baptisedWater,
-        water_baptism_date: emptyToNullDate(data.waterBaptismDate),
-        water_baptism_where: emptyToNull(data.waterBaptismWhere),
-        schools_attended: data.schoolsAttended.trim(),
+        baptised_water: null,
+        water_baptism_date: null,
+        water_baptism_where: null,
+        schools_attended: emptyToNull(data.biblicalCourses),
+        biblical_courses: emptyToNull(data.biblicalCourses),
+        gender: emptyToNull(data.gender),
         occupations: data.occupations,
         occupation_other: emptyToNull(data.occupationOther),
         parish_id: parishId,
         batch_id: batchId,
         cohort_id: cohortId,
+        saturday_cohort_id: saturdayCohortId,
         local_church: emptyToNull(localChurchStored) ?? "",
-        church_leader: data.churchLeader.trim(),
-        church_activities: emptyToNull(data.churchActivities),
+        church_leader: "—",
+        church_activities: null,
         declaration_accepted: data.declarationAccepted,
         declared_at: new Date().toISOString(),
       });

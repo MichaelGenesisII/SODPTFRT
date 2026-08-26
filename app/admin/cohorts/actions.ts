@@ -10,6 +10,7 @@ import {
 import { isNationalAdmin, requireSessionAdmin } from "@/lib/admin/auth";
 import { publicActionMessage } from "@/lib/safe-action-message";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
+import { createServiceSupabaseClient } from "@/lib/supabase/service";
 
 export type CohortActionResult = {
   ok: boolean;
@@ -105,15 +106,35 @@ export async function createCohort(input: {
       return { ok: false, message: publicActionMessage(error.message) };
     }
 
+    if (data?.id) {
+      const service = createServiceSupabaseClient();
+      const slots = [
+        { n: 1, label: "1st Saturday" },
+        { n: 2, label: "2nd Saturday" },
+        { n: 3, label: "3rd Saturday" },
+        { n: 4, label: "4th Saturday" },
+      ];
+      await service.from("saturday_cohorts").upsert(
+        slots.map((s) => ({
+          programme_cohort_id: data.id,
+          saturday_slot: s.n,
+          label: s.label,
+          is_active: true,
+        })),
+        { onConflict: "programme_cohort_id,saturday_slot" },
+      );
+    }
+
     revalidatePath("/admin/cohorts");
     revalidatePath("/admin/parishes");
+    revalidatePath("/enrol");
     return {
       ok: true,
       message: `Created ${formatCohortLabel({
         name,
         year_start: input.yearStart,
         year_end: input.yearEnd,
-      })}.`,
+      })} with four Saturday cohorts.`,
       cohortId: data?.id,
     };
   } catch (error) {

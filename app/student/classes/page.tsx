@@ -6,6 +6,7 @@ import {
   meetingSdkReadyForStudent,
 } from "@/app/student/classes/actions";
 import { StudentClassesClient } from "@/components/student/student-classes";
+import { TempCohortSwitchCard } from "@/components/student/temp-cohort-switch";
 import { publicActionMessage, publicUnavailableMessage } from "@/lib/safe-action-message";
 import { getSessionStudent } from "@/lib/student/auth";
 
@@ -56,12 +57,15 @@ export default async function StudentClassesPage() {
           {loadError}
         </div>
       ) : (
-        <StudentClassesClient
-          profile={profile}
-          classes={classes}
-          attendance={attendance}
-          meetingSdkReady={meetingSdkReady}
-        />
+        <>
+          <TempCohortSwitchCard />
+          <StudentClassesClient
+            profile={profile}
+            classes={classes}
+            attendance={attendance}
+            meetingSdkReady={meetingSdkReady}
+          />
+        </>
       )}
     </div>
   );

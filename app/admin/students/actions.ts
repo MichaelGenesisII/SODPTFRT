@@ -676,7 +676,11 @@ export async function reassignEnrolmentBatch(
   enrolmentId: string,
   parishId: string,
   batchId: string,
-  options?: { cohortId?: string | null; reason?: string },
+  options?: {
+    cohortId?: string | null;
+    saturdayCohortId?: string | null;
+    reason?: string;
+  },
 ): Promise<StudentActionResult> {
   try {
     if (!enrolmentId || !parishId || !batchId) {
@@ -711,6 +715,28 @@ export async function reassignEnrolmentBatch(
         ? ((batch.cohort_id as string | null) ?? null)
         : options.cohortId;
 
+    let saturdayCohortId =
+      options?.saturdayCohortId === undefined
+        ? undefined
+        : options.saturdayCohortId;
+
+    if (saturdayCohortId) {
+      const { data: sat } = await access.supabase
+        .from("saturday_cohorts")
+        .select("id, programme_cohort_id, is_active")
+        .eq("id", saturdayCohortId)
+        .maybeSingle();
+      if (!sat?.is_active) {
+        return { ok: false, message: "Saturday cohort was not found." };
+      }
+      if (cohortId && sat.programme_cohort_id !== cohortId) {
+        return {
+          ok: false,
+          message: "Saturday cohort must belong to the selected year/batch.",
+        };
+      }
+    }
+
     const service = createServiceSupabaseClient();
     const now = new Date().toISOString();
 
@@ -739,14 +765,19 @@ export async function reassignEnrolmentBatch(
       console.error("[placement]", placementError.message);
     }
 
+    const updatePayload: Record<string, unknown> = {
+      parish_id: parishId,
+      batch_id: batchId,
+      cohort_id: cohortId,
+      updated_at: now,
+    };
+    if (saturdayCohortId !== undefined) {
+      updatePayload.saturday_cohort_id = saturdayCohortId;
+    }
+
     const { data, error } = await access.supabase
       .from("enrolments")
-      .update({
-        parish_id: parishId,
-        batch_id: batchId,
-        cohort_id: cohortId,
-        updated_at: now,
-      })
+      .update(updatePayload)
       .eq("id", enrolmentId)
       .select("id")
       .maybeSingle();

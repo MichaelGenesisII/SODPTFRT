@@ -18,6 +18,11 @@ import {
   updateParish,
   type ParishActionResult,
 } from "@/app/admin/parishes/actions";
+import {
+  syncParishesFromBundledFile,
+  syncParishesFromUpload,
+} from "@/app/admin/parishes/sync-actions";
+import { DeskLoader } from "@/components/ui/desk-loader";
 import { useToast } from "@/components/ui/toast";
 import { isNationalAdmin, type AdminProfile } from "@/lib/admin/profile";
 import { formatBatchLabel, type Batch, type Parish } from "@/lib/parishes";
@@ -305,6 +310,67 @@ export function ParishesManager({
           hint="Every course run"
         />
       </section>
+
+      {national ? (
+        <section className="border border-stone/80 bg-white/50 p-4 sm:p-5">
+          <h2 className="font-display text-lg text-pine">Parish master list</h2>
+          <p className="mt-1 text-sm text-ink/60">
+            Import RCCG UK churches from Parish.xlsx (name + region). Existing
+            names are updated; new ones are added.
+          </p>
+          <div className="mt-3 flex flex-wrap items-end gap-3">
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                const fd = new FormData(e.currentTarget);
+                startTransition(async () => {
+                  const result = await syncParishesFromUpload(fd);
+                  if (result.ok) {
+                    success(result.message);
+                    router.refresh();
+                  } else error(result.message);
+                });
+              }}
+              className="flex flex-wrap items-end gap-2"
+            >
+              <label className="block text-sm">
+                Upload Excel
+                <input
+                  type="file"
+                  name="file"
+                  accept=".xlsx,.xls"
+                  disabled={pending}
+                  className={`mt-1 block ${fieldClass} disabled:opacity-50`}
+                  required
+                />
+              </label>
+              <button
+                type="submit"
+                disabled={pending}
+                className="inline-flex min-h-[2.5rem] items-center justify-center border border-pine px-4 py-2 text-sm font-medium text-pine hover:bg-pine hover:text-mist disabled:opacity-50"
+              >
+                {pending ? <DeskLoader label="Syncing…" /> : "Sync upload"}
+              </button>
+            </form>
+            <button
+              type="button"
+              disabled={pending}
+              onClick={() =>
+                startTransition(async () => {
+                  const result = await syncParishesFromBundledFile();
+                  if (result.ok) {
+                    success(result.message);
+                    router.refresh();
+                  } else error(result.message);
+                })
+              }
+              className="inline-flex min-h-[2.5rem] items-center justify-center border border-pine/30 px-4 py-2 text-sm font-medium text-pine hover:border-pine disabled:opacity-50"
+            >
+              Sync bundled Parish.xlsx
+            </button>
+          </div>
+        </section>
+      ) : null}
 
       <nav
         className="flex gap-1 overflow-x-auto border-b border-stone pb-px"

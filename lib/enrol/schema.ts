@@ -2,13 +2,19 @@ export const ATTENDANCE_MODES = [
   {
     value: "standard",
     label: "Standard Program",
-    hint: "10 months long",
+    hint: "10 months · one Saturday class each month",
   },
   {
     value: "ignite",
     label: "SOD Ignite",
     hint: "Young adults 17–22 years old",
   },
+] as const;
+
+export const GENDERS = [
+  { value: "female", label: "Female" },
+  { value: "male", label: "Male" },
+  { value: "prefer_not_to_say", label: "Prefer not to say" },
 ] as const;
 
 export const MARITAL_STATUSES = [
@@ -116,7 +122,7 @@ export const ENROL_STEPS = [
   { id: "address", label: "Address", title: "Where you live" },
   { id: "personal", label: "Personal", title: "About you" },
   { id: "faith", label: "Faith", title: "Your walk with Christ" },
-  { id: "life", label: "Life", title: "School, work & church" },
+  { id: "life", label: "Life", title: "Course, parish & Saturday" },
   { id: "preview", label: "Preview", title: "Preview & confirm" },
   {
     id: "declaration",
@@ -132,6 +138,7 @@ export type EnrolFormData = {
   firstName: string;
   middleName: string;
   lastName: string;
+  gender: string;
   addressLine1: string;
   addressLine2: string;
   townCity: string;
@@ -141,6 +148,8 @@ export type EnrolFormData = {
   country: string;
   /** Place id from address search when lookup is configured */
   addressPlaceId: string;
+  /** House / flat number collected after postcode search */
+  houseNumber: string;
   mobileNumber: string;
   homeTelephone: string;
   email: string;
@@ -154,10 +163,12 @@ export type EnrolFormData = {
   baptisedHolySpirit: string;
   holySpiritDate: string;
   holySpiritWhere: string;
+  /** @deprecated Removed from UI; kept for legacy preview/submit defaults */
   baptisedWater: string;
   waterBaptismDate: string;
   waterBaptismWhere: string;
-  schoolsAttended: string;
+  /** Biblical / theological courses attended (minimal) */
+  biblicalCourses: string;
   occupations: string[];
   occupationOther: string;
   /**
@@ -167,12 +178,8 @@ export type EnrolFormData = {
   parishId: string;
   /** Free-text parish/church when `parishId` is the other sentinel. */
   parishOther: string;
-  /** Open enrolment batch for that parish (required unless parish is other). */
-  batchId: string;
-  /** Optional assembly / location detail */
-  localChurch: string;
-  churchLeader: string;
-  churchActivities: string;
+  /** Saturday cohort (1st–4th Saturday) for the active programme year. */
+  saturdayCohortId: string;
   declarationAccepted: boolean;
 };
 
@@ -188,6 +195,7 @@ export const initialEnrolFormData: EnrolFormData = {
   firstName: "",
   middleName: "",
   lastName: "",
+  gender: "",
   addressLine1: "",
   addressLine2: "",
   townCity: "",
@@ -195,6 +203,7 @@ export const initialEnrolFormData: EnrolFormData = {
   postcode: "",
   country: "",
   addressPlaceId: "",
+  houseNumber: "",
   mobileNumber: "",
   homeTelephone: "",
   email: "",
@@ -210,15 +219,12 @@ export const initialEnrolFormData: EnrolFormData = {
   baptisedWater: "",
   waterBaptismDate: "",
   waterBaptismWhere: "",
-  schoolsAttended: "",
+  biblicalCourses: "",
   occupations: [],
   occupationOther: "",
   parishId: "",
   parishOther: "",
-  batchId: "",
-  localChurch: "",
-  churchLeader: "",
-  churchActivities: "",
+  saturdayCohortId: "",
   declarationAccepted: false,
 };
 
@@ -257,6 +263,11 @@ function rejectFutureDate(
   }
 }
 
+/** DOM id for autofocus when a field fails validation. */
+export function enrolFieldDomId(field: keyof EnrolFormData): string {
+  return `enrol-${field}`;
+}
+
 export function validateStep(
   stepId: EnrolStepId,
   data: EnrolFormData,
@@ -278,13 +289,16 @@ export function validateStep(
   if (stepId === "identity") {
     if (!data.firstName.trim()) errors.firstName = "First name is required.";
     if (!data.lastName.trim()) errors.lastName = "Last name is required.";
+    if (!data.gender) errors.gender = "Please select your gender.";
+    else if (!GENDERS.some((g) => g.value === data.gender))
+      errors.gender = "Please choose a valid option.";
   }
 
   if (stepId === "address") {
     if (addressLookupReady) {
       if (!data.addressPlaceId.trim()) {
         errors.addressPlaceId =
-          "Search for your address and choose a result from the list.";
+          "Search by postcode or street, then choose your address.";
       } else if (
         !data.addressLine1.trim() ||
         !data.townCity.trim() ||
@@ -356,33 +370,14 @@ export function validateStep(
     else if (!yesNo.has(data.bornAgain))
       errors.bornAgain = "Please answer Yes or No.";
     else if (data.bornAgain === "Yes") {
-      if (!data.bornAgainDate.trim())
-        errors.bornAgainDate = "Please add the date.";
-      else rejectFutureDate(data.bornAgainDate, "bornAgainDate", errors);
-      if (!data.bornAgainWhere.trim())
-        errors.bornAgainWhere = "Please add where this happened.";
+      rejectFutureDate(data.bornAgainDate, "bornAgainDate", errors);
     }
     if (!data.baptisedHolySpirit)
       errors.baptisedHolySpirit = "Please answer this question.";
     else if (!yesNo.has(data.baptisedHolySpirit))
       errors.baptisedHolySpirit = "Please answer Yes or No.";
     else if (data.baptisedHolySpirit === "Yes") {
-      if (!data.holySpiritDate.trim())
-        errors.holySpiritDate = "Please add the date.";
-      else rejectFutureDate(data.holySpiritDate, "holySpiritDate", errors);
-      if (!data.holySpiritWhere.trim())
-        errors.holySpiritWhere = "Please add where this happened.";
-    }
-    if (!data.baptisedWater)
-      errors.baptisedWater = "Please answer this question.";
-    else if (!yesNo.has(data.baptisedWater))
-      errors.baptisedWater = "Please answer Yes or No.";
-    else if (data.baptisedWater === "Yes") {
-      if (!data.waterBaptismDate.trim())
-        errors.waterBaptismDate = "Please add the date.";
-      else rejectFutureDate(data.waterBaptismDate, "waterBaptismDate", errors);
-      if (!data.waterBaptismWhere.trim())
-        errors.waterBaptismWhere = "Please add where this happened.";
+      rejectFutureDate(data.holySpiritDate, "holySpiritDate", errors);
     }
   }
 
@@ -397,8 +392,6 @@ export function validateStep(
   }
 
   if (stepId === "life") {
-    if (!data.schoolsAttended.trim())
-      errors.schoolsAttended = "Please include schools attended.";
     if (data.occupations.length === 0)
       errors.occupations = "Select at least one occupation.";
     else if (
@@ -415,11 +408,11 @@ export function validateStep(
       if (!data.parishOther.trim()) {
         errors.parishOther = "Please enter your parish or church name.";
       }
-    } else if (!data.batchId) {
-      errors.batchId = "Please select an open batch.";
     }
-    if (!data.churchLeader.trim())
-      errors.churchLeader = "Church leader name is required.";
+    if (!data.saturdayCohortId.trim()) {
+      errors.saturdayCohortId =
+        "Please choose which Saturday cohort you will attend.";
+    }
   }
 
   if (stepId === "declaration") {
@@ -428,4 +421,44 @@ export function validateStep(
   }
 
   return errors;
+}
+
+export function firstEnrolErrorField(
+  errors: Partial<Record<keyof EnrolFormData, string>>,
+): keyof EnrolFormData | null {
+  const order: (keyof EnrolFormData)[] = [
+    "attendanceMode",
+    "firstName",
+    "lastName",
+    "gender",
+    "addressPlaceId",
+    "houseNumber",
+    "addressLine1",
+    "townCity",
+    "postcode",
+    "country",
+    "mobileNumber",
+    "homeTelephone",
+    "email",
+    "nationality",
+    "dateOfBirth",
+    "maritalStatus",
+    "bornAgain",
+    "bornAgainDate",
+    "bornAgainWhere",
+    "baptisedHolySpirit",
+    "holySpiritDate",
+    "holySpiritWhere",
+    "biblicalCourses",
+    "occupations",
+    "occupationOther",
+    "parishId",
+    "parishOther",
+    "saturdayCohortId",
+    "declarationAccepted",
+  ];
+  for (const key of order) {
+    if (errors[key]) return key;
+  }
+  return (Object.keys(errors)[0] as keyof EnrolFormData) ?? null;
 }

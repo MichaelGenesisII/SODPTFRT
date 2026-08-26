@@ -23,7 +23,7 @@ import {
 import { AdminWelcome } from "@/components/admin/admin-welcome";
 import { useToast } from "@/components/ui/toast";
 import type { AdminProfile } from "@/lib/admin/profile";
-import { isParishAdmin } from "@/lib/admin/profile";
+import { isNationalAdmin, isParishAdmin } from "@/lib/admin/profile";
 import { createBrowserSupabaseClient } from "@/lib/supabase/client";
 
 const SIDEBAR_KEY = "sod-admin-sidebar-open";
@@ -180,12 +180,17 @@ function pathMatches(href: string, pathname: string) {
   return href === "/admin" ? pathname === "/admin" : pathname.startsWith(href);
 }
 
-function filterNav(entries: NavEntry[], parishAdminsOn: boolean): NavEntry[] {
+function filterNav(
+  entries: NavEntry[],
+  parishAdminsOn: boolean,
+  nationalDesk: boolean,
+): NavEntry[] {
   return entries
     .map((entry) => {
       if (entry.kind === "link") return entry;
       const children = entry.children.filter(
-        (child) => child.feature !== "parishAdmin" || parishAdminsOn,
+        (child) =>
+          child.feature !== "parishAdmin" || parishAdminsOn || nationalDesk,
       );
       if (children.length === 0) return null;
       return { ...entry, children };
@@ -729,8 +734,8 @@ export function AdminShell({
     useState<PaymentsPulse>(initialPaymentsPulse);
   const [openGroupId, setOpenGroupId] = useState<string | null>(null);
   const visibleNav = useMemo(
-    () => filterNav(nav, parishAdminEnabled),
-    [parishAdminEnabled],
+    () => filterNav(nav, parishAdminEnabled, isNationalAdmin(profile)),
+    [parishAdminEnabled, profile],
   );
 
   // Fresh server counts win over the last polled value.

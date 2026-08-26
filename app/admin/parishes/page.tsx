@@ -10,7 +10,12 @@ import { parishAdminEnabled } from "@/lib/admin/features";
 export default async function AdminParishesPage() {
   const profile = await getSessionAdmin();
   if (!profile) redirect("/login/admin");
-  if (!parishAdminEnabled()) redirect("/admin");
+
+  // National desk always manages the UK church list (enrol master data).
+  // Parish desks only when PARISH_ADMIN_ENABLED is on.
+  if (!isNationalAdmin(profile) && !parishAdminEnabled()) {
+    redirect("/admin");
+  }
 
   const [parishes, batches] = await Promise.all([
     listParishesForAdmin(),

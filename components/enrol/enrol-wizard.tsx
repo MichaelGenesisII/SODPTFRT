@@ -7,7 +7,6 @@ import {
   type Dispatch,
   type SetStateAction,
 } from "react";
-import { listOpenBatchesForEnrol } from "@/app/admin/parishes/actions";
 import { submitEnrolment } from "@/app/enrol/actions";
 import { AddressSearchField } from "@/components/enrol/address-lookup";
 import { isAddressLookupReady } from "@/lib/address/lookup";
@@ -16,6 +15,9 @@ import {
   COUNTRIES,
   ENROL_PARISH_OTHER_VALUE,
   ENROL_STEPS,
+  GENDERS,
+  enrolFieldDomId,
+  firstEnrolErrorField,
   initialEnrolFormData,
   isEnrolParishOther,
   MARITAL_STATUSES,
@@ -26,13 +28,17 @@ import {
   type EnrolStepId,
 } from "@/lib/enrol/schema";
 import type { ApplicationReference } from "@/lib/enrol/reference";
-import { formatBatchLabel } from "@/lib/parishes";
+import {
+  SATURDAY_COHORT_HINT,
+  type SaturdayCohortOption,
+} from "@/lib/cohorts/saturday";
 import { EnrolAlreadyApplied } from "@/components/enrol/already-enrolled";
 import { EnrolPostSubmit } from "@/components/enrol/post-submit";
 import {
   ChipGroup,
   ChoiceCards,
   DateField,
+  FieldError,
   FieldLabel,
   Reveal,
   SelectInput,
@@ -44,13 +50,42 @@ import { useToast } from "@/components/ui/toast";
 import { publicActionMessage } from "@/lib/safe-action-message";
 
 type EnrolParishOption = { id: string; name: string; region: string | null };
-type EnrolBatchOption = { id: string; name: string; year: number; parish_id: string };
+
 function updateField<K extends keyof EnrolFormData>(
   setData: Dispatch<SetStateAction<EnrolFormData>>,
   key: K,
   value: EnrolFormData[K],
 ) {
   setData((prev) => ({ ...prev, [key]: value }));
+}
+
+function focusEnrolError(
+  errors: Partial<Record<keyof EnrolFormData, string>>,
+) {
+  const field = firstEnrolErrorField(errors);
+  if (!field) return;
+  const id = enrolFieldDomId(field);
+  window.requestAnimationFrame(() => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.scrollIntoView({ behavior: "smooth", block: "center" });
+    if (typeof (el as HTMLElement).focus === "function") {
+      (el as HTMLElement).focus({ preventScroll: true });
+    }
+  });
+}
+
+function cohortFillHint(cohort: SaturdayCohortOption): string {
+  if (!cohort.selectable) {
+    return "Temporarily at capacity — please choose another Saturday.";
+  }
+  if (cohort.recommended) {
+    return "Best availability right now.";
+  }
+  if (cohort.relativeToFair > 0) {
+    return "Filling a little faster than others.";
+  }
+  return "Open for enrolment.";
 }
 
 function StepProgress({ currentIndex }: { currentIndex: number }) {
@@ -66,7 +101,6 @@ function StepProgress({ currentIndex }: { currentIndex: number }) {
         <p className="tabular-nums text-ink/55">{percent}% complete</p>
       </div>
 
-      {/* Mobile: single unlabeled bar */}
       <div
         className="h-1.5 overflow-hidden bg-stone md:hidden"
         role="progressbar"
@@ -80,7 +114,6 @@ function StepProgress({ currentIndex }: { currentIndex: number }) {
         />
       </div>
 
-      {/* Desktop: labeled journey track only */}
       <ol className="hidden gap-2 md:flex" aria-label="Enrolment progress">
         {ENROL_STEPS.map((step, index) => {
           const done = index < currentIndex;
@@ -125,10 +158,87 @@ function ReviewRow({ label, value }: { label: string; value: string }) {
   );
 }
 
+function SaturdayCohortPicker({
+  cohorts,
+  value,
+  onChange,
+  error,
+}: {
+  cohorts: SaturdayCohortOption[];
+  value: string;
+  onChange: (id: string) => void;
+  error?: string;
+}) {
+  const fieldId = enrolFieldDomId("saturdayCohortId");
+
+  if (cohorts.length === 0) {
+    return (
+      <div id={fieldId} tabIndex={-1}>
+        <p className="text-sm text-ink/60">
+          Saturday cohorts are not available yet. Please try again later.
+        </p>
+        <FieldError message={error} />
+      </div>
+    );
+  }
+
+  return (
+    <div id={fieldId} tabIndex={-1}>
+      <div className="grid gap-3 sm:grid-cols-2">
+        {cohorts.map((cohort) => {
+          const selected = value === cohort.id;
+          const disabled = !cohort.selectable;
+          return (
+            <button
+              key={cohort.id}
+              type="button"
+              disabled={disabled}
+              aria-pressed={selected}
+              onClick={() => {
+                if (!disabled) onChange(cohort.id);
+              }}
+              className={`relative border px-5 py-4 text-left transition-[border-color,background-color,opacity] duration-300 ${
+                disabled
+                  ? "cursor-not-allowed border-stone/70 bg-stone/30 text-ink/40 opacity-70"
+                  : selected
+                    ? "border-pine bg-pine text-mist"
+                    : "border-stone bg-mist/50 text-ink hover:border-pine/40 hover:bg-mist"
+              }`}
+            >
+              {cohort.recommended && !disabled ? (
+                <span
+                  className={`absolute right-3 top-3 text-[0.65rem] font-medium uppercase tracking-[0.12em] ${
+                    selected ? "text-mist/80" : "text-celadon"
+                  }`}
+                >
+                  Recommended
+                </span>
+              ) : null}
+              <span className="block pr-20 font-medium tracking-wide">
+                {cohort.label}
+              </span>
+              <span
+                className={`mt-1 block text-sm ${
+                  selected && !disabled ? "text-mist/75" : "text-ink/55"
+                }`}
+              >
+                {cohortFillHint(cohort)}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+      <FieldError message={error} />
+    </div>
+  );
+}
+
 export function EnrolWizard({
   parishes,
+  saturdayCohorts: initialSaturdayCohorts,
 }: {
   parishes: EnrolParishOption[];
+  saturdayCohorts: SaturdayCohortOption[];
 }) {
   const { success, error: toastError } = useToast();
   const [stepIndex, setStepIndex] = useState(0);
@@ -148,8 +258,7 @@ export function EnrolWizard({
   } | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState("");
-  const [batches, setBatches] = useState<EnrolBatchOption[]>([]);
-  const [batchesLoading, setBatchesLoading] = useState(false);
+  const [saturdayCohorts] = useState(initialSaturdayCohorts);
   const [addressLookupReady, setAddressLookupReady] = useState<boolean | null>(
     null,
   );
@@ -163,6 +272,11 @@ export function EnrolWizard({
     [data.attendanceMode],
   );
 
+  const genderLabel = useMemo(
+    () => GENDERS.find((g) => g.value === data.gender)?.label ?? "",
+    [data.gender],
+  );
+
   const parishLabel = useMemo(() => {
     if (isEnrolParishOther(data.parishId)) {
       return data.parishOther.trim() || "Not listed (manual)";
@@ -170,13 +284,11 @@ export function EnrolWizard({
     return parishes.find((p) => p.id === data.parishId)?.name ?? "";
   }, [parishes, data.parishId, data.parishOther]);
 
-  const batchLabel = useMemo(() => {
-    if (isEnrolParishOther(data.parishId)) {
-      return "To be assigned";
-    }
-    const batch = batches.find((b) => b.id === data.batchId);
-    return batch ? formatBatchLabel(batch) : "";
-  }, [batches, data.batchId, data.parishId]);
+  const saturdayCohortLabel = useMemo(
+    () =>
+      saturdayCohorts.find((c) => c.id === data.saturdayCohortId)?.label ?? "",
+    [saturdayCohorts, data.saturdayCohortId],
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -188,37 +300,20 @@ export function EnrolWizard({
     };
   }, []);
 
-  useEffect(() => {
-    let cancelled = false;
-    if (!data.parishId || isEnrolParishOther(data.parishId)) {
-      setBatches([]);
-      setBatchesLoading(false);
-      return;
-    }
-    setBatchesLoading(true);
-    void listOpenBatchesForEnrol(data.parishId).then((rows) => {
-      if (cancelled) return;
-      setBatches(rows);
-      setBatchesLoading(false);
-      setData((prev) => {
-        if (prev.batchId && rows.some((r) => r.id === prev.batchId)) {
-          return prev;
-        }
-        return { ...prev, batchId: "" };
-      });
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [data.parishId]);
-
   async function goNext() {
     if (step.id === "address" && addressLookupReady === null) return;
     const nextErrors = validateStep(step.id as EnrolStepId, data, {
       addressLookupReady: addressLookupReady !== false,
     });
     setErrors(nextErrors);
-    if (Object.keys(nextErrors).length > 0) return;
+    if (Object.keys(nextErrors).length > 0) {
+      toastError(
+        "Complete the highlighted fields",
+        "Almost there",
+      );
+      focusEnrolError(nextErrors);
+      return;
+    }
 
     if (step.id === "declaration") {
       setSubmitError("");
@@ -270,7 +365,6 @@ export function EnrolWizard({
     setStepIndex((value) => Math.min(value + 1, ENROL_STEPS.length - 1));
     setErrors({});
   }
-
 
   function goBack() {
     setStepIndex((value) => Math.max(value - 1, 0));
@@ -329,7 +423,7 @@ export function EnrolWizard({
         className="animate-fade-rise space-y-7 px-5 py-8 sm:px-8 sm:py-10"
       >
         {step.id === "program" ? (
-          <div>
+          <div id={enrolFieldDomId("attendanceMode")} tabIndex={-1}>
             <FieldLabel required hint="Select the course track that fits you.">
               Attendance Mode
             </FieldLabel>
@@ -352,11 +446,11 @@ export function EnrolWizard({
         {step.id === "identity" ? (
           <>
             <div>
-              <FieldLabel htmlFor="firstName" required>
+              <FieldLabel htmlFor={enrolFieldDomId("firstName")} required>
                 First Name
               </FieldLabel>
               <TextInput
-                id="firstName"
+                id={enrolFieldDomId("firstName")}
                 value={data.firstName}
                 onChange={(value) => updateField(setData, "firstName", value)}
                 autoComplete="given-name"
@@ -364,24 +458,39 @@ export function EnrolWizard({
               />
             </div>
             <div>
-              <FieldLabel htmlFor="middleName">Middle Name</FieldLabel>
+              <FieldLabel htmlFor={enrolFieldDomId("middleName")}>
+                Middle Name
+              </FieldLabel>
               <TextInput
-                id="middleName"
+                id={enrolFieldDomId("middleName")}
                 value={data.middleName}
                 onChange={(value) => updateField(setData, "middleName", value)}
                 autoComplete="additional-name"
               />
             </div>
             <div>
-              <FieldLabel htmlFor="lastName" required>
+              <FieldLabel htmlFor={enrolFieldDomId("lastName")} required>
                 Last Name
               </FieldLabel>
               <TextInput
-                id="lastName"
+                id={enrolFieldDomId("lastName")}
                 value={data.lastName}
                 onChange={(value) => updateField(setData, "lastName", value)}
                 autoComplete="family-name"
                 error={errors.lastName}
+              />
+            </div>
+            <div id={enrolFieldDomId("gender")} tabIndex={-1}>
+              <FieldLabel required>Gender</FieldLabel>
+              <ChoiceCards
+                name="gender"
+                value={data.gender}
+                onChange={(value) => updateField(setData, "gender", value)}
+                options={GENDERS.map((g) => ({
+                  value: g.value,
+                  label: g.label,
+                }))}
+                error={errors.gender}
               />
             </div>
           </>
@@ -403,6 +512,10 @@ export function EnrolWizard({
                     postcode: data.postcode,
                     country: data.country,
                   }}
+                  houseNumber={data.houseNumber}
+                  onHouseNumberChange={(value) =>
+                    updateField(setData, "houseNumber", value)
+                  }
                   onConfirm={(address) => {
                     setData((current) => ({
                       ...current,
@@ -425,6 +538,7 @@ export function EnrolWizard({
                       postcode: "",
                       country: "",
                       addressPlaceId: "",
+                      houseNumber: "",
                     }));
                   }}
                   error={errors.addressPlaceId}
@@ -432,13 +546,13 @@ export function EnrolWizard({
                 {data.addressPlaceId ? (
                   <div>
                     <FieldLabel
-                      htmlFor="addressLine2"
+                      htmlFor={enrolFieldDomId("addressLine2")}
                       hint="Optional — flat, unit, or building name if needed."
                     >
                       Second line of address
                     </FieldLabel>
                     <TextInput
-                      id="addressLine2"
+                      id={enrolFieldDomId("addressLine2")}
                       value={data.addressLine2}
                       onChange={(value) =>
                         updateField(setData, "addressLine2", value)
@@ -455,11 +569,25 @@ export function EnrolWizard({
                   below.
                 </p>
                 <div>
-                  <FieldLabel htmlFor="addressLine1" required>
+                  <FieldLabel htmlFor={enrolFieldDomId("houseNumber")}>
+                    House / flat number
+                  </FieldLabel>
+                  <TextInput
+                    id={enrolFieldDomId("houseNumber")}
+                    value={data.houseNumber}
+                    onChange={(value) =>
+                      updateField(setData, "houseNumber", value)
+                    }
+                    autoComplete="address-line1"
+                    placeholder="e.g. 12 or Flat 3"
+                  />
+                </div>
+                <div>
+                  <FieldLabel htmlFor={enrolFieldDomId("addressLine1")} required>
                     First line of address
                   </FieldLabel>
                   <TextInput
-                    id="addressLine1"
+                    id={enrolFieldDomId("addressLine1")}
                     value={data.addressLine1}
                     onChange={(value) =>
                       updateField(setData, "addressLine1", value)
@@ -470,13 +598,13 @@ export function EnrolWizard({
                 </div>
                 <div>
                   <FieldLabel
-                    htmlFor="addressLine2"
+                    htmlFor={enrolFieldDomId("addressLine2")}
                     hint="Optional — flat, unit, or building name."
                   >
                     Second line of address
                   </FieldLabel>
                   <TextInput
-                    id="addressLine2"
+                    id={enrolFieldDomId("addressLine2")}
                     value={data.addressLine2}
                     onChange={(value) =>
                       updateField(setData, "addressLine2", value)
@@ -486,11 +614,11 @@ export function EnrolWizard({
                 </div>
                 <div className="grid gap-7 sm:grid-cols-2">
                   <div>
-                    <FieldLabel htmlFor="townCity" required>
+                    <FieldLabel htmlFor={enrolFieldDomId("townCity")} required>
                       Town or city
                     </FieldLabel>
                     <TextInput
-                      id="townCity"
+                      id={enrolFieldDomId("townCity")}
                       value={data.townCity}
                       onChange={(value) =>
                         updateField(setData, "townCity", value)
@@ -500,9 +628,11 @@ export function EnrolWizard({
                     />
                   </div>
                   <div>
-                    <FieldLabel htmlFor="county">County</FieldLabel>
+                    <FieldLabel htmlFor={enrolFieldDomId("county")}>
+                      County
+                    </FieldLabel>
                     <TextInput
-                      id="county"
+                      id={enrolFieldDomId("county")}
                       value={data.county}
                       onChange={(value) =>
                         updateField(setData, "county", value)
@@ -513,11 +643,11 @@ export function EnrolWizard({
                 </div>
                 <div className="grid gap-7 sm:grid-cols-2">
                   <div>
-                    <FieldLabel htmlFor="postcode" required>
+                    <FieldLabel htmlFor={enrolFieldDomId("postcode")} required>
                       Postcode
                     </FieldLabel>
                     <TextInput
-                      id="postcode"
+                      id={enrolFieldDomId("postcode")}
                       value={data.postcode}
                       onChange={(value) =>
                         updateField(setData, "postcode", value)
@@ -527,11 +657,11 @@ export function EnrolWizard({
                     />
                   </div>
                   <div>
-                    <FieldLabel htmlFor="country" required>
+                    <FieldLabel htmlFor={enrolFieldDomId("country")} required>
                       Country
                     </FieldLabel>
                     <SelectInput
-                      id="country"
+                      id={enrolFieldDomId("country")}
                       value={data.country}
                       onChange={(value) =>
                         updateField(setData, "country", value)
@@ -546,11 +676,11 @@ export function EnrolWizard({
             )}
             <div className="grid gap-7 sm:grid-cols-2">
               <div>
-                <FieldLabel htmlFor="mobileNumber" required>
+                <FieldLabel htmlFor={enrolFieldDomId("mobileNumber")} required>
                   Mobile Number
                 </FieldLabel>
                 <TextInput
-                  id="mobileNumber"
+                  id={enrolFieldDomId("mobileNumber")}
                   value={data.mobileNumber}
                   onChange={(value) =>
                     updateField(setData, "mobileNumber", value)
@@ -561,11 +691,11 @@ export function EnrolWizard({
                 />
               </div>
               <div>
-                <FieldLabel htmlFor="homeTelephone">
+                <FieldLabel htmlFor={enrolFieldDomId("homeTelephone")}>
                   Home Telephone Number
                 </FieldLabel>
                 <TextInput
-                  id="homeTelephone"
+                  id={enrolFieldDomId("homeTelephone")}
                   value={data.homeTelephone}
                   onChange={(value) =>
                     updateField(setData, "homeTelephone", value)
@@ -577,11 +707,11 @@ export function EnrolWizard({
               </div>
             </div>
             <div>
-              <FieldLabel htmlFor="email" required>
+              <FieldLabel htmlFor={enrolFieldDomId("email")} required>
                 Email Address
               </FieldLabel>
               <TextInput
-                id="email"
+                id={enrolFieldDomId("email")}
                 type="email"
                 value={data.email}
                 onChange={(value) => updateField(setData, "email", value)}
@@ -596,14 +726,14 @@ export function EnrolWizard({
           <>
             <div>
               <FieldLabel
-                htmlFor="nationality"
+                htmlFor={enrolFieldDomId("nationality")}
                 required
                 hint="Your nationality / citizenship — this is different from country of residence."
               >
                 Nationality
               </FieldLabel>
               <SelectInput
-                id="nationality"
+                id={enrolFieldDomId("nationality")}
                 value={data.nationality}
                 onChange={(value) => updateField(setData, "nationality", value)}
                 options={NATIONALITIES}
@@ -613,20 +743,20 @@ export function EnrolWizard({
             </div>
             <div>
               <FieldLabel
-                htmlFor="dateOfBirth"
+                htmlFor={enrolFieldDomId("dateOfBirth")}
                 required
                 hint="Tap the field to open the calendar."
               >
                 Date of Birth
               </FieldLabel>
               <DateField
-                id="dateOfBirth"
+                id={enrolFieldDomId("dateOfBirth")}
                 value={data.dateOfBirth}
                 onChange={(value) => updateField(setData, "dateOfBirth", value)}
                 error={errors.dateOfBirth}
               />
             </div>
-            <div>
+            <div id={enrolFieldDomId("maritalStatus")} tabIndex={-1}>
               <FieldLabel required>Marital Status</FieldLabel>
               <ChipGroup
                 options={MARITAL_STATUSES}
@@ -642,7 +772,7 @@ export function EnrolWizard({
 
         {step.id === "faith" ? (
           <>
-            <div>
+            <div id={enrolFieldDomId("bornAgain")} tabIndex={-1}>
               <FieldLabel
                 required
                 hint="To be born again is to have a life transformed by a willful submission to, and an acceptance of the Lordship of Jesus Christ."
@@ -661,28 +791,29 @@ export function EnrolWizard({
             <Reveal show={data.bornAgain === "Yes"}>
               <div>
                 <FieldLabel
-                  htmlFor="bornAgainDate"
-                  hint="Enter an approximate date if you can't remember the exact date."
+                  htmlFor={enrolFieldDomId("bornAgainDate")}
+                  hint="Optional if you remember"
                 >
                   Date of being born again
                 </FieldLabel>
                 <DateField
-                  id="bornAgainDate"
+                  id={enrolFieldDomId("bornAgainDate")}
                   value={data.bornAgainDate}
                   onChange={(value) =>
                     updateField(setData, "bornAgainDate", value)
                   }
+                  error={errors.bornAgainDate}
                 />
               </div>
               <div>
                 <FieldLabel
-                  htmlFor="bornAgainWhere"
-                  hint="Location or church name / address / town / city."
+                  htmlFor={enrolFieldDomId("bornAgainWhere")}
+                  hint="Optional if you remember"
                 >
                   Where were you born again?
                 </FieldLabel>
                 <TextInput
-                  id="bornAgainWhere"
+                  id={enrolFieldDomId("bornAgainWhere")}
                   value={data.bornAgainWhere}
                   onChange={(value) =>
                     updateField(setData, "bornAgainWhere", value)
@@ -691,7 +822,7 @@ export function EnrolWizard({
               </div>
             </Reveal>
 
-            <div>
+            <div id={enrolFieldDomId("baptisedHolySpirit")} tabIndex={-1}>
               <FieldLabel required>
                 Have you been baptised in the Holy Spirit?
               </FieldLabel>
@@ -707,77 +838,32 @@ export function EnrolWizard({
             <Reveal show={data.baptisedHolySpirit === "Yes"}>
               <div>
                 <FieldLabel
-                  htmlFor="holySpiritDate"
-                  hint="Enter an approximate date if you can't remember the exact date."
+                  htmlFor={enrolFieldDomId("holySpiritDate")}
+                  hint="Optional if you remember"
                 >
                   Date of baptism in the Holy Spirit
                 </FieldLabel>
                 <DateField
-                  id="holySpiritDate"
+                  id={enrolFieldDomId("holySpiritDate")}
                   value={data.holySpiritDate}
                   onChange={(value) =>
                     updateField(setData, "holySpiritDate", value)
                   }
+                  error={errors.holySpiritDate}
                 />
               </div>
               <div>
                 <FieldLabel
-                  htmlFor="holySpiritWhere"
-                  hint="Location or church name / address / town / city."
+                  htmlFor={enrolFieldDomId("holySpiritWhere")}
+                  hint="Optional if you remember"
                 >
                   Where were you baptised in the Holy Spirit?
                 </FieldLabel>
                 <TextInput
-                  id="holySpiritWhere"
+                  id={enrolFieldDomId("holySpiritWhere")}
                   value={data.holySpiritWhere}
                   onChange={(value) =>
                     updateField(setData, "holySpiritWhere", value)
-                  }
-                />
-              </div>
-            </Reveal>
-
-            <div>
-              <FieldLabel required>
-                Have you been baptised in water by immersion?
-              </FieldLabel>
-              <ChipGroup
-                options={["Yes", "No"]}
-                value={data.baptisedWater}
-                onChange={(value) =>
-                  updateField(setData, "baptisedWater", value as string)
-                }
-                error={errors.baptisedWater}
-              />
-            </div>
-            <Reveal show={data.baptisedWater === "Yes"}>
-              <div>
-                <FieldLabel
-                  htmlFor="waterBaptismDate"
-                  hint="Enter an approximate date if you can't remember the exact date."
-                >
-                  Date of baptism in water by immersion
-                </FieldLabel>
-                <DateField
-                  id="waterBaptismDate"
-                  value={data.waterBaptismDate}
-                  onChange={(value) =>
-                    updateField(setData, "waterBaptismDate", value)
-                  }
-                />
-              </div>
-              <div>
-                <FieldLabel
-                  htmlFor="waterBaptismWhere"
-                  hint="Location or church name / address / town / city."
-                >
-                  Where were you baptised in water by immersion?
-                </FieldLabel>
-                <TextInput
-                  id="waterBaptismWhere"
-                  value={data.waterBaptismWhere}
-                  onChange={(value) =>
-                    updateField(setData, "waterBaptismWhere", value)
                   }
                 />
               </div>
@@ -789,22 +875,21 @@ export function EnrolWizard({
           <>
             <div>
               <FieldLabel
-                htmlFor="schoolsAttended"
-                required
-                hint="Please include dates and qualifications obtained."
+                htmlFor={enrolFieldDomId("biblicalCourses")}
+                hint="Optional — list any biblical or theological courses you have attended."
               >
-                Schools Attended
+                Biblical / theological courses attended
               </FieldLabel>
               <TextArea
-                id="schoolsAttended"
-                value={data.schoolsAttended}
+                id={enrolFieldDomId("biblicalCourses")}
+                value={data.biblicalCourses}
                 onChange={(value) =>
-                  updateField(setData, "schoolsAttended", value)
+                  updateField(setData, "biblicalCourses", value)
                 }
-                error={errors.schoolsAttended}
+                rows={3}
               />
             </div>
-            <div>
+            <div id={enrolFieldDomId("occupations")} tabIndex={-1}>
               <FieldLabel
                 required
                 hint="You can select more than one option."
@@ -823,11 +908,11 @@ export function EnrolWizard({
             </div>
             <Reveal show={data.occupations.includes("Other")}>
               <div>
-                <FieldLabel htmlFor="occupationOther" required>
+                <FieldLabel htmlFor={enrolFieldDomId("occupationOther")} required>
                   Please describe
                 </FieldLabel>
                 <TextInput
-                  id="occupationOther"
+                  id={enrolFieldDomId("occupationOther")}
                   value={data.occupationOther}
                   onChange={(value) =>
                     updateField(setData, "occupationOther", value)
@@ -838,20 +923,19 @@ export function EnrolWizard({
             </Reveal>
             <div>
               <FieldLabel
-                htmlFor="parishId"
+                htmlFor={enrolFieldDomId("parishId")}
                 required
                 hint="Choose the parish running your School of Disciples course, or add yours if it is not listed."
               >
                 Parish / church
               </FieldLabel>
               <SelectInput
-                id="parishId"
+                id={enrolFieldDomId("parishId")}
                 value={data.parishId}
                 onChange={(value) => {
                   setData((prev) => ({
                     ...prev,
                     parishId: value,
-                    batchId: "",
                     parishOther: isEnrolParishOther(value)
                       ? prev.parishOther
                       : "",
@@ -878,14 +962,14 @@ export function EnrolWizard({
             <Reveal show={isEnrolParishOther(data.parishId)}>
               <div>
                 <FieldLabel
-                  htmlFor="parishOther"
+                  htmlFor={enrolFieldDomId("parishOther")}
                   required
                   hint="We will place you once the national desk confirms your parish."
                 >
                   Parish or church name
                 </FieldLabel>
                 <TextInput
-                  id="parishOther"
+                  id={enrolFieldDomId("parishOther")}
                   value={data.parishOther}
                   onChange={(value) =>
                     updateField(setData, "parishOther", value)
@@ -895,84 +979,18 @@ export function EnrolWizard({
                 />
               </div>
             </Reveal>
-            {!isEnrolParishOther(data.parishId) ? (
-              <div>
-                <FieldLabel
-                  htmlFor="batchId"
-                  required
-                  hint="Only batches currently open for enrolment are listed."
-                >
-                  Batch
-                </FieldLabel>
-                <SelectInput
-                  id="batchId"
-                  value={data.batchId}
-                  onChange={(value) => updateField(setData, "batchId", value)}
-                  placeholder={
-                    !data.parishId
-                      ? "Select a parish first"
-                      : batchesLoading
-                        ? "Loading batches…"
-                        : batches.length === 0
-                          ? "No open batches for this parish"
-                          : "Select batch"
-                  }
-                  options={batches.map((b) => ({
-                    value: b.id,
-                    label: formatBatchLabel(b),
-                  }))}
-                  error={errors.batchId}
-                />
-              </div>
-            ) : null}
             <div>
               <FieldLabel
-                htmlFor="localChurch"
-                hint={
-                  isEnrolParishOther(data.parishId)
-                    ? "Optional — assembly name or address if helpful."
-                    : "Optional — assembly name or address if different from the parish."
-                }
-              >
-                Local assembly detail
-              </FieldLabel>
-              <TextArea
-                id="localChurch"
-                value={data.localChurch}
-                onChange={(value) => updateField(setData, "localChurch", value)}
-                rows={2}
-                error={errors.localChurch}
-              />
-            </div>
-            <div>
-              <FieldLabel
-                htmlFor="churchLeader"
                 required
-                hint="This should be the lead pastor, reverend etc."
+                hint={SATURDAY_COHORT_HINT}
               >
-                Name of Your Church Leader
+                Saturday cohort
               </FieldLabel>
-              <TextInput
-                id="churchLeader"
-                value={data.churchLeader}
-                onChange={(value) =>
-                  updateField(setData, "churchLeader", value)
-                }
-                error={errors.churchLeader}
-              />
-            </div>
-            <div>
-              <FieldLabel htmlFor="churchActivities">
-                What activities are you involved in at your local
-                church/assembly?
-              </FieldLabel>
-              <TextArea
-                id="churchActivities"
-                value={data.churchActivities}
-                onChange={(value) =>
-                  updateField(setData, "churchActivities", value)
-                }
-                rows={3}
+              <SaturdayCohortPicker
+                cohorts={saturdayCohorts}
+                value={data.saturdayCohortId}
+                onChange={(id) => updateField(setData, "saturdayCohortId", id)}
+                error={errors.saturdayCohortId}
               />
             </div>
           </>
@@ -992,9 +1010,11 @@ export function EnrolWizard({
                   .filter(Boolean)
                   .join(" ")}
               />
+              <ReviewRow label="Gender" value={genderLabel} />
               <ReviewRow
                 label="Address"
                 value={[
+                  data.houseNumber,
                   data.addressLine1,
                   data.addressLine2,
                   data.townCity,
@@ -1019,7 +1039,10 @@ export function EnrolWizard({
                 label="Holy Spirit baptism"
                 value={data.baptisedHolySpirit}
               />
-              <ReviewRow label="Water baptism" value={data.baptisedWater} />
+              <ReviewRow
+                label="Biblical courses"
+                value={data.biblicalCourses}
+              />
               <ReviewRow
                 label="Occupation"
                 value={[
@@ -1030,19 +1053,7 @@ export function EnrolWizard({
                   .join(", ")}
               />
               <ReviewRow label="Parish" value={parishLabel} />
-              <ReviewRow label="Batch" value={batchLabel} />
-              <ReviewRow
-                label="Assembly detail"
-                value={
-                  isEnrolParishOther(data.parishId)
-                    ? [data.parishOther, data.localChurch]
-                        .map((v) => v.trim())
-                        .filter(Boolean)
-                        .join(" — ")
-                    : data.localChurch
-                }
-              />
-              <ReviewRow label="Church leader" value={data.churchLeader} />
+              <ReviewRow label="Saturday cohort" value={saturdayCohortLabel} />
             </dl>
           </div>
         ) : null}
@@ -1068,7 +1079,11 @@ export function EnrolWizard({
                 students. I will endeavour to make at least one disciple for
                 Christ during the period of my training.
               </p>
-              <label className="mt-8 flex cursor-pointer items-start gap-3 border border-stone bg-mist/80 px-4 py-4 transition-colors duration-300 hover:border-pine/30">
+              <label
+                id={enrolFieldDomId("declarationAccepted")}
+                tabIndex={-1}
+                className="mt-8 flex cursor-pointer items-start gap-3 border border-stone bg-mist/80 px-4 py-4 transition-colors duration-300 hover:border-pine/30"
+              >
                 <input
                   type="checkbox"
                   checked={data.declarationAccepted}
@@ -1133,4 +1148,3 @@ export function EnrolWizard({
     </div>
   );
 }
-
