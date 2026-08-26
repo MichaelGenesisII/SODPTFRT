@@ -186,7 +186,7 @@ export async function submitEnrolment(
           : `${programme.year_start}/${String(programme.year_end).slice(-2)}`;
       const batchResult = await ensureParishYearBatch({
         parishId,
-        programmeCohortId: cohortId,
+        programmeCohortId: programme.id,
         year: programme.year_start,
         yearLabel: `${programme.name} ${yearLabel}`.trim(),
       });
