@@ -120,6 +120,82 @@ function recordsFromSheet(rows: unknown[][]): Record<string, unknown>[] {
   });
 }
 
+function sheetLooksLikeQuestions(rows: unknown[][]): boolean {
+  if (!rows.length) return false;
+  const headers = rows[0].map((h) =>
+    String(h ?? "")
+      .trim()
+      .toLowerCase()
+      .replace(/\s+/g, "_"),
+  );
+  const hasType = headers.some((h) =>
+    ["type", "question_type", "qtype"].includes(h),
+  );
+  const hasPrompt = headers.some((h) =>
+    ["prompt", "question"].includes(h),
+  );
+  return hasType && hasPrompt;
+}
+
+function titleFromInstructionsSheet(rows: unknown[][]): string | undefined {
+  for (const row of rows.slice(0, 12)) {
+    const key = String(row?.[0] ?? "")
+      .trim()
+      .toLowerCase();
+    if (key === "paper title" || key === "title") {
+      const value = String(row?.[1] ?? "").trim();
+      if (value) return value;
+    }
+  }
+  return undefined;
+}
+
+/** Prefer Questions sheet; fall back to first sheet that has type+prompt headers. */
+function pickQuestionSheet(workbook: XLSX.WorkBook): {
+  rows: unknown[][];
+  suggestedTitle?: string;
+} {
+  let suggestedTitle: string | undefined;
+  const instructionName = workbook.SheetNames.find((name) =>
+    /instruction/i.test(name),
+  );
+  if (instructionName) {
+    const guide = XLSX.utils.sheet_to_json<unknown[]>(
+      workbook.Sheets[instructionName],
+      { header: 1, defval: "" },
+    );
+    suggestedTitle = titleFromInstructionsSheet(guide as unknown[][]);
+  }
+
+  const preferred = workbook.SheetNames.find((name) =>
+    /^questions?$/i.test(name.trim()),
+  );
+  const order = preferred
+    ? [preferred, ...workbook.SheetNames.filter((n) => n !== preferred)]
+    : workbook.SheetNames;
+
+  for (const name of order) {
+    const sheet = workbook.Sheets[name];
+    if (!sheet) continue;
+    const rows = XLSX.utils.sheet_to_json<unknown[]>(sheet, {
+      header: 1,
+      defval: "",
+    }) as unknown[][];
+    if (sheetLooksLikeQuestions(rows)) {
+      return { rows, suggestedTitle };
+    }
+  }
+
+  const fallback = workbook.Sheets[workbook.SheetNames[0]];
+  const rows = fallback
+    ? (XLSX.utils.sheet_to_json<unknown[]>(fallback, {
+        header: 1,
+        defval: "",
+      }) as unknown[][])
+    : [];
+  return { rows, suggestedTitle };
+}
+
 /** Parse CSV / XLSX / JSON text into questions. Never stores the file. */
 export function parseQuestionsFromFile(
   filename: string,
@@ -236,20 +312,19 @@ export function parseQuestionsFromFile(
     };
   }
 
-  // CSV / XLSX via SheetJS
-  const workbook = XLSX.read(data, { type: typeof data === "string" ? "string" : "array" });
-  const sheet = workbook.Sheets[workbook.SheetNames[0]];
-  const rows = XLSX.utils.sheet_to_json<unknown[]>(sheet, {
-    header: 1,
-    defval: "",
+  // CSV / XLSX via SheetJS — SOD templates put questions on sheet 2 ("Questions").
+  const workbook = XLSX.read(data, {
+    type: typeof data === "string" ? "string" : "array",
   });
-  const records = recordsFromSheet(rows as unknown[][]);
+  const { rows, suggestedTitle } = pickQuestionSheet(workbook);
+  const records = recordsFromSheet(rows);
   const questions = records
     .map((r) => rowToQuestion(r))
     .filter((q): q is ImportedQuestion => Boolean(q));
 
   return {
     questions,
+    suggestedTitle,
     message: `Parsed ${questions.length} question${questions.length === 1 ? "" : "s"} from spreadsheet.`,
   };
 }
