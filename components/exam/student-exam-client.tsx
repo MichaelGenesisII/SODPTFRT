@@ -6,8 +6,8 @@ import { useState, useTransition } from "react";
 import {
   startStudentAttempt,
   type StudentProvisionalResult,
+  type TakeActionResult,
 } from "@/app/exam/actions";
-import { ExamResultCertificate } from "@/components/exam/exam-result-certificate";
 import { ExamRunner } from "@/components/exam/exam-runner";
 import { DeskLoaderOverlay } from "@/components/ui/desk-loader";
 import { publicActionMessage } from "@/lib/safe-action-message";
@@ -21,6 +21,52 @@ import type {
   ExamQuestion,
 } from "@/lib/exams/types";
 
+function ResultCard({
+  title,
+  eyebrow,
+  percent,
+  passed,
+  passPercent,
+  detail,
+}: {
+  title: string;
+  eyebrow: string;
+  percent: number | null;
+  passed: boolean | null;
+  passPercent: number;
+  detail: string;
+}) {
+  return (
+    <div className="border border-stone bg-white/40 px-6 py-8 text-center">
+      <p className="text-[0.7rem] uppercase tracking-[0.18em] text-celadon">
+        {eyebrow}
+      </p>
+      <h1 className="mt-2 font-display text-3xl text-pine">{title}</h1>
+      {percent != null ? (
+        <>
+          <p className="mt-6 font-display text-5xl tabular-nums text-pine">
+            {percent}%
+          </p>
+          {passed != null ? (
+            <p
+              className={`mt-2 text-sm font-medium ${
+                passed ? "text-pine" : "text-red-900"
+              }`}
+            >
+              {passed ? "Pass" : "Fail"}
+              <span className="font-normal text-ink/50">
+                {" "}
+                · pass mark {passPercent}%
+              </span>
+            </p>
+          ) : null}
+        </>
+      ) : null}
+      <p className="mt-4 text-sm leading-relaxed text-ink/65">{detail}</p>
+    </div>
+  );
+}
+
 export function StudentExamClient({
   slug,
   exam,
@@ -28,10 +74,11 @@ export function StudentExamClient({
   questionCount,
   attempt: initialAttempt,
   answers,
-  studentName,
   unlock,
   unlockMessage,
-  provisional,
+  provisional: initialProvisional,
+  canRetake,
+  retakesRemaining,
 }: {
   slug: string;
   exam: Exam;
@@ -43,6 +90,8 @@ export function StudentExamClient({
   unlock?: YearUnlockState | null;
   unlockMessage?: string | null;
   provisional?: StudentProvisionalResult | null;
+  canRetake?: boolean;
+  retakesRemaining?: number;
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -50,7 +99,51 @@ export function StudentExamClient({
   const busy = pending || Boolean(busyLabel);
   const [error, setError] = useState<string | null>(null);
   const [attempt, setAttempt] = useState(initialAttempt);
+  const [provisional, setProvisional] = useState(initialProvisional ?? null);
   const [live, setLive] = useState(false);
+
+  function beginAttempt(label: string) {
+    setBusyLabel(label);
+    startTransition(async () => {
+      try {
+        const result = await startStudentAttempt(exam.id);
+        if (!result.ok) {
+          setError(
+            publicActionMessage(
+              result.message,
+              "Could not start the exam. Please try again.",
+            ),
+          );
+          return;
+        }
+        router.refresh();
+        setAttempt({
+          id: result.attemptId!,
+          exam_id: exam.id,
+          user_id: null,
+          candidate: null,
+          attempt_token: result.token!,
+          status: "in_progress",
+          started_at: new Date().toISOString(),
+          submitted_at: null,
+          auto_score: 0,
+          manual_score: 0,
+          total_score: 0,
+          max_score: 0,
+          percent: null,
+          graded_by: null,
+          graded_at: null,
+          released_at: null,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        });
+        setProvisional(null);
+        setLive(true);
+      } finally {
+        setBusyLabel(null);
+      }
+    });
+  }
 
   if (live && attempt && attempt.status === "in_progress") {
     return (
@@ -60,7 +153,23 @@ export function StudentExamClient({
           questions={questions}
           attempt={attempt}
           initialAnswers={answers}
-          onSubmitted={() => {
+          onSubmitted={(result?: TakeActionResult) => {
+            if (result?.provisional) setProvisional(result.provisional);
+            setAttempt((prev) =>
+              prev
+                ? {
+                    ...prev,
+                    status:
+                      (result?.attemptStatus as ExamAttempt["status"]) ??
+                      "submitted",
+                    percent:
+                      result?.percent ??
+                      result?.provisional?.autoPercent ??
+                      prev.percent,
+                    submitted_at: new Date().toISOString(),
+                  }
+                : prev,
+            );
             setLive(false);
             router.refresh();
           }}
@@ -94,19 +203,28 @@ export function StudentExamClient({
 
   if (attempt && attempt.status !== "in_progress") {
     const finalReady = attemptHasFinalScore(attempt);
+    const percent =
+      finalReady && attempt.percent != null
+        ? Number(attempt.percent)
+        : provisional?.autoPercent ?? null;
+    const passed =
+      percent != null
+        ? finalReady
+          ? passedExam(percent, Number(exam.pass_percent))
+          : provisional?.autoPassed ?? null
+        : null;
+
     return (
-      <div className="mx-auto max-w-xl space-y-6 py-8">
+      <div className="relative mx-auto max-w-xl space-y-6 py-8" aria-busy={busy}>
+        <DeskLoaderOverlay active={busy} label={busyLabel ?? "Working…"} />
         {finalReady ? (
-          <ExamResultCertificate
+          <ResultCard
             title={exam.title}
-            candidateName={studentName?.trim() || "Student"}
-            attempt={attempt}
+            eyebrow="Result"
+            percent={percent}
+            passed={passed}
             passPercent={exam.pass_percent}
-            passed={passedExam(
-              Number(attempt.percent ?? 0),
-              Number(exam.pass_percent),
-            )}
-            footnote={
+            detail={
               exam.counts_toward_record
                 ? attempt.status === "released"
                   ? "This result has been released to your Records scorecard."
@@ -115,45 +233,48 @@ export function StudentExamClient({
             }
           />
         ) : provisional ? (
-          <div className="border border-stone bg-white/40 px-6 py-8 text-center">
-            <p className="text-[0.7rem] uppercase tracking-[0.18em] text-celadon">
-              Auto-marked result
-            </p>
-            <h1 className="mt-2 font-display text-3xl text-pine">{exam.title}</h1>
-            <p className="mt-6 font-display text-5xl tabular-nums text-pine">
-              {provisional.autoPercent}%
-            </p>
-            <p
-              className={`mt-2 text-sm font-medium ${
-                provisional.autoPassed ? "text-pine" : "text-red-900"
-              }`}
-            >
-              {provisional.autoPassed ? "Pass" : "Fail"}
-              <span className="font-normal text-ink/50">
-                {" "}
-                · pass mark {exam.pass_percent}%
-              </span>
-            </p>
-            <p className="mt-4 text-sm leading-relaxed text-ink/65">
-              Score on auto-marked questions only. Written answers are with the
-              exams desk — your final certificate appears when grading is
-              complete. Answer keys are not shown.
-            </p>
-          </div>
+          <ResultCard
+            title={exam.title}
+            eyebrow="Auto-marked result"
+            percent={provisional.autoPercent}
+            passed={provisional.autoPassed}
+            passPercent={exam.pass_percent}
+            detail="Score on auto-marked questions only. Written answers are with the exams desk. Answer keys are not shown."
+          />
         ) : (
-          <div className="border border-stone bg-white/40 px-6 py-8">
-            <p className="text-[0.7rem] uppercase tracking-[0.18em] text-celadon">
-              {attempt.status === "submitted"
-                ? "Awaiting grading"
-                : attempt.status}
-            </p>
-            <h1 className="mt-2 font-display text-3xl text-pine">{exam.title}</h1>
-            <p className="mt-3 text-sm text-ink/65">
-              Your answers are with the exams desk. Your certificate will appear
-              here when grading is complete.
-            </p>
-          </div>
+          <ResultCard
+            title={exam.title}
+            eyebrow={
+              attempt.status === "submitted" ? "Awaiting grading" : attempt.status
+            }
+            percent={null}
+            passed={null}
+            passPercent={exam.pass_percent}
+            detail="Your answers are with the exams desk. Your score will appear here when grading is complete."
+          />
         )}
+
+        {canRetake ? (
+          <div className="border border-celadon/30 bg-celadon/10 px-4 py-4 text-center">
+            <p className="text-sm text-ink/70">
+              You have {retakesRemaining ?? 1} retake left for this exam.
+            </p>
+            {error ? (
+              <p className="mt-2 text-sm text-red-800" role="alert">
+                {error}
+              </p>
+            ) : null}
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => beginAttempt("Starting retake…")}
+              className="mt-3 bg-pine px-5 py-3 text-sm font-medium text-mist disabled:opacity-50"
+            >
+              {busy ? "Starting…" : "Start retake"}
+            </button>
+          </div>
+        ) : null}
+
         <Link
           href="/student/exams"
           className="inline-block text-sm font-medium text-pine underline"
@@ -187,7 +308,7 @@ export function StudentExamClient({
         {locked
           ? unlockMessage || "This exam is not available yet."
           : exam.instructions ||
-            "Once you begin, the timer starts. Answers autosave as you move."}
+            "Once you begin, the timer starts. Answers autosave as you move. You get one retake if you need it."}
       </p>
       {!locked ? (
         <ul className="mt-5 flex flex-wrap gap-2 text-xs font-medium uppercase tracking-[0.12em] text-ink/50">
@@ -200,6 +321,7 @@ export function StudentExamClient({
           <li className="border border-stone px-2.5 py-1">
             Pass {exam.pass_percent}%
           </li>
+          <li className="border border-stone px-2.5 py-1">1 retake</li>
           {exam.counts_toward_record ? (
             <li className="border border-celadon/30 bg-celadon/10 px-2.5 py-1 text-pine">
               Counts to records
@@ -215,47 +337,7 @@ export function StudentExamClient({
       <button
         type="button"
         disabled={busy || Boolean(windowClosed) || locked}
-        onClick={() => {
-          setBusyLabel("Starting exam…");
-          startTransition(async () => {
-            try {
-              const result = await startStudentAttempt(exam.id);
-              if (!result.ok) {
-                setError(
-                  publicActionMessage(
-                    result.message,
-                    "Could not start the exam. Please try again.",
-                  ),
-                );
-                return;
-              }
-              router.refresh();
-              setAttempt({
-                id: result.attemptId!,
-                exam_id: exam.id,
-                user_id: null,
-                candidate: null,
-                attempt_token: result.token!,
-                status: "in_progress",
-                started_at: new Date().toISOString(),
-                submitted_at: null,
-                auto_score: 0,
-                manual_score: 0,
-                total_score: 0,
-                max_score: 0,
-                percent: null,
-                graded_by: null,
-                graded_at: null,
-                released_at: null,
-                created_at: new Date().toISOString(),
-                updated_at: new Date().toISOString(),
-              });
-              setLive(true);
-            } finally {
-              setBusyLabel(null);
-            }
-          });
-        }}
+        onClick={() => beginAttempt("Starting exam…")}
         className="mt-6 bg-pine px-5 py-3 text-sm font-medium text-mist disabled:opacity-50"
       >
         {busy

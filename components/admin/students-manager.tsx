@@ -480,7 +480,7 @@ export function StudentsManager({
                 {busy && busyLabel?.startsWith("Marking manuals") ? (
                   <DeskLoader label={busyLabel} />
                 ) : (
-                  "Mark manuals sent"
+                  "Mark send 1 of 3"
                 )}
               </button>
             </div>

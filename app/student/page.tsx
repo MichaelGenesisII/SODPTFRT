@@ -37,12 +37,27 @@ export default async function StudentPortalPage() {
   let tuitionPaidGbp = 0;
   let passportUnlocked = false;
   let loadError: string | null = null;
+  let notices: Awaited<ReturnType<typeof fetchStudentAnnouncements>> = [];
+  let noticesError: string | null = null;
 
   try {
-    const supabase = await createServerSupabaseClient();
-    enrolment = await getStudentEnrolment(profile.id);
+    const [enrolmentResult, noticesResult] = await Promise.all([
+      getStudentEnrolment(profile.id),
+      fetchStudentAnnouncements().catch((error) => {
+        console.error("[student/home/notices]", error);
+        noticesError = publicActionMessage(
+          error,
+          "Notices are temporarily unavailable.",
+        );
+        return [] as Awaited<ReturnType<typeof fetchStudentAnnouncements>>;
+      }),
+    ]);
+    enrolment = enrolmentResult;
+    notices = noticesResult;
+
     if (enrolment) {
       try {
+        const supabase = await createServerSupabaseClient();
         await ensureStudentFeeRows(supabase, profile.id);
         const fee = await getFeePayment(supabase, profile.id, "tuition");
         passportUnlocked = hasTuitionInstallmentPaid(fee);
@@ -51,7 +66,6 @@ export default async function StudentPortalPage() {
       } catch (feeError) {
         console.error("[student/home/fees]", feeError);
         tuitionFeeStatus = enrolment.payment_status;
-        // Keep unlock consistent with enrolment when fee rows cannot load.
         if (enrolment.payment_status === "paid") {
           passportUnlocked = true;
         }
@@ -62,18 +76,6 @@ export default async function StudentPortalPage() {
     loadError = publicActionMessage(
       error,
       publicUnavailableMessage("Your application"),
-    );
-  }
-
-  let notices: Awaited<ReturnType<typeof fetchStudentAnnouncements>> = [];
-  let noticesError: string | null = null;
-  try {
-    notices = await fetchStudentAnnouncements();
-  } catch (error) {
-    console.error("[student/home/notices]", error);
-    noticesError = publicActionMessage(
-      error,
-      "Notices are temporarily unavailable.",
     );
   }
 

@@ -16,7 +16,6 @@ import {
   updateScorecardDates,
   upsertAttendanceSession,
 } from "@/app/admin/records/actions";
-import { StudentCertificateDesk } from "@/components/admin/student-certificate-desk";
 import { DeskLoader, DeskLoaderOverlay } from "@/components/ui/desk-loader";
 import { useToast } from "@/components/ui/toast";
 import { isNationalAdmin, type AdminProfile } from "@/lib/admin/profile";
@@ -592,14 +591,6 @@ function Scorecard({
           </p>
         </form>
 
-        <div className="mt-4">
-          <StudentCertificateDesk
-            studentId={bundle.record.user_id}
-            studentName={bundle.record.student_name}
-            compact
-          />
-        </div>
-
         <GraduationGatePanel
           userId={bundle.record.user_id}
           existingNote={bundle.record.graduation_gate_override_note}
@@ -890,19 +881,20 @@ function GraduationGatePanel({
   return (
     <div className="mt-4 border border-stone bg-white/40 px-3 py-3">
       <p className="text-xs font-medium uppercase tracking-[0.12em] text-celadon">
-        Graduation gate
+        Graduation portrait
       </p>
-      <p className="mt-1 text-sm text-ink/60">
-        Override attendance, exam, and fee checks so this student can upload a
-        graduation portrait.
+      <p className="mt-1.5 text-sm leading-relaxed text-ink/65">
+        Students normally unlock their graduation portrait after they meet the
+        usual checks (attendance, exam average, and graduation fee). Use this
+        only when you need to unlock that portrait early for this student.
       </p>
       {existingNote ? (
-        <p className="mt-2 text-sm text-ink/70">
-          Active override: {existingNote}
+        <p className="mt-2 border border-celadon/25 bg-celadon/10 px-3 py-2 text-sm text-ink/75">
+          Early access is on — reason: {existingNote}
         </p>
       ) : null}
       <label className="mt-3 block text-sm text-ink/70">
-        Override reason
+        Reason for early access
         <textarea
           value={note}
           onChange={(event) => setNote(event.target.value)}
@@ -910,7 +902,7 @@ function GraduationGatePanel({
           maxLength={500}
           disabled={pending || saving}
           className="mt-1 w-full border border-stone bg-mist/40 px-3 py-2 text-sm outline-none focus:border-pine disabled:opacity-60"
-          placeholder="Why this student may graduate early"
+          placeholder="e.g. Pastoral exception agreed with parish lead"
         />
       </label>
       <div className="mt-3 flex flex-wrap gap-2">
@@ -918,7 +910,7 @@ function GraduationGatePanel({
           type="button"
           disabled={pending || saving}
           onClick={() => {
-            onBusyLabel("Saving override…");
+            onBusyLabel("Saving early access…");
             startSave(async () => {
               try {
                 const result = await setGraduationGateOverride({
@@ -938,10 +930,10 @@ function GraduationGatePanel({
           }}
           className="inline-flex min-h-[2rem] min-w-[7.5rem] items-center justify-center border border-pine/30 px-3 py-1.5 text-sm font-medium text-pine disabled:opacity-60"
         >
-          {saving && busyLabel?.startsWith("Saving override") ? (
+          {saving && busyLabel?.startsWith("Saving early") ? (
             <DeskLoader label={busyLabel} />
           ) : (
-            "Save override"
+            "Allow portrait early"
           )}
         </button>
         {existingNote ? (
@@ -949,7 +941,7 @@ function GraduationGatePanel({
             type="button"
             disabled={pending || saving}
             onClick={() => {
-              onBusyLabel("Clearing override…");
+              onBusyLabel("Removing early access…");
               startSave(async () => {
                 try {
                   const result = await clearGraduationGateOverride(userId);
@@ -967,10 +959,10 @@ function GraduationGatePanel({
             }}
             className="inline-flex min-h-[2rem] min-w-[7.5rem] items-center justify-center border border-stone px-3 py-1.5 text-sm text-ink/60 disabled:opacity-60"
           >
-            {saving && busyLabel?.startsWith("Clearing") ? (
+            {saving && busyLabel?.startsWith("Removing") ? (
               <DeskLoader label={busyLabel} />
             ) : (
-              "Clear override"
+              "Remove early access"
             )}
           </button>
         ) : null}

@@ -22,7 +22,7 @@ export type FeePaymentStatus = "unpaid" | "pending_review" | "paid";
 
 
 
-export const MIN_INSTALLMENT_GBP = 50;
+export const MIN_INSTALLMENT_GBP = 30;
 
 
 
@@ -50,7 +50,7 @@ export const TUITION_FEE: FeeDefinition = {
 
   amountGbp: 300,
 
-  hint: "Programme tuition — pay in full or in instalments (minimum £50 each time).",
+  hint: "Programme tuition — pay in full or in instalments (minimum £30 each time).",
 
 };
 
@@ -66,7 +66,7 @@ export const GRADUATION_FEE: FeeDefinition = {
 
   amountGbp: 50,
 
-  hint: "Due before graduation — pay in full or in instalments (minimum £50 each time).",
+  hint: "Due before graduation — pay in full or in instalments (minimum £30 each time).",
 
 };
 

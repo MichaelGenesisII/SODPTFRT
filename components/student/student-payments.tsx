@@ -348,7 +348,7 @@ function FeeRow({
   const fullyPaid = payment ? isFeeFullyPaid(payment) : false;
   const passportAllowed =
     feeType === "tuition" && paidSoFar > 0 && !passportUploaded;
-  const [amount, setAmount] = useState(String(Math.max(remaining, 0) || ""));
+  const [amount, setAmount] = useState("");
   const [mode, setMode] = useState<"idle" | "bank">("idle");
   const [pending, startTransition] = useTransition();
   const [busyLabel, setBusyLabel] = useState<string | null>(null);
@@ -515,6 +515,7 @@ function FeeRow({
                     required
                     value={amount}
                     onChange={(e) => setAmount(e.target.value)}
+                    placeholder="Enter amount"
                     className="mt-2 w-full border border-stone bg-white/70 px-3 py-2.5 text-sm outline-none focus:border-pine sm:py-2"
                   />
                 </label>
@@ -598,6 +599,7 @@ function FeeRow({
                   step={1}
                   value={amount}
                   onChange={(e) => setAmount(e.target.value)}
+                  placeholder="Enter amount"
                   className="mt-2 w-full border border-stone bg-white/70 px-3 py-2.5 text-sm outline-none focus:border-pine sm:py-2"
                 />
               </label>

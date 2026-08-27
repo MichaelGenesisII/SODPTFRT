@@ -1,3 +1,4 @@
+import { cache } from "react";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import {
   isNationalAdmin,
@@ -7,7 +8,8 @@ import {
 export type { AdminRole, AdminProfile } from "@/lib/admin/profile";
 export { isNationalAdmin, isParishAdmin } from "@/lib/admin/profile";
 
-export async function getSessionAdmin(): Promise<AdminProfile | null> {
+/** Deduped per request — admin layout + pulses + pages all used this. */
+export const getSessionAdmin = cache(async (): Promise<AdminProfile | null> => {
   const supabase = await createServerSupabaseClient();
   const {
     data: { user },
@@ -26,7 +28,7 @@ export async function getSessionAdmin(): Promise<AdminProfile | null> {
     ...(data as Omit<AdminProfile, "parish_id">),
     parish_id: (data as { parish_id?: string | null }).parish_id ?? null,
   };
-}
+});
 
 export async function requireSessionAdmin(): Promise<AdminProfile> {
   const profile = await getSessionAdmin();

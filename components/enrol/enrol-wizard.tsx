@@ -21,7 +21,6 @@ import {
   initialEnrolFormData,
   isEnrolParishOther,
   MARITAL_STATUSES,
-  NATIONALITIES,
   OCCUPATIONS,
   validateStep,
   type EnrolFormData,
@@ -728,16 +727,16 @@ export function EnrolWizard({
               <FieldLabel
                 htmlFor={enrolFieldDomId("nationality")}
                 required
-                hint="Your nationality / citizenship — this is different from country of residence."
+                hint="Your country — this can differ from where you live now."
               >
-                Nationality
+                Country
               </FieldLabel>
               <SelectInput
                 id={enrolFieldDomId("nationality")}
                 value={data.nationality}
                 onChange={(value) => updateField(setData, "nationality", value)}
-                options={NATIONALITIES}
-                placeholder="Select nationality"
+                options={COUNTRIES}
+                placeholder="Select country"
                 error={errors.nationality}
               />
             </div>
@@ -925,9 +924,9 @@ export function EnrolWizard({
               <FieldLabel
                 htmlFor={enrolFieldDomId("parishId")}
                 required
-                hint="Choose the parish running your School of Disciples course, or add yours if it is not listed."
+                hint="Choose the parish or ministry running your School of Disciples course, or add yours if it is not listed."
               >
-                Parish / church
+                Parish / Ministry
               </FieldLabel>
               <SelectInput
                 id={enrolFieldDomId("parishId")}
@@ -944,18 +943,21 @@ export function EnrolWizard({
                 placeholder={
                   parishes.length === 0
                     ? "No listed parishes yet — add yours below"
-                    : "Select parish"
+                    : "Select parish / ministry"
                 }
-                options={[
-                  ...parishes.map((p) => ({
+                options={(() => {
+                  const listed = parishes.map((p) => ({
                     value: p.id,
                     label: p.region ? `${p.name} — ${p.region}` : p.name,
-                  })),
-                  {
+                  }));
+                  const other = {
                     value: ENROL_PARISH_OTHER_VALUE,
-                    label: "My parish / church isn’t listed",
-                  },
-                ]}
+                    label: "My parish, ministry or church isn’t listed",
+                  };
+                  // Keep “other” 2nd (not last): first listed parish, then other, then the rest.
+                  if (listed.length === 0) return [other];
+                  return [listed[0], other, ...listed.slice(1)];
+                })()}
                 error={errors.parishId}
               />
             </div>
@@ -964,9 +966,9 @@ export function EnrolWizard({
                 <FieldLabel
                   htmlFor={enrolFieldDomId("parishOther")}
                   required
-                  hint="We will place you once the national desk confirms your parish."
+                  hint="We will place you once the national desk confirms your parish or ministry."
                 >
-                  Parish or church name
+                  Parish, ministry or church name
                 </FieldLabel>
                 <TextInput
                   id={enrolFieldDomId("parishOther")}
@@ -1027,7 +1029,7 @@ export function EnrolWizard({
               />
               <ReviewRow label="Email" value={data.email} />
               <ReviewRow label="Mobile" value={data.mobileNumber} />
-              <ReviewRow label="Nationality" value={data.nationality} />
+              <ReviewRow label="Country" value={data.nationality} />
               <ReviewRow
                 label="Country of residence"
                 value={data.country}

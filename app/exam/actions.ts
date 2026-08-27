@@ -21,6 +21,10 @@ import {
   sendAttemptCertificateEmail,
 } from "@/lib/exams/certificate-email";
 import {
+  canStartAnotherExamAttempt,
+  examRetakesRemaining,
+} from "@/lib/exams/attempts";
+import {
   getYearUnlockState,
   isProgrammeMonth,
   yearUnlockMessage,
@@ -37,12 +41,19 @@ export type TakeActionResult = {
   message: string;
   attemptId?: string;
   token?: string;
+  /** Immediate score snapshot for the thank-you screen. */
+  provisional?: StudentProvisionalResult;
+  percent?: number | null;
+  attemptStatus?: string;
 };
 
 export type StudentExamListItem = Exam & {
   attempt_status?: string | null;
   unlock?: YearUnlockState | null;
   unlock_message?: string | null;
+  attempt_count?: number;
+  retakes_remaining?: number;
+  can_retake?: boolean;
 };
 
 export type StudentProvisionalResult = {
@@ -194,6 +205,9 @@ export async function getStudentExamBundle(slug: string): Promise<{
   unlock: YearUnlockState | null;
   unlockMessage: string | null;
   provisional: StudentProvisionalResult | null;
+  attemptCount: number;
+  retakesRemaining: number;
+  canRetake: boolean;
 } | null> {
   const supabase = await createServerSupabaseClient();
   const {
@@ -218,18 +232,30 @@ export async function getStudentExamBundle(slug: string): Promise<{
     unlockMessage = unlock.available ? null : yearUnlockMessage(unlock);
   }
 
-  const { data: attempt } = await supabase
+  const { data: allAttempts } = await supabase
     .from("exam_attempts")
     .select("*")
     .eq("exam_id", exam.id)
     .eq("user_id", user.id)
-    .order("started_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
+    .order("started_at", { ascending: false });
 
-  const typedAttempt = attempt as ExamAttempt | null;
+  const attempts = (allAttempts ?? []) as ExamAttempt[];
+  const typedAttempt = attempts[0] ?? null;
+  const completedCount = attempts.filter(
+    (row) => row.status !== "in_progress",
+  ).length;
+  const retakesRemaining = examRetakesRemaining(completedCount);
+  const canRetake =
+    Boolean(typedAttempt) &&
+    typedAttempt!.status !== "in_progress" &&
+    canStartAnotherExamAttempt(completedCount) &&
+    examIsOpen(exam) &&
+    !(unlock && !unlock.available);
+
   const revealPrompts =
-    examIsOpen(exam) || typedAttempt?.status === "in_progress";
+    examIsOpen(exam) ||
+    typedAttempt?.status === "in_progress" ||
+    canRetake;
 
   let questions: ExamQuestion[] = [];
   let questionCount = 0;
@@ -246,7 +272,7 @@ export async function getStudentExamBundle(slug: string): Promise<{
   }
 
   let answers: ExamAnswer[] = [];
-  if (typedAttempt) {
+  if (typedAttempt?.status === "in_progress") {
     const { data: ans, error: ansError } = await supabase
       .from("exam_answers_student")
       .select("id, attempt_id, question_id, response, updated_at")
@@ -314,6 +340,9 @@ export async function getStudentExamBundle(slug: string): Promise<{
     unlock,
     unlockMessage,
     provisional,
+    attemptCount: attempts.length,
+    retakesRemaining,
+    canRetake,
   };
 }
 
@@ -386,17 +415,22 @@ export async function startStudentAttempt(
     };
   }
 
-  const { data: prior } = await supabase
+  const { count: completedCount, error: countError } = await supabase
     .from("exam_attempts")
-    .select("id, status")
+    .select("id", { count: "exact", head: true })
     .eq("exam_id", examId)
     .eq("user_id", user.id)
-    .neq("status", "in_progress")
-    .limit(1)
-    .maybeSingle();
+    .neq("status", "in_progress");
 
-  if (prior) {
-    return fail("You have already submitted this exam.");
+  if (countError) {
+    console.error("[exam] startStudentAttempt count", countError);
+  }
+
+  const finished = completedCount ?? 0;
+  if (!canStartAnotherExamAttempt(finished)) {
+    return fail(
+      "You have used both sittings for this exam (one attempt and one retake).",
+    );
   }
 
   const questions = await loadQuestions(examId);
@@ -416,14 +450,17 @@ export async function startStudentAttempt(
   if (error) {
     console.error("[exam] startStudentAttempt", error);
     if (error.code === "23505" || /duplicate|unique/i.test(error.message)) {
-      return fail("You already have an attempt for this exam.");
+      return fail("You already have an attempt open for this exam.");
     }
     return fail(error.message, "Could not start the exam. Please try again.");
   }
   revalidatePath(`/student/exams/${full.slug}`);
   return {
     ok: true,
-    message: "Attempt started. Good luck.",
+    message:
+      finished > 0
+        ? "Retake started. Good luck."
+        : "Attempt started. Good luck.",
     attemptId: data.id,
     token: data.attempt_token,
   };
@@ -471,12 +508,12 @@ export async function startOpenAttempt(
     };
   }
 
-  const completed = (priorRows ?? []).find(
+  const completed = (priorRows ?? []).filter(
     (row) => row.status !== "in_progress",
   );
-  if (completed) {
+  if (!canStartAnotherExamAttempt(completed.length)) {
     return fail(
-      "This email has already submitted this exam. Contact the exams desk if you need help.",
+      "This email has used both sittings for this exam (one attempt and one retake). Contact the exams desk if you need help.",
     );
   }
 
@@ -503,7 +540,7 @@ export async function startOpenAttempt(
     console.error("[exam] startOpenAttempt", error);
     if (error.code === "23505" || /duplicate|unique/i.test(error.message)) {
       return fail(
-        "This email has already started or submitted this exam.",
+        "This email already has an open attempt for this exam.",
       );
     }
     return fail(error.message, "Could not start the exam. Please try again.");
@@ -513,7 +550,7 @@ export async function startOpenAttempt(
 
   return {
     ok: true,
-    message: "You may begin.",
+    message: completed.length > 0 ? "Retake started. Good luck." : "You may begin.",
     attemptId: data.id,
     token: data.attempt_token,
   };
@@ -524,6 +561,8 @@ export async function getOpenAttemptBundle(slug: string): Promise<{
   questions: ExamQuestion[];
   attempt: ExamAttempt;
   answers: ExamAnswer[];
+  retakesRemaining: number;
+  canRetake: boolean;
 } | null> {
   const exam = await loadExamBySlug(slug);
   if (!exam || exam.audience !== "open") return null;
@@ -551,6 +590,27 @@ export async function getOpenAttemptBundle(slug: string): Promise<{
   const revealFinal =
     exam.visitor_reveal_score && attemptHasFinalScore(typed);
 
+  const email =
+    (typed.candidate as ExamCandidate | null)?.email?.trim().toLowerCase() ??
+    "";
+  let completedCount = typed.status === "in_progress" ? 0 : 1;
+  if (email) {
+    const { data: priorRows } = await service
+      .from("exam_attempts")
+      .select("id, status")
+      .eq("exam_id", exam.id)
+      .is("user_id", null)
+      .filter("candidate->>email", "eq", email);
+    completedCount = (priorRows ?? []).filter(
+      (row) => row.status !== "in_progress",
+    ).length;
+  }
+  const retakesRemaining = examRetakesRemaining(completedCount);
+  const canRetake =
+    typed.status !== "in_progress" &&
+    canStartAnotherExamAttempt(completedCount) &&
+    examIsOpen(exam);
+
   return {
     exam,
     questions: stripAnswerKeys(questions),
@@ -563,6 +623,8 @@ export async function getOpenAttemptBundle(slug: string): Promise<{
         grader_note: null,
       })) as ExamAnswer[],
     ),
+    retakesRemaining,
+    canRetake,
   };
 }
 
@@ -642,6 +704,7 @@ export async function saveAttemptAnswer(input: {
 export async function submitAttempt(
   attemptId: string,
   token?: string,
+  responses?: Record<string, Record<string, unknown>>,
 ): Promise<TakeActionResult> {
   const service = createServiceSupabaseClient();
   const { data: attempt } = await service
@@ -666,50 +729,70 @@ export async function submitAttempt(
   if (!allowed) return fail("Unauthorized.");
 
   const questions = await loadQuestions(attempt.exam_id);
-  const { data: answers } = await service
+  const { data: existingAnswers } = await service
     .from("exam_answers")
     .select("*")
     .eq("attempt_id", attemptId);
 
-  for (const q of questions) {
-    if (needsManualGrade(q)) continue;
-    const ans = (answers ?? []).find((a) => a.question_id === q.id);
-    const auto = autoScoreAnswer(
-      q,
-      (ans?.response as Record<string, unknown>) ?? null,
-    );
-    if (ans) {
-      await service
-        .from("exam_answers")
-        .update({ auto_points: auto })
-        .eq("id", ans.id);
+  const byQuestion = new Map(
+    (existingAnswers ?? []).map((row) => [row.question_id as string, row]),
+  );
+
+  const upsertRows = questions.map((q) => {
+    const existing = byQuestion.get(q.id);
+    const fromClient = responses?.[q.id];
+    const response =
+      (fromClient as Record<string, unknown> | undefined) ??
+      ((existing?.response as Record<string, unknown> | null) ?? {});
+    const auto = needsManualGrade(q)
+      ? null
+      : autoScoreAnswer(q, response);
+    return {
+      attempt_id: attemptId,
+      question_id: q.id,
+      response,
+      auto_points: auto,
+      updated_at: new Date().toISOString(),
+    };
+  });
+
+  if (upsertRows.length > 0) {
+    const { error: upsertError } = await service
+      .from("exam_answers")
+      .upsert(upsertRows, { onConflict: "attempt_id,question_id" });
+    if (upsertError) {
+      console.error("[exam] submitAttempt upsert", upsertError);
+      return fail(
+        upsertError.message,
+        "Could not submit. Please try again.",
+      );
     }
   }
 
-  const { data: refreshed } = await service
-    .from("exam_answers")
-    .select("*")
-    .eq("attempt_id", attemptId);
+  const scoredAnswers = upsertRows.map((row) => ({
+    question_id: row.question_id,
+    auto_points: row.auto_points,
+    manual_points:
+      (byQuestion.get(row.question_id)?.manual_points as number | null) ?? null,
+    response: row.response,
+  }));
 
-  const totals = computeAttemptTotals(
-    questions,
-    (refreshed ?? []) as ExamAnswer[],
-  );
-
+  const totals = computeAttemptTotals(questions, scoredAnswers);
   const status = totals.allManualDone ? "graded" : "submitted";
+  const submittedAt = new Date().toISOString();
 
   const { error } = await service
     .from("exam_attempts")
     .update({
       status,
-      submitted_at: new Date().toISOString(),
+      submitted_at: submittedAt,
       auto_score: totals.autoScore,
       manual_score: totals.manualScore,
       total_score: totals.totalScore,
       max_score: totals.maxScore,
       percent: totals.percent,
-      graded_at: status === "graded" ? new Date().toISOString() : null,
-      updated_at: new Date().toISOString(),
+      graded_at: status === "graded" ? submittedAt : null,
+      updated_at: submittedAt,
     })
     .eq("id", attemptId);
 
@@ -728,10 +811,11 @@ export async function submitAttempt(
 
   if (exam?.audience === "student" && exam.slug) {
     revalidatePath(`/student/exams/${exam.slug}`);
+    revalidatePath("/student/exams");
   }
   revalidatePath("/admin/exams");
 
-  // Open exams: auto-email certificate when final score is ready and settings allow.
+  // Do not block the student on email delivery.
   if (
     exam?.audience === "open" &&
     exam.visitor_reveal_score &&
@@ -741,7 +825,7 @@ export async function submitAttempt(
   ) {
     const candidate = attempt.candidate as ExamCandidate | null;
     if (candidate?.email) {
-      const mailed = await sendAttemptCertificateEmail({
+      void sendAttemptCertificateEmail({
         exam: {
           title: exam.title,
           slug: exam.slug,
@@ -754,15 +838,29 @@ export async function submitAttempt(
           percent: totals.percent,
           total_score: totals.totalScore,
           max_score: totals.maxScore,
-          submitted_at: new Date().toISOString(),
+          submitted_at: submittedAt,
         },
         candidate,
+      }).then((mailed) => {
+        if (!mailed.ok) {
+          console.error("[exam] auto certificate email", mailed.message);
+        }
       });
-      if (!mailed.ok) {
-        console.error("[exam] auto certificate email", mailed.message);
-      }
     }
   }
+
+  const portion = computeAutoPortion(questions, scoredAnswers);
+  const provisional: StudentProvisionalResult | undefined =
+    portion.autoPercent != null
+      ? {
+          autoPercent: portion.autoPercent,
+          autoPassed: passedExam(
+            portion.autoPercent,
+            Number(exam?.pass_percent ?? 50),
+          ),
+          awaitingManual: !totals.allManualDone,
+        }
+      : undefined;
 
   return {
     ok: true,
@@ -770,6 +868,9 @@ export async function submitAttempt(
       ? "Submitted. Auto-scored."
       : "Submitted. Awaiting manual grading.",
     attemptId,
+    provisional,
+    percent: totals.percent,
+    attemptStatus: status,
   };
 }
 
@@ -857,8 +958,15 @@ export async function listStudentExams(): Promise<StudentExamListItem[]> {
     .order("started_at", { ascending: false });
 
   const latest = new Map<string, string>();
+  const completedByExam = new Map<string, number>();
   for (const a of attempts ?? []) {
     if (!latest.has(a.exam_id)) latest.set(a.exam_id, a.status);
+    if (a.status !== "in_progress") {
+      completedByExam.set(
+        a.exam_id,
+        (completedByExam.get(a.exam_id) ?? 0) + 1,
+      );
+    }
   }
 
   const yearIndexes = [
@@ -880,11 +988,24 @@ export async function listStudentExams(): Promise<StudentExamListItem[]> {
       isProgrammeMonth(e.year_index) && unlockByYear.has(e.year_index)
         ? unlockByYear.get(e.year_index)!
         : null;
+    const status = latest.get(e.id) ?? null;
+    const completed = completedByExam.get(e.id) ?? 0;
+    const retakes = examRetakesRemaining(completed);
+    const canRetake =
+      status != null &&
+      status !== "in_progress" &&
+      canStartAnotherExamAttempt(completed) &&
+      examIsOpen(e) &&
+      !(unlock && !unlock.available);
     return {
       ...e,
-      attempt_status: latest.get(e.id) ?? null,
+      attempt_status: status,
+      attempt_count: completed + (status === "in_progress" ? 1 : 0),
+      retakes_remaining: retakes,
+      can_retake: canRetake,
       unlock,
-      unlock_message: unlock && !unlock.available ? yearUnlockMessage(unlock) : null,
+      unlock_message:
+        unlock && !unlock.available ? yearUnlockMessage(unlock) : null,
     };
   });
 }

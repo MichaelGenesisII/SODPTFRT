@@ -57,6 +57,7 @@ export const COUNTRIES = [
   "Spain",
   "Italy",
   "Portugal",
+  "Poland",
   "Sweden",
   "Norway",
   "Denmark",
@@ -99,6 +100,7 @@ export const NATIONALITIES = [
   "Spanish",
   "Italian",
   "Portuguese",
+  "Polish",
   "Swedish",
   "Norwegian",
   "Danish",
@@ -329,9 +331,9 @@ export function validateStep(
   }
 
   if (stepId === "personal") {
-    if (!data.nationality) errors.nationality = "Nationality is required.";
-    else if (!(NATIONALITIES as readonly string[]).includes(data.nationality))
-      errors.nationality = "Please choose a valid nationality.";
+    if (!data.nationality) errors.nationality = "Country is required.";
+    else if (!(COUNTRIES as readonly string[]).includes(data.nationality))
+      errors.nationality = "Please choose a valid country.";
     if (!data.dateOfBirth) errors.dateOfBirth = "Date of birth is required.";
     else {
       const dob = new Date(`${data.dateOfBirth}T00:00:00`);

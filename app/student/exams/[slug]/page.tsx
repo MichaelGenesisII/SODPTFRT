@@ -37,6 +37,8 @@ export default async function StudentExamTakePage({ params }: Props) {
       unlock={bundle.unlock}
       unlockMessage={bundle.unlockMessage}
       provisional={bundle.provisional}
+      canRetake={bundle.canRetake}
+      retakesRemaining={bundle.retakesRemaining}
     />
   );
 }

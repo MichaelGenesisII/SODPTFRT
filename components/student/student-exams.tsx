@@ -12,6 +12,8 @@ type StudentExamRow = Exam & {
   attempt_status?: string | null;
   unlock?: { available: boolean } | null;
   unlock_message?: string | null;
+  can_retake?: boolean;
+  retakes_remaining?: number;
 };
 
 type ExamsTab = "available" | "in_progress" | "done";
@@ -39,8 +41,8 @@ function attemptLabel(status: string | null | undefined): string {
 function bucketFor(exam: StudentExamRow): ExamsTab {
   const status = exam.attempt_status;
   if (status === "in_progress") return "in_progress";
+  if (exam.can_retake) return "available";
   if (status && status !== "in_progress") return "done";
-  // Locked year papers stay listed under Available with a lock notice.
   return "available";
 }
 
@@ -144,10 +146,10 @@ export function StudentExamsClient({ exams }: { exams: StudentExamRow[] }) {
         }
         body={
           tab === "available"
-            ? "Open an exam when you are ready — the clock starts on Begin."
+            ? "Open an exam when you are ready — the clock starts on Begin. Each paper allows one retake."
             : tab === "in_progress"
               ? "You have an open attempt. Continue before the window closes."
-              : "View certificates and status for finished sittings."
+              : "Finished sittings. Retakes appear under Available while you still have one left."
         }
       >
         {active.rows.length === 0 ? (
@@ -170,11 +172,13 @@ export function StudentExamsClient({ exams }: { exams: StudentExamRow[] }) {
               const cta =
                 status === "in_progress"
                   ? "Continue"
-                  : status
-                    ? "View"
-                    : locked
-                      ? "Details"
-                      : "Open";
+                  : exam.can_retake
+                    ? "Retake"
+                    : status
+                      ? "View"
+                      : locked
+                        ? "Details"
+                        : "Open";
               return (
                 <li key={exam.id} className="py-3.5 first:pt-0 last:pb-0">
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-3">
@@ -199,7 +203,9 @@ export function StudentExamsClient({ exams }: { exams: StudentExamRow[] }) {
                       <p className="mt-1 text-xs text-ink/45">
                         {locked
                           ? exam.unlock_message || "Not available yet"
-                          : attemptLabel(status)}
+                          : exam.can_retake
+                            ? `Retake available · ${exam.retakes_remaining ?? 1} left`
+                            : attemptLabel(status)}
                       </p>
                       <p className="mt-1.5 text-[0.65rem] font-medium uppercase tracking-[0.12em] text-pine/70">
                         {open ? "Hide details" : "Show details"}

@@ -20,6 +20,7 @@ import {
   type ExamActionResult,
 } from "@/app/admin/exams/actions";
 import { EvaluationManager } from "@/components/admin/evaluation-manager";
+import { ExamResultsBoard } from "@/components/admin/exam-results-board";
 import { ExamSamples } from "@/components/admin/exam-samples";
 import { ExamUpload } from "@/components/admin/exam-upload";
 import type { EvaluationAttemptRow } from "@/app/admin/evaluation/actions";
@@ -53,7 +54,7 @@ type Props = {
   initialTab?: DeskTab;
 };
 
-type DeskTab = "compose" | "upload" | "samples" | "queue" | "insight";
+type DeskTab = "compose" | "upload" | "samples" | "queue" | "results" | "insight";
 type MobileSurface = "directory" | "workspace";
 
 export function ExamsManager({
@@ -193,6 +194,7 @@ export function ExamsManager({
             { id: "upload" as const, label: "Upload" },
             { id: "samples" as const, label: "Samples" },
             { id: "queue" as const, label: "Queue" },
+            { id: "results" as const, label: "Results" },
             { id: "insight" as const, label: "Insight" },
           ] as const
         ).map((tab) => {
@@ -231,6 +233,8 @@ export function ExamsManager({
         />
       ) : deskTab === "queue" ? (
         <EvaluationManager initial={attempts} />
+      ) : deskTab === "results" ? (
+        <ExamResultsBoard attempts={attempts} />
       ) : deskTab === "upload" ? (
         <ExamUpload
           exams={exams}
@@ -704,7 +708,7 @@ function ExamMetaForm({
             <span>
               <span className="font-medium text-pine">Show final score</span>
               <span className="mt-0.5 block text-xs text-ink/55">
-                Certificate-style result on the thank-you page
+                Show pass/fail % on the thank-you page when grading is ready
               </span>
             </span>
           </label>

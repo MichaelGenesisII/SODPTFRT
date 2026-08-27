@@ -231,19 +231,69 @@ export async function listAdminStudents(): Promise<AdminStudentRecord[]> {
   const userIds = [...latestByUser.keys()];
   if (userIds.length === 0) return [];
 
-  const { data: profiles, error: profileError } = await supabase
+  const firstProfileQuery = await supabase
     .from("student_profiles")
     .select(
-      "id, email, first_name, middle_name, last_name, is_active, created_at, passport_path, account_kind, manuals_status, manuals_sent_at",
+      "id, email, first_name, middle_name, last_name, is_active, created_at, passport_path, account_kind, manuals_status, manuals_sent_at, manuals_1_sent_at, manuals_2_sent_at, manuals_3_sent_at",
     )
     .in("id", userIds)
     .order("created_at", { ascending: false });
 
-  if (profileError) {
-    console.error("[admin/students] profiles", profileError.message);
-    throw new Error(
-      publicActionMessage(profileError, "Could not load students."),
-    );
+  type ProfileRow = {
+    id: string;
+    email: string;
+    first_name: string | null;
+    middle_name: string | null;
+    last_name: string | null;
+    is_active: boolean;
+    created_at: string;
+    passport_path: string | null;
+    account_kind: string | null;
+    manuals_status: string | null;
+    manuals_sent_at: string | null;
+    manuals_1_sent_at?: string | null;
+    manuals_2_sent_at?: string | null;
+    manuals_3_sent_at?: string | null;
+  };
+
+  let profiles: ProfileRow[] | null =
+    (firstProfileQuery.data as ProfileRow[] | null) ?? null;
+  if (firstProfileQuery.error) {
+    if (/manuals_[123]_sent_at|column/i.test(firstProfileQuery.error.message)) {
+      const retry = await supabase
+        .from("student_profiles")
+        .select(
+          "id, email, first_name, middle_name, last_name, is_active, created_at, passport_path, account_kind, manuals_status, manuals_sent_at",
+        )
+        .in("id", userIds)
+        .order("created_at", { ascending: false });
+      if (retry.error) {
+        console.error("[admin/students] profiles", retry.error.message);
+        throw new Error(
+          publicActionMessage(retry.error, "Could not load students."),
+        );
+      }
+      profiles = ((retry.data ?? []) as Omit<
+        ProfileRow,
+        "manuals_1_sent_at" | "manuals_2_sent_at" | "manuals_3_sent_at"
+      >[]).map((row) => ({
+        ...row,
+        manuals_1_sent_at: null,
+        manuals_2_sent_at: null,
+        manuals_3_sent_at: null,
+      }));
+    } else {
+      console.error(
+        "[admin/students] profiles",
+        firstProfileQuery.error.message,
+      );
+      throw new Error(
+        publicActionMessage(
+          firstProfileQuery.error,
+          "Could not load students.",
+        ),
+      );
+    }
   }
 
   // Optional enrichment tables (payments / records may not be migrated yet)
@@ -1064,24 +1114,62 @@ export async function listStudentPlacements(
   });
 }
 
-export async function setManualsSent(
+export type ManualsSendPart = 1 | 2 | 3;
+
+const MANUALS_PART_COLUMN: Record<
+  ManualsSendPart,
+  "manuals_1_sent_at" | "manuals_2_sent_at" | "manuals_3_sent_at"
+> = {
+  1: "manuals_1_sent_at",
+  2: "manuals_2_sent_at",
+  3: "manuals_3_sent_at",
+};
+
+/** Mark one of the three manuals sends and queue a notification email. */
+export async function sendManualsPart(
   studentId: string,
-  sent: boolean,
+  part: ManualsSendPart,
 ): Promise<StudentActionResult> {
   try {
+    if (part !== 1 && part !== 2 && part !== 3) {
+      return { ok: false, message: "Choose manuals send 1, 2, or 3." };
+    }
+
     const access = await requireAccessibleStudent(studentId);
     if (!access.ok) return { ok: false, message: access.message };
 
     const actor = await requireSessionAdmin();
     const service = createServiceSupabaseClient();
     const now = new Date().toISOString();
+    const column = MANUALS_PART_COLUMN[part];
+
+    const { data: current, error: loadError } = await service
+      .from("student_profiles")
+      .select(
+        "email, first_name, manuals_1_sent_at, manuals_2_sent_at, manuals_3_sent_at",
+      )
+      .eq("id", studentId)
+      .maybeSingle();
+
+    if (loadError) {
+      return { ok: false, message: publicActionMessage(loadError.message) };
+    }
+    if (!current) {
+      return { ok: false, message: "Student not found." };
+    }
+
+    const next1 = part === 1 ? now : current.manuals_1_sent_at;
+    const next2 = part === 2 ? now : current.manuals_2_sent_at;
+    const next3 = part === 3 ? now : current.manuals_3_sent_at;
+    const allSent = Boolean(next1 && next2 && next3);
 
     const { error } = await service
       .from("student_profiles")
       .update({
-        manuals_status: sent ? "sent" : "not_sent",
-        manuals_sent_at: sent ? now : null,
-        manuals_sent_by: sent ? actor.id : null,
+        [column]: now,
+        manuals_sent_at: now,
+        manuals_sent_by: actor.id,
+        manuals_status: allSent ? "sent" : "not_sent",
       })
       .eq("id", studentId);
 
@@ -1089,32 +1177,63 @@ export async function setManualsSent(
       return { ok: false, message: publicActionMessage(error.message) };
     }
 
-    if (sent) {
-      const { data: profile } = await service
-        .from("student_profiles")
-        .select("email, first_name")
-        .eq("id", studentId)
-        .maybeSingle();
-      if (profile?.email) {
-        void sendManualsSentEmail({
-          to: profile.email,
-          firstName: profile.first_name || "friend",
-          portalLoginUrl: `${portalBaseUrl()}/login/student`,
-          portalSupportUrl: `${portalBaseUrl()}/student/support`,
-          siteUrl: SOD_SITE,
-        }).catch((mailError) => {
-          console.error("[admin/students] manuals email", mailError);
-        });
-      }
+    if (current.email) {
+      void sendManualsSentEmail({
+        to: current.email,
+        firstName: current.first_name || "friend",
+        portalLoginUrl: `${portalBaseUrl()}/login/student`,
+        portalSupportUrl: `${portalBaseUrl()}/student/support`,
+        siteUrl: SOD_SITE,
+      }).catch((mailError) => {
+        console.error("[admin/students] manuals email", mailError);
+      });
     }
 
     revalidatePath("/admin/students");
     return {
       ok: true,
-      message: sent
-        ? "Manuals marked as sent. A notification email was queued."
-        : "Manuals marked as not sent.",
+      message: `Manuals send ${part} of 3 marked. A notification email was queued.`,
     };
+  } catch (error) {
+    if (error instanceof Error && error.message === "Unauthorized") {
+      return unauthorized();
+    }
+    return { ok: false, message: publicActionMessage(error) };
+  }
+}
+
+/** @deprecated Prefer sendManualsPart — kept for bulk / toggle compatibility. */
+export async function setManualsSent(
+  studentId: string,
+  sent: boolean,
+): Promise<StudentActionResult> {
+  if (sent) {
+    return sendManualsPart(studentId, 1);
+  }
+
+  try {
+    const access = await requireAccessibleStudent(studentId);
+    if (!access.ok) return { ok: false, message: access.message };
+
+    const service = createServiceSupabaseClient();
+    const { error } = await service
+      .from("student_profiles")
+      .update({
+        manuals_status: "not_sent",
+        manuals_sent_at: null,
+        manuals_sent_by: null,
+        manuals_1_sent_at: null,
+        manuals_2_sent_at: null,
+        manuals_3_sent_at: null,
+      })
+      .eq("id", studentId);
+
+    if (error) {
+      return { ok: false, message: publicActionMessage(error.message) };
+    }
+
+    revalidatePath("/admin/students");
+    return { ok: true, message: "All manuals sends cleared." };
   } catch (error) {
     if (error instanceof Error && error.message === "Unauthorized") {
       return unauthorized();
@@ -1140,26 +1259,33 @@ export async function bulkSetManualsSent(
       const access = await requireAccessibleStudent(studentId);
       if (!access.ok) continue;
 
+      const { data: current } = await service
+        .from("student_profiles")
+        .select("email, first_name, manuals_1_sent_at")
+        .eq("id", studentId)
+        .maybeSingle();
+
+      // Bulk action = wave 1 only; sends 2 and 3 stay per-student on the dossier.
+      if (current?.manuals_1_sent_at) {
+        continue;
+      }
+
       const { error } = await service
         .from("student_profiles")
         .update({
-          manuals_status: "sent",
+          manuals_1_sent_at: now,
           manuals_sent_at: now,
           manuals_sent_by: actor.id,
+          manuals_status: "not_sent",
         })
         .eq("id", studentId);
 
       if (!error) {
         updated += 1;
-        const { data: profile } = await service
-          .from("student_profiles")
-          .select("email, first_name")
-          .eq("id", studentId)
-          .maybeSingle();
-        if (profile?.email) {
+        if (current?.email) {
           void sendManualsSentEmail({
-            to: profile.email,
-            firstName: profile.first_name || "friend",
+            to: current.email,
+            firstName: current.first_name || "friend",
             portalLoginUrl: `${portalBaseUrl()}/login/student`,
             portalSupportUrl: `${portalBaseUrl()}/student/support`,
             siteUrl: SOD_SITE,
@@ -1173,7 +1299,7 @@ export async function bulkSetManualsSent(
     revalidatePath("/admin/students");
     return {
       ok: true,
-      message: `Marked manuals sent for ${updated} student${updated === 1 ? "" : "s"}. Notification emails were queued.`,
+      message: `Marked manuals send 1 of 3 for ${updated} student${updated === 1 ? "" : "s"}. Notification emails were queued.`,
     };
   } catch (error) {
     if (error instanceof Error && error.message === "Unauthorized") {

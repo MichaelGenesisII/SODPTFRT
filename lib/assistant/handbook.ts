@@ -79,7 +79,7 @@ Payment labels students may see: Paid · Proof under review · Part paid · Unpa
 Where: /student/payments (alumni: /alumni/payments)
 
 **Fees (as shown in the portal):**
-- **Tuition fee — £300** — pay in full or in instalments; **minimum £50** per payment
+- **Tuition fee — £300** — pay in full or in instalments; **minimum £30** per payment
 - **Graduation fee — £50** — due before graduation; same instalment rules
 - Applying to join is free; tuition is what secures the place after acceptance
 
@@ -117,14 +117,16 @@ Attendance on Records matters for exams and graduation eligibility.
   - Exam Year N opens after Month N Saturday class is marked **present**
   - Must **pass Exam Year N−1** before Year N opens
   - If a month was missed, that year stays locked until attendance is recorded or staff unlock it — tell them to contact **Admin / Support** via /student/support
-- Sitting: timer starts when they begin; answers autosave; pass mark is shown; after submit, **auto-marked questions show % and Pass/Fail immediately**; written answers go to the exams desk; final certificate / scorecard entry when grading is released
+- Sitting: timer starts when they begin; answers autosave; pass mark is shown; after submit, **auto-marked questions show % and Pass/Fail immediately**; written answers go to the exams desk; final score appears when grading is released
+- Each exam allows **one retake** (two sittings total) for enrolled student papers and open / visitor papers
 - May count toward the Records scorecard when released
 - Do **not** reveal answer keys or exam content
 
 **Open / visitor exams** — public links at /exam/[slug]
 - Separate from enrolled year papers
 - Visitor may enter name, email, phone, church, then sit the paper
-- Scoring / certificate behaviour depends on that exam’s public settings
+- Scoring behaviour depends on that exam’s public settings
+- One retake is allowed for the same email
 
 ## Records (/student/records)
 - Scorecard: exam average, attendance %, present count, passed count; parish, batch, enrolled/completed where shown

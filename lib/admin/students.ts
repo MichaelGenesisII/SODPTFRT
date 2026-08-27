@@ -88,6 +88,9 @@ export type AdminStudentRecord = {
   account_kind?: "student" | "alumni";
   manuals_status?: "not_sent" | "sent";
   manuals_sent_at?: string | null;
+  manuals_1_sent_at?: string | null;
+  manuals_2_sent_at?: string | null;
+  manuals_3_sent_at?: string | null;
   passport_url?: string | null;
   enrolment: AdminEnrolmentRecord | null;
   fees: StudentFeeSnap[];

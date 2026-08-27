@@ -37,6 +37,7 @@ function evalFail(
 export type EvaluationAttemptRow = ExamAttempt & {
   exam_title: string;
   exam_audience: "student" | "open";
+  exam_year_index: number | null;
   pass_percent: number;
   counts_toward_record: boolean;
   display_name: string;
@@ -123,11 +124,11 @@ export async function listEvaluationAttempts(): Promise<EvaluationAttemptRow[]> 
   let q = supabase
     .from("exam_attempts")
     .select(
-      "*, exams!inner(title, audience, pass_percent, counts_toward_record, parish_id)",
+      "*, exams!inner(title, audience, pass_percent, counts_toward_record, parish_id, year_index)",
     )
     .in("status", ["submitted", "graded", "released"])
     .order("submitted_at", { ascending: false })
-    .limit(200);
+    .limit(500);
 
   if (!isNationalAdmin(actor) && actor.parish_id) {
     q = q.eq("exams.parish_id", actor.parish_id);
@@ -166,6 +167,7 @@ export async function listEvaluationAttempts(): Promise<EvaluationAttemptRow[]> 
       audience: "student" | "open";
       pass_percent: number;
       counts_toward_record: boolean;
+      year_index?: number | null;
     } | null;
     const candidate = row.candidate as {
       full_name?: string;
@@ -193,6 +195,8 @@ export async function listEvaluationAttempts(): Promise<EvaluationAttemptRow[]> 
       updated_at: row.updated_at,
       exam_title: exam?.title ?? "Exam",
       exam_audience: exam?.audience ?? "student",
+      exam_year_index:
+        exam?.year_index != null ? Number(exam.year_index) : null,
       pass_percent: Number(exam?.pass_percent ?? 50),
       counts_toward_record: Boolean(exam?.counts_toward_record),
       display_name:
@@ -213,7 +217,7 @@ export async function getEvaluationDetail(attemptId: string): Promise<{
   const { supabase } = access;
   const { data: row } = await supabase
     .from("exam_attempts")
-    .select("*, exams(title, audience, pass_percent, counts_toward_record)")
+    .select("*, exams(title, audience, pass_percent, counts_toward_record, year_index)")
     .eq("id", attemptId)
     .maybeSingle();
   if (!row) return null;
@@ -223,6 +227,7 @@ export async function getEvaluationDetail(attemptId: string): Promise<{
     audience: "student" | "open";
     pass_percent: number;
     counts_toward_record: boolean;
+    year_index?: number | null;
   };
 
   const { data: questions } = await supabase
@@ -280,6 +285,8 @@ export async function getEvaluationDetail(attemptId: string): Promise<{
       updated_at: row.updated_at,
       exam_title: examMeta.title,
       exam_audience: examMeta.audience,
+      exam_year_index:
+        examMeta.year_index != null ? Number(examMeta.year_index) : null,
       pass_percent: Number(examMeta.pass_percent),
       counts_toward_record: Boolean(examMeta.counts_toward_record),
       display_name,

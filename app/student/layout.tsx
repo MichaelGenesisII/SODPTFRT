@@ -20,6 +20,7 @@ export default async function StudentLayout({
     redirect("/alumni");
   }
 
+  // Pulse uses cached session; claim work is non-blocking inside pulse.
   const supportPulse = await getStudentSupportPulse();
 
   return (

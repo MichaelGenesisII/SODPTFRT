@@ -33,8 +33,10 @@ function previewBody(body: string) {
 export async function getStudentSupportPulse(): Promise<StudentSupportPulse> {
   try {
     const student = await requireSessionStudent();
-    // Claim orphan /support notes so pulse/badge can see them before inbox load.
-    await claimTicketsByEmail(student);
+    // Claim orphans in the background — do not block first paint after login.
+    void claimTicketsByEmail(student).catch((error) => {
+      console.error("[student/support/pulse] claim", error);
+    });
     const supabase = await createServerSupabaseClient();
 
     const { data: tickets, error: ticketsError } = await supabase

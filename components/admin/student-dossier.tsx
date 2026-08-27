@@ -12,6 +12,7 @@ import {
   reassignEnrolmentBatch,
   resetStudentPassword,
   setManualsSent,
+  sendManualsPart,
   setStudentActive,
   unlockStudentExamMonth,
   upgradeAlumniToStudent,
@@ -21,7 +22,6 @@ import {
   type StudentActionResult,
   type StudentPathDetail,
 } from "@/app/admin/students/actions";
-import { StudentCertificateDesk } from "@/components/admin/student-certificate-desk";
 import { DeskLoader } from "@/components/ui/desk-loader";
 import {
   ENROLMENT_STATUS_META,
@@ -37,7 +37,6 @@ import { ATTENDANCE_MODES } from "@/lib/enrol/schema";
 import { FEE_STATUS_META, formatGbp } from "@/lib/payments/fees";
 import {
   ACCOUNT_KIND_LABELS,
-  MANUALS_STATUS_LABELS,
 } from "@/lib/student/account";
 import { formatBatchLabel, formatBatchPlacementLabel, type Batch, type Parish } from "@/lib/parishes";
 
@@ -869,11 +868,6 @@ function ManagePane({
           </ul>
         </div>
 
-        <StudentCertificateDesk
-          studentId={student.id}
-          studentName={studentFullName(student)}
-        />
-
         {enrol ? (
           <ContactEditor
             enrol={enrol}
@@ -977,32 +971,78 @@ function ManagePane({
           </p>
           <h3 className="mt-1 font-display text-xl text-pine">Course manuals</h3>
           <p className="mt-2 text-sm text-ink/60">
-            Status:{" "}
-            {MANUALS_STATUS_LABELS[student.manuals_status ?? "not_sent"]}
+            Send manuals in three parts. Each send notifies the student by email.
           </p>
-          <button
-            type="button"
-            disabled={pending}
-            onClick={() =>
-              onRun(
-                () =>
-                  setManualsSent(
-                    student.id,
-                    student.manuals_status !== "sent",
-                  ),
-                { label: "Updating manuals…" },
-              )
-            }
-            className="mt-4 inline-flex min-h-[2.5rem] min-w-[10rem] items-center justify-center border border-pine/25 px-4 py-2.5 text-sm font-medium text-pine hover:border-pine disabled:opacity-50"
-          >
-            {pending && busyLabel?.startsWith("Updating manuals") ? (
-              <DeskLoader label={busyLabel} />
-            ) : student.manuals_status === "sent" ? (
-              "Mark manuals not sent"
-            ) : (
-              "Mark manuals sent"
-            )}
-          </button>
+          <ul className="mt-4 space-y-2">
+            {(
+              [
+                {
+                  part: 1 as const,
+                  at: student.manuals_1_sent_at,
+                  label: "Send 1 of 3",
+                },
+                {
+                  part: 2 as const,
+                  at: student.manuals_2_sent_at,
+                  label: "Send 2 of 3",
+                },
+                {
+                  part: 3 as const,
+                  at: student.manuals_3_sent_at,
+                  label: "Send 3 of 3",
+                },
+              ] as const
+            ).map((item) => (
+              <li
+                key={item.part}
+                className="flex flex-wrap items-center justify-between gap-2 border border-stone bg-white/50 px-3 py-2.5"
+              >
+                <div>
+                  <p className="text-sm font-medium text-pine">{item.label}</p>
+                  <p className="text-xs text-ink/50">
+                    {item.at
+                      ? `Sent ${formatAdminDate(item.at)}`
+                      : "Not sent yet"}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  disabled={pending || Boolean(item.at)}
+                  onClick={() =>
+                    onRun(() => sendManualsPart(student.id, item.part), {
+                      label: `Sending manuals ${item.part}…`,
+                    })
+                  }
+                  className="inline-flex min-h-[2.25rem] min-w-[7.5rem] items-center justify-center border border-pine/25 px-3 py-1.5 text-sm font-medium text-pine hover:border-pine disabled:opacity-45"
+                >
+                  {pending &&
+                  busyLabel?.startsWith(`Sending manuals ${item.part}`) ? (
+                    <DeskLoader label={busyLabel} />
+                  ) : item.at ? (
+                    "Sent"
+                  ) : (
+                    "Send now"
+                  )}
+                </button>
+              </li>
+            ))}
+          </ul>
+          {(student.manuals_1_sent_at ||
+            student.manuals_2_sent_at ||
+            student.manuals_3_sent_at) && (
+            <button
+              type="button"
+              disabled={pending}
+              onClick={() =>
+                onRun(() => setManualsSent(student.id, false), {
+                  label: "Clearing manuals…",
+                })
+              }
+              className="mt-3 text-xs font-medium text-ink/50 underline hover:text-pine disabled:opacity-50"
+            >
+              Clear all manuals sends
+            </button>
+          )}
         </div>
 
         {student.account_kind === "alumni" ? (

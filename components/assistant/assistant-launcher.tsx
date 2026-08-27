@@ -54,7 +54,7 @@ export function AssistantLauncher({
         aria-expanded={open}
         aria-controls={open ? "assistant-panel" : undefined}
         aria-label={open ? "Close chat with David" : "Open chat with David"}
-        className={`assistant-launcher-button relative inline-flex h-[3.75rem] w-[3.75rem] items-center justify-center rounded-full border border-white/70 bg-gradient-to-br from-pine via-pine to-celadon text-mist shadow-[0_14px_40px_-12px_rgba(20,53,44,0.55)] transition-[transform,box-shadow,background-color] duration-300 hover:scale-[1.04] hover:shadow-[0_18px_44px_-10px_rgba(20,53,44,0.62)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[3px] focus-visible:outline-celadon active:scale-[0.98] sm:h-16 sm:w-16 ${
+        className={`assistant-launcher-button relative inline-flex h-[3.75rem] w-[3.75rem] items-center justify-center rounded-full border border-white/70 bg-gradient-to-br from-pine via-pine to-celadon text-mist transition-[transform,box-shadow,background-color] duration-300 hover:scale-[1.06] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[3px] focus-visible:outline-celadon active:scale-[0.98] sm:h-16 sm:w-16 ${
           open ? "assistant-launcher-open" : ""
         }`}
       >
@@ -64,7 +64,7 @@ export function AssistantLauncher({
           }`}
           aria-hidden
         >
-          <SupportHeadsetIcon className="h-[1.65rem] w-[1.65rem] sm:h-7 sm:w-7" />
+          <SupportHeadsetIcon className="assistant-launcher-icon h-[1.65rem] w-[1.65rem] sm:h-7 sm:w-7" />
         </span>
 
         <span

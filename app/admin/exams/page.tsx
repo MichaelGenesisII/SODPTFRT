@@ -26,13 +26,15 @@ export default async function AdminExamsPage({ searchParams }: Props) {
   const initialTab =
     params.tab === "queue" || params.tab === "evaluation"
       ? "queue"
-      : params.tab === "insight"
-        ? "insight"
-        : params.tab === "samples"
-          ? "samples"
-          : params.tab === "upload"
-            ? "upload"
-            : "compose";
+      : params.tab === "results"
+        ? "results"
+        : params.tab === "insight"
+          ? "insight"
+          : params.tab === "samples"
+            ? "samples"
+            : params.tab === "upload"
+              ? "upload"
+              : "compose";
 
   let exams: Awaited<ReturnType<typeof listAdminExams>> = [];
   let attempts: Awaited<ReturnType<typeof listEvaluationAttempts>> = [];
@@ -68,8 +70,9 @@ export default async function AdminExamsPage({ searchParams }: Props) {
         </h1>
         <p className="mt-1.5 max-w-2xl text-sm leading-relaxed text-ink/70">
           Build papers in Compose, import finished files on Upload, or download
-          ready-made tests from Samples. Grade and release in Queue. Parish desks
-          only manage exams for their parish; national desks can publish UK-wide.
+          ready-made tests from Samples. Grade in Queue, then review student and
+          visitor scores on Results. Parish desks only manage exams for their
+          parish; national desks can publish UK-wide.
         </p>
       </section>
 

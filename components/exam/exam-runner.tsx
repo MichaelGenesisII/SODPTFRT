@@ -12,7 +12,7 @@ import {
   submitAttempt,
   type TakeActionResult,
 } from "@/app/exam/actions";
-import { DeskLoaderOverlay } from "@/components/ui/desk-loader";
+import { ExamSubmitOverlay } from "@/components/exam/exam-submit-overlay";
 import type {
   Exam,
   ExamAnswer,
@@ -26,7 +26,7 @@ type Props = {
   questions: ExamQuestion[];
   attempt: ExamAttempt;
   initialAnswers: ExamAnswer[];
-  onSubmitted?: () => void;
+  onSubmitted?: (result?: TakeActionResult) => void;
 };
 
 function draftKey(attemptId: string) {
@@ -108,9 +108,8 @@ export function ExamRunner({
   onSubmitted,
 }: Props) {
   const [index, setIndex] = useState(0);
-  const [, startTransition] = useTransition();
-  const [busyLabel, setBusyLabel] = useState<string | null>(null);
-  const submitting = Boolean(busyLabel?.startsWith("Submitting"));
+  const [pending, startTransition] = useTransition();
+  const [submitting, setSubmitting] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [saveHint, setSaveHint] = useState<string | null>(null);
   const [answers, setAnswers] = useState<Record<string, Record<string, unknown>>>(
@@ -210,21 +209,25 @@ export function ExamRunner({
   }
 
   function doSubmit() {
-    setBusyLabel("Submitting exam…");
+    if (submitting || pending) return;
+    setSubmitting(true);
     startTransition(async () => {
       try {
-        await flushAll();
         const result: TakeActionResult = await submitAttempt(
           attempt.id,
           attempt.attempt_token,
+          answers,
         );
         setMessage(result.message);
         if (result.ok) {
           clearLocalDraft(attempt.id);
-          onSubmitted?.();
+          onSubmitted?.(result);
+          return;
         }
-      } finally {
-        setBusyLabel(null);
+        setSubmitting(false);
+      } catch {
+        setMessage("Could not submit. Please try again.");
+        setSubmitting(false);
       }
     });
   }
@@ -251,10 +254,7 @@ export function ExamRunner({
       className="exam-runner relative flex min-h-dvh flex-col overflow-hidden bg-[radial-gradient(120%_80%_at_10%_0%,#1f4a3c_0%,#14352c_45%,#0f2820_100%)] text-mist"
       aria-busy={submitting}
     >
-      <DeskLoaderOverlay
-        active={submitting}
-        label={busyLabel ?? "Submitting exam…"}
-      />
+      <ExamSubmitOverlay active={submitting} />
       <div
         className="pointer-events-none absolute inset-0 opacity-[0.07]"
         style={{
@@ -405,16 +405,39 @@ function QuestionInput({
                     onChange({ selected: opt.key });
                   }
                 }}
-                className={`flex w-full items-start gap-3 border px-4 py-3 text-left text-sm transition ${
+                className={`relative flex w-full items-start gap-3 overflow-hidden border-2 px-4 py-3.5 text-left text-sm transition ${
                   active
-                    ? "border-celadon bg-celadon/15 text-mist"
-                    : "border-white/15 bg-white/[0.03] hover:border-white/35"
+                    ? "border-mist bg-mist text-pine ring-2 ring-celadon/60"
+                    : "border-white/15 bg-transparent text-mist/55 hover:border-white/40 hover:bg-white/[0.04] hover:text-mist/80"
                 } disabled:opacity-50`}
               >
-                <span className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center border border-current/40 font-mono text-xs">
-                  {opt.key}
+                {active ? (
+                  <span
+                    className="absolute inset-y-0 left-0 w-1.5 bg-celadon"
+                    aria-hidden
+                  />
+                ) : null}
+                <span
+                  className={`mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center font-mono text-xs font-bold ${
+                    active
+                      ? "bg-pine text-mist"
+                      : "border border-white/25 bg-white/5 text-mist/45"
+                  }`}
+                >
+                  {active ? "✓" : opt.key}
                 </span>
-                <span>{opt.text}</span>
+                <span className="min-w-0 flex-1">
+                  <span
+                    className={`block ${active ? "font-semibold text-pine" : ""}`}
+                  >
+                    {opt.text}
+                  </span>
+                  {active ? (
+                    <span className="mt-1 block text-[0.7rem] font-medium uppercase tracking-[0.12em] text-celadon">
+                      Selected
+                    </span>
+                  ) : null}
+                </span>
               </button>
             </li>
           );
@@ -433,13 +456,24 @@ function QuestionInput({
             type="button"
             disabled={disabled}
             onClick={() => onChange({ value: flag })}
-            className={`border px-4 py-6 text-center font-display text-xl transition ${
+            className={`relative overflow-hidden border-2 px-4 py-6 text-center font-display text-xl transition ${
               current === flag
-                ? "border-celadon bg-celadon/20"
-                : "border-white/15 hover:border-white/40"
+                ? "border-mist bg-mist text-pine ring-2 ring-celadon/60"
+                : "border-white/15 bg-transparent text-mist/50 hover:border-white/40 hover:bg-white/[0.04] hover:text-mist/80"
             } disabled:opacity-50`}
           >
+            {current === flag ? (
+              <span
+                className="absolute inset-y-0 left-0 w-1.5 bg-celadon"
+                aria-hidden
+              />
+            ) : null}
             {flag ? "True" : "False"}
+            {current === flag ? (
+              <span className="mt-1 block font-sans text-[0.65rem] font-medium uppercase tracking-[0.14em] text-celadon">
+                Selected
+              </span>
+            ) : null}
           </button>
         ))}
       </div>

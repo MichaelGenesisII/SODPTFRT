@@ -178,7 +178,6 @@ export function LoginPanel({ role }: LoginPanelProps) {
         }
 
         router.replace("/admin?welcome=1");
-        router.refresh();
         return;
       }
 
@@ -213,7 +212,6 @@ export function LoginPanel({ role }: LoginPanelProps) {
       if (!isAlumni && accountKind === "alumni") {
         toastSuccess("You are signed in.", "Welcome");
         router.replace("/alumni");
-        router.refresh();
         return;
       }
 
@@ -228,7 +226,6 @@ export function LoginPanel({ role }: LoginPanelProps) {
           ? nextRaw
           : home;
       router.replace(nextPath);
-      router.refresh();
     } catch (err) {
       console.error("[login] sign-in failed", err);
       setStatus("idle");
