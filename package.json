@@ -9,14 +9,18 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "@ai-sdk/openai": "^4.0.50",
+    "@ai-sdk/react": "^4.0.86",
     "@stripe/stripe-js": "^9.13.0",
     "@supabase/ssr": "^0.12.4",
     "@supabase/supabase-js": "^2.110.9",
+    "ai": "^7.0.83",
     "emoji-picker-react": "^4.19.1",
     "next": "16.2.12",
     "react": "19.2.4",
     "react-dom": "19.2.4",
     "react-spinners": "^0.17.0",
+    "resend": "^6.24.0",
     "stripe": "^22.4.0",
     "xlsx": "^0.18.5"
   },

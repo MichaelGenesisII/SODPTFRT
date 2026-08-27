@@ -16,7 +16,7 @@ import {
 import { getSessionStudent, getStudentEnrolment } from "@/lib/student/auth";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { createServiceSupabaseClient } from "@/lib/supabase/service";
-import type { GalleryScope } from "@/lib/gallery/constants";
+import type { StudentGalleryScope } from "@/lib/gallery/constants";
 import {
   fetchGalleryPortraitPage,
   mapGalleryPhotos,
@@ -289,7 +289,7 @@ export async function deleteGraduationSelfie(): Promise<PhotoActionResult> {
 }
 
 export async function listGalleryPhotos(
-  scope: GalleryScope,
+  scope: StudentGalleryScope,
   page = 1,
 ): Promise<
   | {
@@ -315,14 +315,7 @@ export async function listGalleryPhotos(
       return {
         ok: false,
         message:
-          "Your batch is not set yet. Try cohort or parish gallery.",
-      };
-    }
-    if (scope === "cohort" && !enrolment.cohort_id) {
-      return {
-        ok: false,
-        message:
-          "Your cohort is not set yet. Parish gallery is still available.",
+          "Your batch is not set yet. Try the parish gallery.",
       };
     }
 

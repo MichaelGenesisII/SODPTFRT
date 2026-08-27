@@ -1,5 +1,5 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
-import { portalBaseUrl } from "@/lib/email/backend";
+import { portalBaseUrl } from "@/lib/email/config";
 
 type UnsubscribePayload = {
   e: string;
@@ -7,9 +7,7 @@ type UnsubscribePayload = {
 };
 
 function unsubscribeSecret(): string {
-  const secret =
-    process.env.UNSUBSCRIBE_SECRET?.trim() ||
-    process.env.EMAIL_API_SECRET?.trim();
+  const secret = process.env.UNSUBSCRIBE_SECRET?.trim();
   if (!secret) {
     throw new Error("Unsubscribe signing secret is not configured.");
   }

@@ -42,16 +42,31 @@ async function requireStudent() {
   return profile;
 }
 
-async function studentReference(userId: string) {
+async function studentPaymentIdentity(userId: string): Promise<{
+  enrolmentId: string | null;
+  reference: string;
+  referenceCompact: string;
+}> {
   const supabase = await createServerSupabaseClient();
   const { data } = await supabase
     .from("enrolments")
-    .select("reference")
+    .select("id, reference, reference_compact")
     .eq("user_id", userId)
     .order("created_at", { ascending: false })
     .limit(1)
     .maybeSingle();
-  return data?.reference?.trim() || "SOD";
+
+  const reference = data?.reference?.trim() || "SOD";
+  const referenceCompact =
+    data?.reference_compact?.trim() ||
+    reference.replace(/[^A-Za-z0-9]/g, "").toUpperCase() ||
+    "SOD";
+
+  return {
+    enrolmentId: data?.id ? String(data.id) : null,
+    reference,
+    referenceCompact,
+  };
 }
 
 function parseAmount(raw: FormDataEntryValue | null): number | null {
@@ -95,7 +110,7 @@ export async function startStripeCheckout(
     const check = validateInstallmentAmount(amount, remaining);
     if (!check.ok) return { ok: false, message: check.message };
 
-    const reference = await studentReference(profile.id);
+    const identity = await studentPaymentIdentity(profile.id);
     const service = createServiceSupabaseClient();
     const now = new Date().toISOString();
 
@@ -136,7 +151,9 @@ export async function startStripeCheckout(
         email: profile.email,
         firstName: profile.first_name,
         feeType,
-        reference,
+        reference: identity.reference,
+        referenceCompact: identity.referenceCompact,
+        enrolmentId: identity.enrolmentId,
         paymentRowId: row.id,
         transactionId: txId,
         amountGbp: amount,
@@ -202,6 +219,7 @@ export async function submitBankProof(
 
     const feeType = feeTypeRaw as FeeType;
     const profile = await requireStudent();
+    const identity = await studentPaymentIdentity(profile.id);
     const supabase = await createServerSupabaseClient();
     await ensureStudentFeeRows(supabase, profile.id);
     const current = await getFeePayment(supabase, profile.id, feeType);
@@ -225,7 +243,9 @@ export async function submitBankProof(
           : file.type === "image/gif"
             ? "gif"
             : "jpg";
-    const path = `${profile.id}/${feeType}-${Date.now()}.${ext}`;
+    // Filename includes compact enrolment ref so desk/storage can match bank statements.
+    const safeRef = identity.referenceCompact.replace(/[^A-Za-z0-9]/g, "") || "SOD";
+    const path = `${profile.id}/${safeRef}-${feeType}-${Date.now()}.${ext}`;
     const buffer = Buffer.from(await file.arrayBuffer());
     const service = createServiceSupabaseClient();
 
@@ -246,6 +266,10 @@ export async function submitBankProof(
       return fail(uploadError, "Could not upload proof.");
     }
 
+    const taggedNote = note
+      ? `Ref ${identity.referenceCompact} · ${note}`
+      : `Bank transfer reference ${identity.referenceCompact} (${identity.reference})`;
+
     let transaction: Awaited<
       ReturnType<typeof markFeePendingReview>
     >["transaction"];
@@ -256,7 +280,7 @@ export async function submitBankProof(
         amountGbp: amount,
         proofPath: path,
         proofMime: file.type,
-        proofNote: note || null,
+        proofNote: taggedNote,
       });
       transaction = marked.transaction;
     } catch (markError) {
@@ -266,13 +290,12 @@ export async function submitBankProof(
     }
 
     const fee = feeDefinition(feeType);
-    const reference = await studentReference(profile.id);
     void sendPaymentProofReceivedEmail({
       to: profile.email,
       firstName: profile.first_name,
       feeLabel: fee.label,
       amountLabel: formatGbp(Number(transaction.amount_gbp)),
-      reference,
+      reference: identity.reference,
       methodLabel: "Bank transfer",
       portalPaymentsUrl: `${portalBaseUrl()}/student/payments`,
       portalSupportUrl: `${portalBaseUrl()}/student/support`,

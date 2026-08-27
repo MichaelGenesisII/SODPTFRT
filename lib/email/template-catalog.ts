@@ -372,7 +372,7 @@ export const EMAIL_SAMPLE_VALUES: Record<string, string> = {
   portalPaymentsUrl: "https://portal.schoolofdisciples.org/student/payments",
   portalRecordsUrl: "https://portal.schoolofdisciples.org/student/records",
   portalCertificatesUrl:
-    "https://portal.schoolofdisciples.org/student/certificates",
+    "https://portal.schoolofdisciples.org/student/records",
   enrolUrl: "https://portal.schoolofdisciples.org/enrol",
   feeLabel: "Tuition",
   amountLabel: "£50.00",
@@ -402,7 +402,7 @@ export function catalogEntryForSlug(
   return EMAIL_TEMPLATE_BY_SLUG.get(slug as EmailTemplateSlug) ?? null;
 }
 
-export const EMAIL_API_SLUG_BY_PATH: Record<string, EmailTemplateSlug> = {
+export const EMAIL_SLUG_BY_ROUTE: Record<string, EmailTemplateSlug> = {
   "/api/email/enrolment-confirmation": "enrolment-confirmation",
   "/api/email/enrolment-access-recovery": "enrolment-access-recovery",
   "/api/email/payment-received": "payment-received",
@@ -421,3 +421,6 @@ export const EMAIL_API_SLUG_BY_PATH: Record<string, EmailTemplateSlug> = {
   "/api/email/admin-access-recovery": "admin-access-recovery",
   "/api/email/campaign": "campaign",
 };
+
+/** @deprecated Use EMAIL_SLUG_BY_ROUTE */
+export const EMAIL_API_SLUG_BY_PATH = EMAIL_SLUG_BY_ROUTE;

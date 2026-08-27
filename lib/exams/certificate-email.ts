@@ -1,6 +1,6 @@
 import {
   portalBaseUrl,
-  sendExamResultCertificateViaBackend,
+  sendExamResultCertificateEmail,
 } from "@/lib/email/backend";
 import { attemptHasFinalScore } from "@/lib/exams/attempt-status";
 import { passedExam } from "@/lib/exams/score";
@@ -47,7 +47,7 @@ export async function sendAttemptCertificateEmail(input: {
       ? `/exam/${exam.slug}`
       : `/student/exams/${exam.slug}`;
 
-  const result = await sendExamResultCertificateViaBackend({
+  const result = await sendExamResultCertificateEmail({
     to: email,
     candidateName: name,
     candidateEmail: email,

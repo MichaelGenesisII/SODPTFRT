@@ -13,6 +13,11 @@ export type ZoomClass = {
   batch_id: string | null;
   cohort_id: string | null;
   year: number | null;
+  /**
+   * Which programme month (1–10) this Saturday class unlocks for year exams.
+   * Null = attendance does not unlock a year paper.
+   */
+  programme_month: number | null;
   scheduled_start: string;
   scheduled_end: string;
   duration_minutes: number;

@@ -69,6 +69,11 @@ export type Exam = {
   visitor_reveal_score: boolean;
   /** Open exams: email certificate when final score is ready (requires reveal). */
   visitor_email_scorecard: boolean;
+  /**
+   * Programme month / year paper 1–10. Null = not attendance-gated
+   * (legacy or open papers).
+   */
+  year_index: number | null;
   parish_id: string | null;
   batch_id: string | null;
   instructions: string | null;
@@ -159,6 +164,8 @@ export type StudentRecordSession = {
   session_date: string;
   label: string | null;
   present: boolean;
+  /** Programme month 1–10 when this present mark unlocks Exam Year N. */
+  month_index?: number | null;
 };
 
 export type StudentRecordEntry = {

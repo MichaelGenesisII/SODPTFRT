@@ -163,6 +163,8 @@ function mapStudentClass(row: Record<string, unknown>): ZoomClass {
     batch_id: (row.batch_id as string | null) ?? null,
     cohort_id: (row.cohort_id as string | null) ?? null,
     year: row.year != null ? Number(row.year) : null,
+    programme_month:
+      row.programme_month != null ? Number(row.programme_month) : null,
     scheduled_start: row.scheduled_start as string,
     scheduled_end: row.scheduled_end as string,
     duration_minutes: Number(row.duration_minutes),
@@ -357,6 +359,7 @@ export async function markAttendanceWithCode(
     sessionDate: sessionDateFromStart(klass.scheduled_start),
     label: klass.title,
     present: true,
+    monthIndex: (klass.programme_month as number | null) ?? null,
   });
 
   if (!wrote) {

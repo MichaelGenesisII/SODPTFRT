@@ -1,7 +1,20 @@
+import { portalBaseUrl } from "@/lib/email/config";
+import { sendCampaignBatch } from "@/lib/email/dispatch";
+import type { SendCampaignEmailPayload } from "@/lib/email/campaigns";
 import {
-  getActiveTemplateOverridePayload,
-} from "@/lib/email/template-overrides";
-import { postEmailApi, type EmailApiResult } from "@/lib/email/post-api";
+  sendTemplatedEmail,
+  type EmailSendResult,
+} from "@/lib/email/post-api";
+import { getActiveTemplateOverridePayload } from "@/lib/email/template-overrides";
+
+export { portalBaseUrl };
+export type { SendCampaignEmailPayload };
+
+export type EmailResult = EmailSendResult;
+/** @deprecated Use EmailResult */
+export type SendTicketEmailResult = EmailSendResult;
+/** @deprecated Use EmailResult */
+export type EmailApiResult = EmailSendResult;
 
 export type SendTicketEmailPayload = {
   to: string;
@@ -15,8 +28,6 @@ export type SendTicketEmailPayload = {
   siteUrl: string;
 };
 
-export type SendTicketEmailResult = EmailApiResult;
-
 export type SendEnrolmentEmailPayload = {
   to: string;
   firstName: string;
@@ -28,22 +39,22 @@ export type SendEnrolmentEmailPayload = {
   siteUrl: string;
 };
 
-export async function sendTicketEmailViaBackend(
+export async function sendTicketEmail(
   payload: SendTicketEmailPayload,
-): Promise<SendTicketEmailResult> {
-  return postEmailApi("/api/email/ticket-reply", payload);
+): Promise<EmailResult> {
+  return sendTemplatedEmail("/api/email/ticket-reply", payload);
 }
 
-export async function sendEnrolmentEmailViaBackend(
+export async function sendEnrolmentEmail(
   payload: SendEnrolmentEmailPayload,
-): Promise<SendTicketEmailResult> {
-  return postEmailApi("/api/email/enrolment-confirmation", payload);
+): Promise<EmailResult> {
+  return sendTemplatedEmail("/api/email/enrolment-confirmation", payload);
 }
 
-export async function sendEnrolmentAccessRecoveryViaBackend(
+export async function sendEnrolmentAccessRecoveryEmail(
   payload: SendEnrolmentEmailPayload,
-): Promise<SendTicketEmailResult> {
-  return postEmailApi("/api/email/enrolment-access-recovery", payload);
+): Promise<EmailResult> {
+  return sendTemplatedEmail("/api/email/enrolment-access-recovery", payload);
 }
 
 export type SendAdminWelcomeEmailPayload = {
@@ -60,10 +71,10 @@ export type SendAdminWelcomeEmailPayload = {
   inviterDeskKind?: "national" | "parish";
 };
 
-export async function sendAdminWelcomeEmailViaBackend(
+export async function sendAdminWelcomeEmail(
   payload: SendAdminWelcomeEmailPayload,
-): Promise<SendTicketEmailResult> {
-  return postEmailApi("/api/email/admin-welcome", payload);
+): Promise<EmailResult> {
+  return sendTemplatedEmail("/api/email/admin-welcome", payload);
 }
 
 export type SendAdminAccessRecoveryEmailPayload = {
@@ -78,10 +89,10 @@ export type SendAdminAccessRecoveryEmailPayload = {
   parishName?: string;
 };
 
-export function sendAdminAccessRecoveryViaBackend(
+export function sendAdminAccessRecoveryEmail(
   payload: SendAdminAccessRecoveryEmailPayload,
-): Promise<SendTicketEmailResult> {
-  return postEmailApi("/api/email/admin-access-recovery", payload);
+): Promise<EmailResult> {
+  return sendTemplatedEmail("/api/email/admin-access-recovery", payload);
 }
 
 export type SendStudentScorecardEmailPayload = {
@@ -107,18 +118,15 @@ export type SendStudentScorecardEmailPayload = {
   issuedAtLabel: string;
   issuedByName: string;
   portalRecordsUrl: string;
-  /** Stable portal page for certificates (optional companion to signed download). */
   portalCertificatesUrl?: string;
-  /** Signed HTTPS URL for the student’s passport photo (optional). */
   passportImageUrl?: string;
-  /** Signed download URL for course certificate — only when on file & appropriate. */
   certificateDownloadUrl?: string;
 };
 
-export async function sendStudentScorecardViaBackend(
+export async function sendStudentScorecardEmail(
   payload: SendStudentScorecardEmailPayload,
-): Promise<SendTicketEmailResult> {
-  return postEmailApi("/api/email/student-scorecard", payload);
+): Promise<EmailResult> {
+  return sendTemplatedEmail("/api/email/student-scorecard", payload);
 }
 
 export type SendExamResultCertificatePayload = {
@@ -139,86 +147,53 @@ export type SendExamResultCertificatePayload = {
   examUrl?: string;
 };
 
-export async function sendExamResultCertificateViaBackend(
+export async function sendExamResultCertificateEmail(
   payload: SendExamResultCertificatePayload,
-): Promise<SendTicketEmailResult> {
-  return postEmailApi("/api/email/exam-result-certificate", payload);
+): Promise<EmailResult> {
+  return sendTemplatedEmail("/api/email/exam-result-certificate", payload);
 }
 
 export type CampaignRecipientPayload = {
   to: string;
   firstName: string;
   parishName?: string;
-  /** Human unsubscribe page URL (footer). */
   unsubscribeUrl?: string;
-  /** One-click URL for List-Unsubscribe header. */
   listUnsubscribeUrl?: string;
 };
 
-export type SendCampaignEmailPayload = {
-  templateId: string;
-  portalUrl: string;
-  portalSupportUrl: string;
-  siteUrl: string;
-  personalNote?: string;
-  customSubject?: string;
-  customHeadline?: string;
-  customBody?: string;
-  recipients: CampaignRecipientPayload[];
-  attachments?: {
-    filename: string;
-    content: string;
-    contentType: string;
-  }[];
-};
-
-export type SendCampaignEmailResult = SendTicketEmailResult & {
+export type SendCampaignEmailResult = EmailResult & {
   sent?: number;
   failed?: number;
   remaining?: number;
   results?: { to: string; ok: boolean; message?: string; subject?: string }[];
 };
 
-export async function sendCampaignViaBackend(
+export async function sendCampaignEmail(
   payload: SendCampaignEmailPayload,
 ): Promise<SendCampaignEmailResult> {
-  const baseUrl = process.env.EMAIL_API_URL?.replace(/\/$/, "");
-  const secret = process.env.EMAIL_API_SECRET;
-
-  if (!baseUrl || !secret) {
-    return {
-      ok: false,
-      message: "Email backend is not configured.",
-    };
-  }
-
   try {
     const override = await getActiveTemplateOverridePayload("campaign");
-    const response = await fetch(`${baseUrl}/api/email/campaign`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-SOD-Email-Secret": secret,
-      },
-      body: JSON.stringify(
-        override ? { ...payload, templateOverride: override } : payload,
-      ),
-    });
+    const data = await sendCampaignBatch(payload, override);
 
-    const data = (await response.json().catch(() => null)) as {
-      ok?: boolean;
-      message?: string;
-      sent?: number;
-      failed?: number;
-      remaining?: number;
-      results?: SendCampaignEmailResult["results"];
-    } | null;
-
-    if (!response.ok || !data) {
+    if (!data.ok && data.message.startsWith("Rate limit")) {
       return {
         ok: false,
-        message: data?.message || "Campaign could not be sent. Please try again.",
-        remaining: data?.remaining,
+        message: data.message,
+        remaining: data.remaining,
+      };
+    }
+
+    if (!data.ok && data.message === "Email is not configured.") {
+      return {
+        ok: false,
+        message: "Email is not configured.",
+      };
+    }
+
+    if (!data.ok && data.message === "Campaigns need a subject and body.") {
+      return {
+        ok: false,
+        message: data.message,
       };
     }
 
@@ -241,12 +216,4 @@ export async function sendCampaignViaBackend(
 
 export function defaultTicketEmailSubject(topic: string, reference: string) {
   return `School of Disciples · ${topic} (${reference})`;
-}
-
-export function portalBaseUrl() {
-  return (
-    process.env.NEXT_PUBLIC_APP_URL?.replace(/\/$/, "") ||
-    process.env.EMAIL_PORTAL_URL?.replace(/\/$/, "") ||
-    "http://localhost:3000"
-  );
 }

@@ -98,12 +98,6 @@ const nav: NavEntry[] = [
         hint: "Attendance & scores",
       },
       {
-        href: "/student/certificates",
-        id: "certificates",
-        label: "Certificates",
-        hint: "Course certificate download",
-      },
-      {
         href: "/student/gallery",
         id: "gallery",
         label: "Gallery",
@@ -135,6 +129,12 @@ const nav: NavEntry[] = [
         id: "support",
         label: "Support",
         hint: "Chat with the Listening Desk",
+      },
+      {
+        href: "/student/account",
+        id: "account",
+        label: "Account",
+        hint: "Password & profile",
       },
     ],
   },
@@ -767,7 +767,13 @@ export function StudentShell({ profile, children }: StudentShellProps) {
               </p>
             </div>
           </div>
-          <form action={signOutStudent} className="mt-4">
+          <Link
+            href="/student/account"
+            className="mt-4 block w-full border border-mist/20 px-4 py-2.5 text-center text-sm font-medium text-mist/75 transition-colors hover:border-mist/45 hover:bg-mist/[0.06] hover:text-mist"
+          >
+            Account settings
+          </Link>
+          <form action={signOutStudent} className="mt-2">
             <button
               type="submit"
               className="w-full border border-mist/20 px-4 py-2.5 text-sm font-medium text-mist/75 transition-colors hover:border-mist/45 hover:bg-mist/[0.06] hover:text-mist"

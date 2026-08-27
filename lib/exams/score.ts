@@ -109,3 +109,38 @@ export function computeAttemptTotals(
 export function passedExam(percent: number, passPercent: number): boolean {
   return percent >= passPercent;
 }
+
+/** Auto-marked portion only — for immediate pass/fail before manual grading. */
+export function computeAutoPortion(
+  questions: ExamQuestion[],
+  answers: Pick<
+    ExamAnswer,
+    "question_id" | "auto_points" | "response"
+  >[],
+): {
+  autoScore: number;
+  autoMax: number;
+  autoPercent: number | null;
+} {
+  const byQ = new Map(answers.map((a) => [a.question_id, a]));
+  let autoScore = 0;
+  let autoMax = 0;
+
+  for (const q of questions) {
+    if (needsManualGrade(q)) continue;
+    autoMax += Number(q.points);
+    const ans = byQ.get(q.id);
+    const pts =
+      ans?.auto_points != null
+        ? Number(ans.auto_points)
+        : autoScoreAnswer(q, ans?.response ?? null) ?? 0;
+    autoScore += pts;
+  }
+
+  const autoPercent =
+    autoMax > 0
+      ? Math.round((autoScore / autoMax) * 10000) / 100
+      : null;
+
+  return { autoScore, autoMax, autoPercent };
+}

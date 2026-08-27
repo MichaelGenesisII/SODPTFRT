@@ -248,12 +248,12 @@ export async function createAdminAccount(
       ? ("parish" as const)
       : ("national" as const);
 
-    const { portalBaseUrl, sendAdminWelcomeEmailViaBackend } = await import(
+    const { portalBaseUrl, sendAdminWelcomeEmail } = await import(
       "@/lib/email/backend"
     );
     const { SOD_SITE } = await import("@/lib/site-nav");
 
-    const mail = await sendAdminWelcomeEmailViaBackend({
+    const mail = await sendAdminWelcomeEmail({
       to: email,
       fullName: fullName || displayName,
       temporaryPassword: password,

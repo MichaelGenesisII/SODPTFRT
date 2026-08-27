@@ -42,7 +42,6 @@ function resolveCertificateMime(file: File): string | null {
 function revalidateCertificatePaths() {
   revalidatePath("/admin/students");
   revalidatePath("/admin/records");
-  revalidatePath("/student/certificates");
 }
 
 /**

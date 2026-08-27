@@ -26,15 +26,15 @@ export default async function AdminAlumniPage() {
     <div className="mx-auto max-w-7xl">
       <section className="animate-fade-rise mb-4 sm:mb-6">
         <p className="text-[0.65rem] font-medium uppercase tracking-[0.18em] text-celadon">
-          Legacy register
+          National desk
         </p>
         <h1 className="mt-1.5 font-display text-[clamp(1.6rem,5vw,2.4rem)] tracking-[-0.02em] text-pine">
-          Alumni
+          Alumni register
         </h1>
         <p className="mt-1.5 max-w-2xl text-sm leading-relaxed text-ink/70">
-          Import graduating lists even when emails are missing. Search portraits
-          by name or centre, assign an email when ready, and that alumni can
-          enter the alumni portal.
+          Browse graduating batches by name or centre, review marks and
+          attendance from the import sheets, then assign an email when someone
+          is ready for the alumni portal.
         </p>
       </section>
 

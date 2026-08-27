@@ -505,6 +505,7 @@ function CreateClassForm({
     batch_id: string | null;
     cohort_id?: string | null;
     year?: number | null;
+    programme_month?: number | null;
     scheduled_start: string;
     scheduled_end: string;
     duration_minutes: number;
@@ -526,6 +527,7 @@ function CreateClassForm({
   const [batchId, setBatchId] = useState("");
   const [cohortId, setCohortId] = useState("");
   const [programmeYear, setProgrammeYear] = useState("");
+  const [programmeMonth, setProgrammeMonth] = useState("");
   const [startLocal, setStartLocal] = useState("");
   const [endLocal, setEndLocal] = useState("");
   const [duration, setDuration] = useState(90);
@@ -556,6 +558,7 @@ function CreateClassForm({
       batch_id: batchId || null,
       cohort_id: cohortId || null,
       year: programmeYear ? Number(programmeYear) : null,
+      programme_month: programmeMonth ? Number(programmeMonth) : null,
       scheduled_start: new Date(startLocal).toISOString(),
       scheduled_end: new Date(endLocal).toISOString(),
       duration_minutes: duration,
@@ -631,6 +634,25 @@ function CreateClassForm({
           onChange={(e) => setDescription(e.target.value)}
           className={`mt-1 ${fieldClass}`}
         />
+      </label>
+
+      <label className="block text-sm">
+        Programme month (exam unlock)
+        <select
+          value={programmeMonth}
+          onChange={(e) => setProgrammeMonth(e.target.value)}
+          className={`mt-1 ${fieldClass}`}
+        >
+          <option value="">None — no year-exam unlock</option>
+          {Array.from({ length: 10 }, (_, i) => i + 1).map((n) => (
+            <option key={n} value={n}>
+              Month {n} → Exam Year {n}
+            </option>
+          ))}
+        </select>
+        <span className="mt-1 block text-xs text-ink/50">
+          Present attendance for this class unlocks that year paper.
+        </span>
       </label>
 
       <fieldset>

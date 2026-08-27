@@ -5,7 +5,9 @@ import { revalidatePath } from "next/cache";
 import {
   autoScoreAnswer,
   computeAttemptTotals,
+  computeAutoPortion,
   needsManualGrade,
+  passedExam,
 } from "@/lib/exams/score";
 import type {
   Exam,
@@ -18,6 +20,12 @@ import {
   attemptHasFinalScore,
   sendAttemptCertificateEmail,
 } from "@/lib/exams/certificate-email";
+import {
+  getYearUnlockState,
+  isProgrammeMonth,
+  yearUnlockMessage,
+  type YearUnlockState,
+} from "@/lib/exams/year-unlock";
 import { publicActionMessage } from "@/lib/safe-action-message";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { createServiceSupabaseClient } from "@/lib/supabase/service";
@@ -29,6 +37,18 @@ export type TakeActionResult = {
   message: string;
   attemptId?: string;
   token?: string;
+};
+
+export type StudentExamListItem = Exam & {
+  attempt_status?: string | null;
+  unlock?: YearUnlockState | null;
+  unlock_message?: string | null;
+};
+
+export type StudentProvisionalResult = {
+  autoPercent: number;
+  autoPassed: boolean;
+  awaitingManual: boolean;
 };
 
 function fail(message: string, fallback?: string): TakeActionResult {
@@ -104,6 +124,10 @@ async function loadExamBySlug(slug: string): Promise<Exam | null> {
   return {
     ...data,
     pass_percent: Number(data.pass_percent),
+    year_index:
+      (data as { year_index?: number | null }).year_index != null
+        ? Number((data as { year_index?: number | null }).year_index)
+        : null,
     visitor_reveal_score: Boolean(
       (data as { visitor_reveal_score?: boolean }).visitor_reveal_score,
     ),
@@ -167,6 +191,9 @@ export async function getStudentExamBundle(slug: string): Promise<{
   questionCount: number;
   attempt: ExamAttempt | null;
   answers: ExamAnswer[];
+  unlock: YearUnlockState | null;
+  unlockMessage: string | null;
+  provisional: StudentProvisionalResult | null;
 } | null> {
   const supabase = await createServerSupabaseClient();
   const {
@@ -183,6 +210,13 @@ export async function getStudentExamBundle(slug: string): Promise<{
     .eq("id", exam.id)
     .maybeSingle();
   if (!visible) return null;
+
+  let unlock: YearUnlockState | null = null;
+  let unlockMessage: string | null = null;
+  if (isProgrammeMonth(exam.year_index)) {
+    unlock = await getYearUnlockState(user.id, exam.year_index);
+    unlockMessage = unlock.available ? null : yearUnlockMessage(unlock);
+  }
 
   const { data: attempt } = await supabase
     .from("exam_attempts")
@@ -234,14 +268,52 @@ export async function getStudentExamBundle(slug: string): Promise<{
     ? attemptHasFinalScore(typedAttempt)
     : false;
 
+  let provisional: StudentProvisionalResult | null = null;
+  if (
+    typedAttempt &&
+    typedAttempt.status === "submitted" &&
+    !revealFinal
+  ) {
+    const service = createServiceSupabaseClient();
+    const fullQuestions = await loadQuestions(exam.id);
+    const { data: scoredAnswers } = await service
+      .from("exam_answers")
+      .select("question_id, auto_points, response")
+      .eq("attempt_id", typedAttempt.id);
+    const portion = computeAutoPortion(
+      fullQuestions,
+      (scoredAnswers ?? []) as ExamAnswer[],
+    );
+    if (portion.autoPercent != null) {
+      provisional = {
+        autoPercent: portion.autoPercent,
+        autoPassed: passedExam(portion.autoPercent, Number(exam.pass_percent)),
+        awaitingManual: true,
+      };
+    }
+  }
+
+  // Students always see final score when graded/released (no answer keys).
+  const publicAttempt = typedAttempt
+    ? publicFacingAttempt(typedAttempt, revealFinal || Boolean(provisional))
+    : null;
+
+  if (publicAttempt && provisional && !revealFinal) {
+    publicAttempt.percent = provisional.autoPercent;
+    publicAttempt.auto_score = 0;
+    publicAttempt.manual_score = 0;
+    publicAttempt.total_score = 0;
+  }
+
   return {
     exam,
     questions: stripAnswerKeys(questions),
     questionCount,
-    attempt: typedAttempt
-      ? publicFacingAttempt(typedAttempt, revealFinal)
-      : null,
+    attempt: publicAttempt,
     answers: stripAnswerScores(answers),
+    unlock,
+    unlockMessage,
+    provisional,
   };
 }
 
@@ -281,9 +353,20 @@ export async function startStudentAttempt(
   const full = {
     ...examRow,
     pass_percent: Number(examRow.pass_percent),
+    year_index:
+      (examRow as { year_index?: number | null }).year_index != null
+        ? Number((examRow as { year_index?: number | null }).year_index)
+        : null,
   } as Exam;
   if (full.audience !== "student" || !examIsOpen(full)) {
     return fail("This exam is not open.");
+  }
+
+  if (isProgrammeMonth(full.year_index)) {
+    const unlock = await getYearUnlockState(user.id, full.year_index);
+    if (!unlock.available) {
+      return fail(yearUnlockMessage(unlock));
+    }
   }
 
   const { data: inProgress } = await supabase
@@ -739,9 +822,7 @@ export async function requestOpenExamCertificateEmail(
     : fail(mailed.message);
 }
 
-export async function listStudentExams(): Promise<
-  (Exam & { attempt_status?: string | null })[]
-> {
+export async function listStudentExams(): Promise<StudentExamListItem[]> {
   const supabase = await createServerSupabaseClient();
   const {
     data: { user },
@@ -755,7 +836,14 @@ export async function listStudentExams(): Promise<
     .in("status", ["published", "closed"])
     .order("updated_at", { ascending: false });
 
-  const rows = (exams ?? []) as Exam[];
+  const rows = (exams ?? []).map((e) => ({
+    ...(e as Exam),
+    pass_percent: Number(e.pass_percent),
+    year_index:
+      (e as { year_index?: number | null }).year_index != null
+        ? Number((e as { year_index?: number | null }).year_index)
+        : null,
+  }));
   if (!rows.length) return [];
 
   const { data: attempts } = await supabase
@@ -773,9 +861,30 @@ export async function listStudentExams(): Promise<
     if (!latest.has(a.exam_id)) latest.set(a.exam_id, a.status);
   }
 
-  return rows.map((e) => ({
-    ...e,
-    pass_percent: Number(e.pass_percent),
-    attempt_status: latest.get(e.id) ?? null,
-  }));
+  const yearIndexes = [
+    ...new Set(
+      rows
+        .map((e) => e.year_index)
+        .filter((y): y is number => isProgrammeMonth(y)),
+    ),
+  ];
+  const unlockByYear = new Map<number, YearUnlockState>();
+  await Promise.all(
+    yearIndexes.map(async (y) => {
+      unlockByYear.set(y, await getYearUnlockState(user.id, y));
+    }),
+  );
+
+  return rows.map((e) => {
+    const unlock =
+      isProgrammeMonth(e.year_index) && unlockByYear.has(e.year_index)
+        ? unlockByYear.get(e.year_index)!
+        : null;
+    return {
+      ...e,
+      attempt_status: latest.get(e.id) ?? null,
+      unlock,
+      unlock_message: unlock && !unlock.available ? yearUnlockMessage(unlock) : null,
+    };
+  });
 }

@@ -8,7 +8,11 @@ import {
   type ExamAttemptStatus,
 } from "@/lib/exams/types";
 
-type StudentExamRow = Exam & { attempt_status?: string | null };
+type StudentExamRow = Exam & {
+  attempt_status?: string | null;
+  unlock?: { available: boolean } | null;
+  unlock_message?: string | null;
+};
 
 type ExamsTab = "available" | "in_progress" | "done";
 
@@ -36,6 +40,7 @@ function bucketFor(exam: StudentExamRow): ExamsTab {
   const status = exam.attempt_status;
   if (status === "in_progress") return "in_progress";
   if (status && status !== "in_progress") return "done";
+  // Locked year papers stay listed under Available with a lock notice.
   return "available";
 }
 
@@ -158,12 +163,18 @@ export function StudentExamsClient({ exams }: { exams: StudentExamRow[] }) {
             {active.rows.map((exam) => {
               const open = openId === exam.id;
               const status = exam.attempt_status;
+              const locked =
+                !status &&
+                exam.unlock != null &&
+                exam.unlock.available === false;
               const cta =
                 status === "in_progress"
                   ? "Continue"
                   : status
                     ? "View"
-                    : "Open";
+                    : locked
+                      ? "Details"
+                      : "Open";
               return (
                 <li key={exam.id} className="py-3.5 first:pt-0 last:pb-0">
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-3">
@@ -176,14 +187,19 @@ export function StudentExamsClient({ exams }: { exams: StudentExamRow[] }) {
                       className="min-w-0 flex-1 text-left"
                     >
                       <p className="text-[0.6rem] uppercase tracking-[0.12em] text-celadon">
-                        {examWindowLabel(exam)} · {exam.duration_minutes} min ·
-                        pass {exam.pass_percent}%
+                        {locked ? "Locked" : examWindowLabel(exam)} ·{" "}
+                        {exam.duration_minutes} min · pass {exam.pass_percent}%
+                        {exam.year_index != null
+                          ? ` · Year ${exam.year_index}`
+                          : ""}
                       </p>
                       <h3 className="mt-1 break-words font-display text-base text-pine sm:text-lg">
                         {exam.title}
                       </h3>
                       <p className="mt-1 text-xs text-ink/45">
-                        {attemptLabel(status)}
+                        {locked
+                          ? exam.unlock_message || "Not available yet"
+                          : attemptLabel(status)}
                       </p>
                       <p className="mt-1.5 text-[0.65rem] font-medium uppercase tracking-[0.12em] text-pine/70">
                         {open ? "Hide details" : "Show details"}
@@ -198,7 +214,12 @@ export function StudentExamsClient({ exams }: { exams: StudentExamRow[] }) {
                   </div>
                   {open ? (
                     <div className="mt-3 border border-stone bg-white/50 px-3 py-3 text-sm text-ink/65">
-                      {exam.instructions ? (
+                      {locked && exam.unlock_message ? (
+                        <p className="leading-relaxed text-ink/70">
+                          {exam.unlock_message} Contact Admin if you need this
+                          month unlocked.
+                        </p>
+                      ) : exam.instructions ? (
                         <p className="whitespace-pre-wrap break-words leading-relaxed">
                           {exam.instructions}
                         </p>

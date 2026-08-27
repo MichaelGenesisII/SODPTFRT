@@ -264,6 +264,7 @@ export function StudentPaymentsBoard({
                   key={feeType}
                   feeType={feeType}
                   payment={payment}
+                  reference={reference}
                   referenceCompact={referenceCompact}
                   cardReady={cardReady}
                   open={open}
@@ -313,6 +314,7 @@ function Header({ flash }: { flash?: string | null }) {
 function FeeRow({
   feeType,
   payment,
+  reference,
   referenceCompact,
   cardReady,
   open,
@@ -326,6 +328,7 @@ function FeeRow({
 }: {
   feeType: FeeType;
   payment: StudentFeePayment | null;
+  reference: string;
   referenceCompact: string;
   cardReady: boolean;
   open: boolean;
@@ -495,10 +498,12 @@ function FeeRow({
             <div className="space-y-4">
               <div className="border border-stone bg-stone/30 px-3 py-3 text-sm text-ink/70">
                 <p className="leading-relaxed">
-                  Transfer using reference{" "}
+                  On the transfer, put this payment reference exactly:{" "}
                   <span className="break-all font-mono text-pine">
                     {referenceCompact}
                   </span>
+                  . Admins match bank deposits and Stripe payments to this
+                  enrolment id (also shown as {reference} on your application).
                 </p>
                 <label className="mt-3 block text-sm font-medium text-ink">
                   Amount transferred (£)

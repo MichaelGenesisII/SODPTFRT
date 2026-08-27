@@ -40,6 +40,7 @@ export type AdminPaymentQueueItem = FeeTransaction & {
   student_name: string;
   student_email: string;
   reference: string | null;
+  reference_compact: string | null;
   parish_id: string | null;
   parish_name: string | null;
   batch_label: string | null;
@@ -142,7 +143,7 @@ async function hydrateQueueItems(
     supabase
       .from("enrolments")
       .select(
-        "user_id, reference, parish_id, batch_id, created_at, parishes(name), batches(name, year)",
+        "user_id, reference, reference_compact, parish_id, batch_id, created_at, parishes(name), batches(name, year)",
       )
       .in("user_id", userIds)
       .order("created_at", { ascending: false }),
@@ -161,6 +162,7 @@ async function hydrateQueueItems(
   type EnrolRow = {
     user_id: string;
     reference: string | null;
+    reference_compact: string | null;
     parish_id: string | null;
     parishes: { name: string } | { name: string }[] | null;
     batches:
@@ -190,6 +192,7 @@ async function hydrateQueueItems(
       student_name: profile?.name ?? "Student",
       student_email: profile?.email ?? "",
       reference: enrol?.reference ?? null,
+      reference_compact: enrol?.reference_compact ?? null,
       parish_id: enrol?.parish_id ?? null,
       parish_name: parish?.name ?? null,
       batch_label: batch

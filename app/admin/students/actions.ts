@@ -902,6 +902,7 @@ export type StudentPathDetail = {
     session_date: string;
     label: string | null;
     present: boolean;
+    month_index?: number | null;
   }[];
   entries: {
     id: string;
@@ -943,7 +944,7 @@ export async function getAdminStudentPathDetail(
   const [{ data: sessions }, { data: entries }] = await Promise.all([
     supabase
       .from("student_record_sessions")
-      .select("id, session_date, label, present")
+      .select("id, session_date, label, present, month_index")
       .eq("record_id", match.id)
       .order("session_date", { ascending: true }),
     supabase
@@ -960,6 +961,10 @@ export async function getAdminStudentPathDetail(
       session_date: s.session_date as string,
       label: (s.label as string | null) ?? null,
       present: Boolean(s.present),
+      month_index:
+        (s as { month_index?: number | null }).month_index != null
+          ? Number((s as { month_index?: number | null }).month_index)
+          : null,
     })),
     entries: (entries ?? []).map((e) => ({
       id: e.id as string,
@@ -970,6 +975,40 @@ export async function getAdminStudentPathDetail(
       source: e.source as string,
     })),
   };
+}
+
+/** D3 — mark Month N present so Exam Year N unlocks (same as Saturday attendance). */
+export async function unlockStudentExamMonth(
+  userId: string,
+  monthIndex: number,
+): Promise<StudentActionResult> {
+  try {
+    const access = await requireAccessibleStudent(userId);
+    if (!access.ok) return { ok: false, message: access.message };
+
+    const { unlockProgrammeMonthAttendance } = await import(
+      "@/lib/exams/year-unlock"
+    );
+    const result = await unlockProgrammeMonthAttendance({
+      userId,
+      monthIndex,
+    });
+    if (!result.ok) return { ok: false, message: result.message };
+
+    revalidatePath("/admin/students");
+    revalidatePath("/admin/records");
+    revalidatePath("/student/exams");
+    revalidatePath("/student/records");
+    return {
+      ok: true,
+      message: `Month ${monthIndex} marked present — Exam Year ${monthIndex} can unlock.`,
+    };
+  } catch (error) {
+    if (error instanceof Error && error.message === "Unauthorized") {
+      return unauthorized();
+    }
+    return { ok: false, message: publicActionMessage(error) };
+  }
 }
 
 export async function listStudentPlacements(

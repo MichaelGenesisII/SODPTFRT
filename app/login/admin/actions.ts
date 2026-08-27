@@ -4,7 +4,7 @@ import { after } from "next/server";
 import { adminDeskScopeLabel } from "@/lib/admin/profile";
 import {
   portalBaseUrl,
-  sendAdminAccessRecoveryViaBackend,
+  sendAdminAccessRecoveryEmail,
 } from "@/lib/email/backend";
 import { createTemporaryPassword } from "@/lib/enrol/reference";
 import {
@@ -100,13 +100,13 @@ export async function requestAdminPasswordReset(
     // takes several seconds; awaiting it made Forgot password feel stuck.
     after(async () => {
       const mailStartedAt = Date.now();
-      let mailResult = await sendAdminAccessRecoveryViaBackend(mailPayload);
+      let mailResult = await sendAdminAccessRecoveryEmail(mailPayload);
       if (!mailResult.ok) {
         console.error(
           "[login/admin] recovery email failed; retrying once",
           mailResult.message,
         );
-        mailResult = await sendAdminAccessRecoveryViaBackend(mailPayload);
+        mailResult = await sendAdminAccessRecoveryEmail(mailPayload);
       }
       if (!mailResult.ok) {
         console.error(

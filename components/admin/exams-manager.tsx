@@ -323,6 +323,7 @@ export function ExamsManager({
                       >
                         {exam.status} · {exam.audience} ·{" "}
                         {exam.question_count ?? 0}q
+                        {exam.year_index != null ? ` · Y${exam.year_index}` : ""}
                         {exam.audience === "open" && exam.visitor_reveal_score
                           ? " · score"
                           : ""}
@@ -499,7 +500,7 @@ type MetaValues = {
   counts_toward_record: boolean;
   visitor_reveal_score: boolean;
   visitor_email_scorecard: boolean;
-  parish_id: string | null;
+  year_index: number | null;
   batch_id: string | null;
   instructions: string;
   opens_at: string | null;
@@ -508,7 +509,6 @@ type MetaValues = {
 
 function ExamMetaForm({
   profile,
-  parishes,
   batches,
   pending,
   busyLabel,
@@ -518,7 +518,7 @@ function ExamMetaForm({
   onBack,
 }: {
   profile: AdminProfile;
-  parishes: Pick<Parish, "id" | "name" | "region">[];
+  parishes?: Pick<Parish, "id" | "name" | "region">[];
   batches: Batch[];
   pending: boolean;
   busyLabel: string | null;
@@ -541,15 +541,15 @@ function ExamMetaForm({
   const [emailScorecard, setEmailScorecard] = useState(
     initial?.visitor_email_scorecard ?? false,
   );
-  const [parishId, setParishId] = useState(
-    initial?.parish_id ?? profile.parish_id ?? "",
+  const [yearIndex, setYearIndex] = useState(
+    initial?.year_index != null ? String(initial.year_index) : "",
   );
   const [batchId, setBatchId] = useState(initial?.batch_id ?? "");
   const [instructions, setInstructions] = useState(initial?.instructions ?? "");
 
-  const parishBatches = batches.filter((b) =>
-    parishId ? b.parish_id === parishId : true,
-  );
+  const scopedBatches = national
+    ? batches
+    : batches.filter((b) => b.parish_id === profile.parish_id);
 
   function submit(event: FormEvent) {
     event.preventDefault();
@@ -561,7 +561,7 @@ function ExamMetaForm({
       counts_toward_record: counts,
       visitor_reveal_score: revealScore,
       visitor_email_scorecard: emailScorecard,
-      parish_id: parishId || null,
+      year_index: yearIndex ? Number(yearIndex) : null,
       batch_id: batchId || null,
       instructions,
       opens_at: initial?.opens_at ?? null,
@@ -643,6 +643,44 @@ function ExamMetaForm({
         ) : null}
       </div>
 
+      {audience === "student" ? (
+        <div className="grid gap-3 sm:grid-cols-2">
+          <label className="block text-sm">
+            Exam year (Month 1–10)
+            <select
+              value={yearIndex}
+              onChange={(e) => setYearIndex(e.target.value)}
+              className={`mt-1 ${fieldClass}`}
+            >
+              <option value="">Not year-gated</option>
+              {Array.from({ length: 10 }, (_, i) => i + 1).map((n) => (
+                <option key={n} value={n}>
+                  Year {n} (Month {n})
+                </option>
+              ))}
+            </select>
+            <span className="mt-1 block text-xs text-ink/50">
+              Opens after Month N attendance and a pass on Year N−1.
+            </span>
+          </label>
+          <label className="block text-sm">
+            Batch (optional)
+            <select
+              value={batchId}
+              onChange={(e) => setBatchId(e.target.value)}
+              className={`mt-1 ${fieldClass}`}
+            >
+              <option value="">All batches</option>
+              {scopedBatches.map((b) => (
+                <option key={b.id} value={b.id}>
+                  {formatBatchLabel(b)}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+      ) : null}
+
       {audience === "open" ? (
         <div className="space-y-3 border border-celadon/25 bg-celadon/[0.06] px-4 py-4">
           <p className="text-[0.65rem] font-medium uppercase tracking-[0.14em] text-celadon">
@@ -695,52 +733,6 @@ function ExamMetaForm({
           </label>
         </div>
       ) : null}
-
-      <div className="grid gap-3 sm:grid-cols-2">
-        {national ? (
-          <label className="block text-sm">
-            Parish scope
-            <select
-              value={parishId}
-              onChange={(e) => {
-                setParishId(e.target.value);
-                setBatchId("");
-              }}
-              className={`mt-1 ${fieldClass}`}
-            >
-              <option value="">All (national)</option>
-              {parishes.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name}
-                </option>
-              ))}
-            </select>
-          </label>
-        ) : (
-          <p className="text-sm text-ink/55">
-            Parish scope:{" "}
-            <span className="font-medium text-pine">
-              {parishes.find((p) => p.id === profile.parish_id)?.name ??
-                "Your parish"}
-            </span>
-          </p>
-        )}
-        <label className="block text-sm">
-          Batch (optional)
-          <select
-            value={batchId}
-            onChange={(e) => setBatchId(e.target.value)}
-            className={`mt-1 ${fieldClass}`}
-          >
-            <option value="">All batches</option>
-            {parishBatches.map((b) => (
-              <option key={b.id} value={b.id}>
-                {formatBatchLabel(b)}
-              </option>
-            ))}
-          </select>
-        </label>
-      </div>
       <label className="block text-sm">
         Instructions
         <textarea
@@ -845,6 +837,9 @@ function ExamWorkspace({
           <p className="mt-1 text-xs text-ink/50">
             {detail.exam.duration_minutes} min · pass {detail.exam.pass_percent}%
             · {detail.questions.length} questions
+            {detail.exam.year_index != null
+              ? ` · Year ${detail.exam.year_index}`
+              : ""}
             {detail.exam.audience === "open" && detail.exam.visitor_reveal_score
               ? " · reveals score"
               : ""}
@@ -852,7 +847,7 @@ function ExamWorkspace({
             detail.exam.visitor_email_scorecard
               ? " · emails certificate"
               : ""}
-            {detail.exam.parish_name ? ` · ${detail.exam.parish_name}` : ""}
+            {detail.exam.batch_name ? ` · ${detail.exam.batch_name}` : ""}
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -944,7 +939,7 @@ function ExamWorkspace({
               counts_toward_record: detail.exam.counts_toward_record,
               visitor_reveal_score: detail.exam.visitor_reveal_score,
               visitor_email_scorecard: detail.exam.visitor_email_scorecard,
-              parish_id: detail.exam.parish_id,
+              year_index: detail.exam.year_index ?? null,
               batch_id: detail.exam.batch_id,
               instructions: detail.exam.instructions ?? "",
               opens_at: detail.exam.opens_at,

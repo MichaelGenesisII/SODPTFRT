@@ -7,7 +7,7 @@ import {
 } from "@/lib/email/campaigns";
 import {
   portalBaseUrl,
-  sendCampaignViaBackend,
+  sendCampaignEmail,
 } from "@/lib/email/backend";
 import {
   campaignUnsubscribeOneClickUrl,
@@ -227,7 +227,7 @@ export async function sendStudentCampaign(input: {
 
     for (let i = 0; i < recipients.length; i += CAMPAIGN_BATCH_SIZE) {
       const chunk = recipients.slice(i, i + CAMPAIGN_BATCH_SIZE);
-      const result = await sendCampaignViaBackend({
+      const result = await sendCampaignEmail({
         templateId: "custom",
         portalUrl,
         portalSupportUrl: `${portalBaseUrl()}/student/support`,

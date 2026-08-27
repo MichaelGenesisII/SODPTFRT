@@ -1,82 +1,67 @@
+import { isEmailConfigured } from "@/lib/email/config";
+import { dispatchTemplateEmail } from "@/lib/email/dispatch";
 import {
-  EMAIL_API_SLUG_BY_PATH,
+  EMAIL_SLUG_BY_ROUTE,
   type EmailTemplateSlug,
 } from "@/lib/email/template-catalog";
 import { getActiveTemplateOverridePayload } from "@/lib/email/template-overrides";
 
-export type EmailApiResult = {
+export type EmailSendResult = {
   ok: boolean;
   message: string;
   messageId?: string;
   subject?: string;
 };
 
-export async function postEmailApi<TPayload extends object>(
-  path: string,
+/** @deprecated Use EmailSendResult */
+export type EmailApiResult = EmailSendResult;
+
+/**
+ * Build a templated message (with optional admin override) and send via Resend.
+ * `route` is a stable internal key (legacy `/api/email/...` paths).
+ */
+export async function sendTemplatedEmail<TPayload extends object>(
+  route: string,
   payload: TPayload,
   templateSlug?: EmailTemplateSlug,
-): Promise<EmailApiResult> {
-  const baseUrl = process.env.EMAIL_API_URL?.replace(/\/$/, "");
-  const secret = process.env.EMAIL_API_SECRET;
-
-  if (!baseUrl || !secret) {
+): Promise<EmailSendResult> {
+  if (!isEmailConfigured()) {
     return {
       ok: false,
-      message: "Email backend is not configured.",
+      message: "Email is not configured.",
     };
   }
 
-  let body: TPayload & {
-    templateOverride?: { subject?: string; html?: string; text?: string };
-  } = payload;
-
-  const slug = templateSlug ?? EMAIL_API_SLUG_BY_PATH[path];
+  const slug = templateSlug ?? EMAIL_SLUG_BY_ROUTE[route];
+  let override = null;
   if (slug) {
     try {
-      const override = await getActiveTemplateOverridePayload(slug);
-      if (override) {
-        body = { ...payload, templateOverride: override };
-      }
+      override = await getActiveTemplateOverridePayload(slug);
     } catch (error) {
       console.error("[email override]", slug, error);
     }
   }
 
   try {
-    const response = await fetch(`${baseUrl}${path}`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-SOD-Email-Secret": secret,
-      },
-      body: JSON.stringify(body),
-    });
-
-    const data = (await response.json().catch(() => null)) as {
-      ok?: boolean;
-      message?: string;
-      messageId?: string;
-      subject?: string;
-    } | null;
-
-    if (!response.ok || !data?.ok) {
-      return {
-        ok: false,
-        message: data?.message || "Email could not be sent. Please try again.",
-      };
-    }
-
+    const result = await dispatchTemplateEmail(
+      route,
+      payload as Record<string, unknown>,
+      override,
+    );
     return {
       ok: true,
-      message: data.message || "Email sent.",
-      messageId: data.messageId,
-      subject: data.subject,
+      message: "Email sent.",
+      messageId: result.messageId,
+      subject: result.subject,
     };
   } catch (error) {
-    console.error("[email/post-api]", path, error);
+    console.error("[email/send]", route, error);
     return {
       ok: false,
       message: "Email could not be sent. Please try again.",
     };
   }
 }
+
+/** @deprecated Use sendTemplatedEmail */
+export const postEmailApi = sendTemplatedEmail;

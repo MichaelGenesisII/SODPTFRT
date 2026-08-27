@@ -321,7 +321,11 @@ export function PaymentsManager({
                         }`}
                       >
                         {feeLabel(row.fee_type)}
-                        {row.reference ? ` · ${row.reference}` : ""}
+                        {row.reference_compact
+                          ? ` · ${row.reference_compact}`
+                          : row.reference
+                            ? ` · ${row.reference}`
+                            : ""}
                       </span>
                       <span
                         className={`truncate text-[0.58rem] uppercase tracking-[0.1em] ${
@@ -391,6 +395,11 @@ export function PaymentsManager({
                   {selected.student_email}
                   {selected.reference ? ` · ${selected.reference}` : ""}
                 </p>
+                {selected.reference_compact ? (
+                  <p className="mt-1 font-mono text-xs text-pine">
+                    Bank / Stripe lookup: {selected.reference_compact}
+                  </p>
+                ) : null}
                 <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[0.65rem] uppercase tracking-[0.12em] text-ink/50">
                   <span className="text-celadon">
                     {feeLabel(selected.fee_type)}

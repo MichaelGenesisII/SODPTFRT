@@ -1,5 +1,5 @@
-import { portalBaseUrl } from "@/lib/email/backend";
-import { postEmailApi } from "@/lib/email/post-api";
+import { portalBaseUrl } from "@/lib/email/config";
+import { sendTemplatedEmail } from "@/lib/email/post-api";
 
 export type ClassInviteEmailPayload = {
   to: string;
@@ -18,7 +18,7 @@ export type ClassInviteEmailPayload = {
 };
 
 export function sendClassInviteEmail(payload: ClassInviteEmailPayload) {
-  return postEmailApi("/api/email/class-invite", payload);
+  return sendTemplatedEmail("/api/email/class-invite", payload);
 }
 
 export function classPortalUrl() {

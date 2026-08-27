@@ -7,7 +7,7 @@ import {
 } from "@/lib/admin/auth";
 import {
   portalBaseUrl,
-  sendStudentScorecardViaBackend,
+  sendStudentScorecardEmail,
 } from "@/lib/email/backend";
 import {
   attendanceRate,
@@ -763,7 +763,7 @@ export async function emailStudentScorecard(
         )
       : null;
 
-    const sent = await sendStudentScorecardViaBackend({
+    const sent = await sendStudentScorecardEmail({
       to,
       studentName: bundle.record.student_name || "Student",
       studentEmail: to,
@@ -792,7 +792,7 @@ export async function emailStudentScorecard(
       issuedAtLabel,
       issuedByName: actor.full_name?.trim() || actor.email,
       portalRecordsUrl: `${portalBaseUrl()}/student/records`,
-      portalCertificatesUrl: `${portalBaseUrl()}/student/certificates`,
+      portalCertificatesUrl: `${portalBaseUrl()}/student/records`,
       passportImageUrl: passportImageUrl ?? undefined,
       certificateDownloadUrl: certificateDownloadUrl ?? undefined,
     });

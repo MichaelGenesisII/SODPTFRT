@@ -1,4 +1,4 @@
-import { postEmailApi } from "@/lib/email/post-api";
+import { sendTemplatedEmail } from "@/lib/email/post-api";
 
 export type PaymentEmailPayload = {
   to: string;
@@ -25,35 +25,35 @@ export type StudentLifecycleEmailPayload = {
 };
 
 export function sendPaymentReceivedEmail(payload: PaymentEmailPayload) {
-  return postEmailApi("/api/email/payment-received", payload);
+  return sendTemplatedEmail("/api/email/payment-received", payload);
 }
 
 export function sendPaymentApprovedEmail(payload: PaymentEmailPayload) {
-  return postEmailApi("/api/email/payment-approved", payload);
+  return sendTemplatedEmail("/api/email/payment-approved", payload);
 }
 
 export function sendPaymentProofReceivedEmail(payload: PaymentEmailPayload) {
-  return postEmailApi("/api/email/payment-proof-received", payload);
+  return sendTemplatedEmail("/api/email/payment-proof-received", payload);
 }
 
 export function sendPaymentReturnedEmail(payload: PaymentEmailPayload) {
-  return postEmailApi("/api/email/payment-returned", payload);
+  return sendTemplatedEmail("/api/email/payment-returned", payload);
 }
 
 export function sendStudentSuspendedEmail(payload: StudentLifecycleEmailPayload) {
-  return postEmailApi("/api/email/student-suspended", payload);
+  return sendTemplatedEmail("/api/email/student-suspended", payload);
 }
 
 export function sendStudentRemovedEmail(payload: StudentLifecycleEmailPayload) {
-  return postEmailApi("/api/email/student-removed", payload);
+  return sendTemplatedEmail("/api/email/student-removed", payload);
 }
 
 export function sendStudentTempPasswordEmail(
   payload: StudentLifecycleEmailPayload & { temporaryPassword: string },
 ) {
-  return postEmailApi("/api/email/student-temp-password", payload);
+  return sendTemplatedEmail("/api/email/student-temp-password", payload);
 }
 
 export function sendManualsSentEmail(payload: StudentLifecycleEmailPayload) {
-  return postEmailApi("/api/email/manuals-sent", payload);
+  return sendTemplatedEmail("/api/email/manuals-sent", payload);
 }

@@ -41,6 +41,7 @@ export function ExamUpload({ exams, onOpenedExam, onOpenSamples }: Props) {
   const [dragOver, setDragOver] = useState(false);
   const [targetExamId, setTargetExamId] = useState<string>("");
   const [examTitle, setExamTitle] = useState("");
+  const [yearIndex, setYearIndex] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
 
   const drafts = exams.filter((e) => e.status === "draft");
@@ -80,6 +81,7 @@ export function ExamUpload({ exams, onOpenedExam, onOpenSamples }: Props) {
           () =>
             createExamFromQuestionFile(file.name, base64, {
               title: examTitle.trim() || undefined,
+              year_index: yearIndex ? Number(yearIndex) : null,
             }),
           "Creating draft from file…",
         );
@@ -106,7 +108,7 @@ export function ExamUpload({ exams, onOpenedExam, onOpenSamples }: Props) {
           <p className="mt-1.5 max-w-2xl text-sm leading-relaxed text-ink/60">
             Drop a completed spreadsheet, CSV, JSON, or text file. We parse
             questions and answers into a draft exam — the file is never stored.
-            Need a starter?{" "}
+            Tag Year 1–10 so attendance unlock applies. Need a starter?{" "}
             {onOpenSamples ? (
               <button
                 type="button"
@@ -136,6 +138,23 @@ export function ExamUpload({ exams, onOpenedExam, onOpenSamples }: Props) {
               />
             </label>
             <label className="block text-sm">
+              Exam year{" "}
+              <span className="text-ink/40">(Month 1–10)</span>
+              <select
+                value={yearIndex}
+                onChange={(e) => setYearIndex(e.target.value)}
+                disabled={Boolean(targetExamId) || busy}
+                className="mt-1 w-full border border-stone bg-white/70 px-3 py-2 text-sm outline-none focus:border-pine disabled:opacity-50"
+              >
+                <option value="">Not year-gated</option>
+                {Array.from({ length: 10 }, (_, i) => i + 1).map((n) => (
+                  <option key={n} value={n}>
+                    Year {n}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="block text-sm">
               Or append to a draft
               <select
                 value={targetExamId}
@@ -146,7 +165,9 @@ export function ExamUpload({ exams, onOpenedExam, onOpenSamples }: Props) {
                 <option value="">Create new draft from file</option>
                 {drafts.map((exam) => (
                   <option key={exam.id} value={exam.id}>
-                    {exam.title} ({exam.question_count ?? 0}q)
+                    {exam.title}
+                    {exam.year_index != null ? ` · Y${exam.year_index}` : ""} (
+                    {exam.question_count ?? 0}q)
                   </option>
                 ))}
               </select>

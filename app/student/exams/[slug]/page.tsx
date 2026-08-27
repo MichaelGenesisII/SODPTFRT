@@ -34,6 +34,9 @@ export default async function StudentExamTakePage({ params }: Props) {
       attempt={bundle.attempt}
       answers={bundle.answers}
       studentName={studentDisplayName(session)}
+      unlock={bundle.unlock}
+      unlockMessage={bundle.unlockMessage}
+      provisional={bundle.provisional}
     />
   );
 }

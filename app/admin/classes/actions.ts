@@ -92,6 +92,7 @@ type ClassRow = {
   batch_id: string | null;
   cohort_id: string | null;
   year: number | null;
+  programme_month: number | null;
   scheduled_start: string;
   scheduled_end: string;
   duration_minutes: number;
@@ -304,6 +305,8 @@ function mapClass(row: Record<string, unknown>): ZoomClass {
     batch_id: (row.batch_id as string | null) ?? null,
     cohort_id: (row.cohort_id as string | null) ?? null,
     year: row.year != null ? Number(row.year) : null,
+    programme_month:
+      row.programme_month != null ? Number(row.programme_month) : null,
     scheduled_start: row.scheduled_start as string,
     scheduled_end: row.scheduled_end as string,
     duration_minutes: Number(row.duration_minutes),
@@ -755,6 +758,7 @@ export async function createZoomClass(input: {
   batch_id: string | null;
   cohort_id?: string | null;
   year?: number | null;
+  programme_month?: number | null;
   scheduled_start: string;
   scheduled_end: string;
   duration_minutes: number;
@@ -854,6 +858,14 @@ export async function createZoomClass(input: {
   const attendanceCode =
     input.generate_code === false ? null : generateAttendanceCode();
 
+  const programmeMonth =
+    input.programme_month != null &&
+    Number.isInteger(Number(input.programme_month)) &&
+    Number(input.programme_month) >= 1 &&
+    Number(input.programme_month) <= 10
+      ? Number(input.programme_month)
+      : null;
+
   const { data, error } = await supabase
     .from("zoom_classes")
     .insert({
@@ -864,6 +876,7 @@ export async function createZoomClass(input: {
       batch_id: resolved.batch_id,
       cohort_id: resolved.cohort_id,
       year: resolved.year,
+      programme_month: programmeMonth,
       scheduled_start: start.toISOString(),
       scheduled_end: end.toISOString(),
       duration_minutes: duration,
@@ -1091,6 +1104,7 @@ export async function markManualAttendance(input: {
     sessionDate: sessionDateFromStart(klass.scheduled_start),
     label: klass.title,
     present: input.present,
+    monthIndex: klass.programme_month ?? null,
   });
 
   if (!wrote) {
@@ -1287,6 +1301,7 @@ export async function syncZoomClassAttendance(
         sessionDate,
         label,
         present,
+        monthIndex: klass.programme_month ?? null,
       });
     } else {
       const { error: upsertError } = await service

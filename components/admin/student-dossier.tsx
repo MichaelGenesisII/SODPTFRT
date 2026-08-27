@@ -13,6 +13,7 @@ import {
   resetStudentPassword,
   setManualsSent,
   setStudentActive,
+  unlockStudentExamMonth,
   upgradeAlumniToStudent,
   updateEnrolmentContact,
   updateEnrolmentStatus,
@@ -326,6 +327,16 @@ export function StudentDossier({
             student={student}
             detail={pathDetail}
             loading={pathLoading}
+            pending={pending}
+            busyLabel={busyLabel}
+            onRun={onRun}
+            onUnlocked={() => {
+              setPathLoading(true);
+              void getAdminStudentPathDetail(student.id).then((next) => {
+                setPathDetail(next);
+                setPathLoading(false);
+              });
+            }}
           />
         ) : null}
         {tab === "manage" ? (
@@ -520,11 +531,28 @@ function PathPane({
   student,
   detail,
   loading,
+  pending,
+  busyLabel,
+  onRun,
+  onUnlocked,
 }: {
   student: AdminStudentRecord;
   detail: StudentPathDetail | null;
   loading: boolean;
+  pending: boolean;
+  busyLabel: string | null;
+  onRun: (
+    action: () => Promise<StudentActionResult>,
+    options?: { clearPassword?: boolean; label?: string },
+  ) => void;
+  onUnlocked: () => void;
 }) {
+  const presentMonths = new Set(
+    (detail?.sessions ?? [])
+      .filter((s) => s.present && s.month_index != null)
+      .map((s) => Number(s.month_index)),
+  );
+
   return (
     <div className="space-y-5">
       <div className="flex flex-wrap items-end justify-between gap-3">
@@ -575,6 +603,56 @@ function PathPane({
         />
       </div>
 
+      <div className="border border-stone bg-white/40 px-4 py-4">
+        <p className="text-[0.65rem] font-medium uppercase tracking-[0.12em] text-ink/45">
+          Unlock exam month
+        </p>
+        <p className="mt-1 text-sm text-ink/55">
+          Marks Month N present (same as Saturday attendance) so Exam Year N can
+          open after prior years are passed.
+        </p>
+        <div className="mt-3 flex flex-wrap gap-1.5">
+          {Array.from({ length: 10 }, (_, i) => i + 1).map((n) => {
+            const unlocked = presentMonths.has(n);
+            return (
+              <button
+                key={n}
+                type="button"
+                disabled={pending || unlocked}
+                onClick={() =>
+                  onRun(
+                    async () => {
+                      const result = await unlockStudentExamMonth(
+                        student.id,
+                        n,
+                      );
+                      if (result.ok) onUnlocked();
+                      return result;
+                    },
+                    { label: `Unlocking month ${n}…` },
+                  )
+                }
+                className={`min-w-[2.5rem] border px-2 py-1.5 text-xs font-medium disabled:opacity-50 ${
+                  unlocked
+                    ? "border-celadon/40 bg-celadon/10 text-pine"
+                    : "border-pine/25 text-pine hover:border-pine"
+                }`}
+                title={
+                  unlocked
+                    ? `Month ${n} already present`
+                    : `Mark Month ${n} present`
+                }
+              >
+                {unlocked ? `M${n} ✓` : `M${n}`}
+              </button>
+            );
+          })}
+        </div>
+        {pending && busyLabel ? (
+          <p className="mt-2 text-xs text-ink/45">{busyLabel}</p>
+        ) : null}
+      </div>
+
       {loading ? (
         <p className="text-sm text-ink/45">Loading scorecard…</p>
       ) : !detail ? (
@@ -601,6 +679,11 @@ function PathPane({
                   >
                     <span className="truncate">
                       {s.label || s.session_date}
+                      {s.month_index != null ? (
+                        <span className="ml-1 text-[0.65rem] text-ink/40">
+                          · M{s.month_index}
+                        </span>
+                      ) : null}
                     </span>
                     <span
                       className={`font-mono text-xs uppercase ${

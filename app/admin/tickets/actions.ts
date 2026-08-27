@@ -9,7 +9,7 @@ import {
   type TicketPriority,
   type TicketStatus,
 } from "@/lib/tickets";
-import { sendTicketEmailViaBackend, portalBaseUrl } from "@/lib/email/backend";
+import { sendTicketEmail, portalBaseUrl } from "@/lib/email/backend";
 import { publicActionMessage } from "@/lib/safe-action-message";
 import { SOD_SITE } from "@/lib/site-nav";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
@@ -396,7 +396,7 @@ export async function sendTicketEmailReply(
       };
     }
 
-    const sent = await sendTicketEmailViaBackend({
+    const sent = await sendTicketEmail({
       to: ticket.email,
       toName: ticket.name,
       subject: trimmedSubject,

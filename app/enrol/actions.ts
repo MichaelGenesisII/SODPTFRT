@@ -18,8 +18,8 @@ import {
 } from "@/lib/enrol/reference";
 import {
   portalBaseUrl,
-  sendEnrolmentAccessRecoveryViaBackend,
-  sendEnrolmentEmailViaBackend,
+  sendEnrolmentAccessRecoveryEmail,
+  sendEnrolmentEmail,
 } from "@/lib/email/backend";
 import { withSaturdayBalance } from "@/lib/cohorts/saturday";
 import {
@@ -430,7 +430,7 @@ export async function submitEnrolment(
           reference.display,
         );
 
-        const mailResult = await sendEnrolmentEmailViaBackend({
+        const mailResult = await sendEnrolmentEmail({
           to: email,
           firstName,
           reference: reference.display,
@@ -553,7 +553,7 @@ export async function requestEnrolmentPasswordReset(
       enrolment?.attendance_mode || "standard",
     );
 
-    const mailResult = await sendEnrolmentAccessRecoveryViaBackend({
+    const mailResult = await sendEnrolmentAccessRecoveryEmail({
       to: email,
       firstName,
       reference,

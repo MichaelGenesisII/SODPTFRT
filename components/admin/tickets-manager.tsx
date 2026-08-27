@@ -1564,7 +1564,7 @@ function TicketDetail({
                 </label>
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <p className="text-xs text-ink/45">
-                    {emailMessage.length}/5000 · delivers via sod_portal_be
+                    {emailMessage.length}/5000 · sends via Resend
                   </p>
                   <button
                     type="submit"

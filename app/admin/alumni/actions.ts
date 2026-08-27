@@ -18,7 +18,7 @@ import {
 } from "@/lib/enrol/reference";
 import {
   portalBaseUrl,
-  sendEnrolmentAccessRecoveryViaBackend,
+  sendEnrolmentAccessRecoveryEmail,
 } from "@/lib/email/backend";
 import { ensureStudentFeeRows, markFeePaid } from "@/lib/payments/service";
 import { publicActionMessage } from "@/lib/safe-action-message";
@@ -674,7 +674,7 @@ export async function assignAlumniEmail(input: {
 
     let mailOk = true;
     if (input.sendAccessEmail !== false) {
-      const mail = await sendEnrolmentAccessRecoveryViaBackend({
+      const mail = await sendEnrolmentAccessRecoveryEmail({
         to: email,
         firstName: String(legacy.first_name || "friend"),
         reference: reference.display,

@@ -29,6 +29,77 @@ type Props = {
   onSubmitted?: () => void;
 };
 
+function draftKey(attemptId: string) {
+  return `sod_exam_draft_${attemptId}`;
+}
+
+function readLocalDraft(
+  attemptId: string,
+): Record<string, Record<string, unknown>> | null {
+  try {
+    const raw = window.localStorage.getItem(draftKey(attemptId));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as {
+      answers?: Record<string, Record<string, unknown>>;
+    };
+    return parsed.answers ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function writeLocalDraft(
+  attemptId: string,
+  answers: Record<string, Record<string, unknown>>,
+) {
+  try {
+    window.localStorage.setItem(
+      draftKey(attemptId),
+      JSON.stringify({ answers, savedAt: Date.now() }),
+    );
+  } catch {
+    // Quota / private mode — server autosave remains primary.
+  }
+}
+
+function clearLocalDraft(attemptId: string) {
+  try {
+    window.localStorage.removeItem(draftKey(attemptId));
+  } catch {
+    // ignore
+  }
+}
+
+function mergeAnswers(
+  server: Record<string, Record<string, unknown>>,
+  local: Record<string, Record<string, unknown>> | null,
+): Record<string, Record<string, unknown>> {
+  if (!local) return server;
+  const next = { ...server };
+  for (const [qid, response] of Object.entries(local)) {
+    const existing = next[qid];
+    const localHas = Object.values(response).some(
+      (v) =>
+        v !== null &&
+        v !== undefined &&
+        v !== "" &&
+        !(Array.isArray(v) && v.length === 0),
+    );
+    const serverHas = existing
+      ? Object.values(existing).some(
+          (v) =>
+            v !== null &&
+            v !== undefined &&
+            v !== "" &&
+            !(Array.isArray(v) && v.length === 0),
+        )
+      : false;
+    if (localHas && !serverHas) next[qid] = response;
+    else if (localHas && serverHas) next[qid] = { ...existing, ...response };
+  }
+  return next;
+}
+
 export function ExamRunner({
   exam,
   questions,
@@ -41,6 +112,7 @@ export function ExamRunner({
   const [busyLabel, setBusyLabel] = useState<string | null>(null);
   const submitting = Boolean(busyLabel?.startsWith("Submitting"));
   const [message, setMessage] = useState<string | null>(null);
+  const [saveHint, setSaveHint] = useState<string | null>(null);
   const [answers, setAnswers] = useState<Record<string, Record<string, unknown>>>(
     () => {
       const map: Record<string, Record<string, unknown>> = {};
@@ -50,6 +122,12 @@ export function ExamRunner({
       return map;
     },
   );
+
+  useEffect(() => {
+    const local = readLocalDraft(attempt.id);
+    if (!local) return;
+    setAnswers((prev) => mergeAnswers(prev, local));
+  }, [attempt.id]);
 
   const endsAt = useMemo(
     () =>
@@ -92,15 +170,42 @@ export function ExamRunner({
         });
         if (!result.ok) {
           setMessage(result.message);
+          setSaveHint("Saved on this device — will retry when online.");
+        } else {
+          setSaveHint(null);
         }
       });
     },
   );
 
+  const flushAll = useEffectEvent(async () => {
+    const entries = Object.entries(answers);
+    for (const [questionId, response] of entries) {
+      await saveAttemptAnswer({
+        attemptId: attempt.id,
+        questionId,
+        response,
+        token: attempt.attempt_token,
+      });
+    }
+  });
+
+  useEffect(() => {
+    function onOnline() {
+      void flushAll().then(() => setSaveHint(null));
+    }
+    window.addEventListener("online", onOnline);
+    return () => window.removeEventListener("online", onOnline);
+  }, [flushAll]);
+
   function setResponse(patch: Record<string, unknown>) {
     if (!question || expired) return;
     const next = { ...(answers[question.id] ?? {}), ...patch };
-    setAnswers((prev) => ({ ...prev, [question.id]: next }));
+    setAnswers((prev) => {
+      const merged = { ...prev, [question.id]: next };
+      writeLocalDraft(attempt.id, merged);
+      return merged;
+    });
     persist(question.id, next);
   }
 
@@ -108,12 +213,16 @@ export function ExamRunner({
     setBusyLabel("Submitting exam…");
     startTransition(async () => {
       try {
+        await flushAll();
         const result: TakeActionResult = await submitAttempt(
           attempt.id,
           attempt.attempt_token,
         );
         setMessage(result.message);
-        if (result.ok) onSubmitted?.();
+        if (result.ok) {
+          clearLocalDraft(attempt.id);
+          onSubmitted?.();
+        }
       } finally {
         setBusyLabel(null);
       }
@@ -213,6 +322,9 @@ export function ExamRunner({
 
         {message ? (
           <p className="mt-4 text-center text-sm text-celadon">{message}</p>
+        ) : null}
+        {saveHint ? (
+          <p className="mt-2 text-center text-xs text-mist/55">{saveHint}</p>
         ) : null}
 
         <div className="mt-auto flex flex-wrap items-center justify-between gap-3 pt-8">

@@ -1,5 +1,5 @@
 /**
- * Client-safe campaign HTML preview (mirrors sod_portal_be custom campaign).
+ * Client-safe campaign HTML preview (mirrors portal campaign template).
  * Sample data only — never includes real student PII.
  */
 

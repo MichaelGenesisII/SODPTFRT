@@ -3,13 +3,17 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
-import { startStudentAttempt } from "@/app/exam/actions";
+import {
+  startStudentAttempt,
+  type StudentProvisionalResult,
+} from "@/app/exam/actions";
 import { ExamResultCertificate } from "@/components/exam/exam-result-certificate";
 import { ExamRunner } from "@/components/exam/exam-runner";
 import { DeskLoaderOverlay } from "@/components/ui/desk-loader";
 import { publicActionMessage } from "@/lib/safe-action-message";
 import { attemptHasFinalScore } from "@/lib/exams/attempt-status";
 import { passedExam } from "@/lib/exams/score";
+import type { YearUnlockState } from "@/lib/exams/year-unlock";
 import type {
   Exam,
   ExamAnswer,
@@ -25,6 +29,9 @@ export function StudentExamClient({
   attempt: initialAttempt,
   answers,
   studentName,
+  unlock,
+  unlockMessage,
+  provisional,
 }: {
   slug: string;
   exam: Exam;
@@ -33,6 +40,9 @@ export function StudentExamClient({
   attempt: ExamAttempt | null;
   answers: ExamAnswer[];
   studentName?: string;
+  unlock?: YearUnlockState | null;
+  unlockMessage?: string | null;
+  provisional?: StudentProvisionalResult | null;
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -68,7 +78,8 @@ export function StudentExamClient({
         <h1 className="mt-2 font-display text-3xl text-pine">{exam.title}</h1>
         <p className="mt-3 text-sm text-ink/65">
           You have an open attempt. Continue when ready — the timer keeps
-          running from when you began.
+          running from when you began. Answers are saved as you go and restored
+          if you lose connection.
         </p>
         <button
           type="button"
@@ -103,6 +114,32 @@ export function StudentExamClient({
                 : "This sitting does not count toward your Records scorecard."
             }
           />
+        ) : provisional ? (
+          <div className="border border-stone bg-white/40 px-6 py-8 text-center">
+            <p className="text-[0.7rem] uppercase tracking-[0.18em] text-celadon">
+              Auto-marked result
+            </p>
+            <h1 className="mt-2 font-display text-3xl text-pine">{exam.title}</h1>
+            <p className="mt-6 font-display text-5xl tabular-nums text-pine">
+              {provisional.autoPercent}%
+            </p>
+            <p
+              className={`mt-2 text-sm font-medium ${
+                provisional.autoPassed ? "text-pine" : "text-red-900"
+              }`}
+            >
+              {provisional.autoPassed ? "Pass" : "Fail"}
+              <span className="font-normal text-ink/50">
+                {" "}
+                · pass mark {exam.pass_percent}%
+              </span>
+            </p>
+            <p className="mt-4 text-sm leading-relaxed text-ink/65">
+              Score on auto-marked questions only. Written answers are with the
+              exams desk — your final certificate appears when grading is
+              complete. Answer keys are not shown.
+            </p>
+          </div>
         ) : (
           <div className="border border-stone bg-white/40 px-6 py-8">
             <p className="text-[0.7rem] uppercase tracking-[0.18em] text-celadon">
@@ -132,33 +169,44 @@ export function StudentExamClient({
     (exam.opens_at && new Date(exam.opens_at).getTime() > Date.now()) ||
     (exam.closes_at && new Date(exam.closes_at).getTime() < Date.now());
 
+  const locked = Boolean(unlock && !unlock.available);
+
   return (
     <div className="relative mx-auto max-w-xl py-8" aria-busy={busy}>
       <DeskLoaderOverlay active={busy} label={busyLabel ?? "Working…"} />
       <p className="text-[0.7rem] uppercase tracking-[0.18em] text-celadon">
-        Ready when you are
+        {locked ? "Not available yet" : "Ready when you are"}
       </p>
       <h1 className="mt-2 font-display text-3xl text-pine">{exam.title}</h1>
+      {exam.year_index != null ? (
+        <p className="mt-1 text-xs uppercase tracking-[0.12em] text-ink/45">
+          Exam Year {exam.year_index}
+        </p>
+      ) : null}
       <p className="mt-3 text-sm leading-relaxed text-ink/65">
-        {exam.instructions ||
-          "Once you begin, the timer starts. Answers autosave as you move."}
+        {locked
+          ? unlockMessage || "This exam is not available yet."
+          : exam.instructions ||
+            "Once you begin, the timer starts. Answers autosave as you move."}
       </p>
-      <ul className="mt-5 flex flex-wrap gap-2 text-xs font-medium uppercase tracking-[0.12em] text-ink/50">
-        <li className="border border-stone px-2.5 py-1">
-          {questionCount} questions
-        </li>
-        <li className="border border-stone px-2.5 py-1">
-          {exam.duration_minutes} minutes
-        </li>
-        <li className="border border-stone px-2.5 py-1">
-          Pass {exam.pass_percent}%
-        </li>
-        {exam.counts_toward_record ? (
-          <li className="border border-celadon/30 bg-celadon/10 px-2.5 py-1 text-pine">
-            Counts to records
+      {!locked ? (
+        <ul className="mt-5 flex flex-wrap gap-2 text-xs font-medium uppercase tracking-[0.12em] text-ink/50">
+          <li className="border border-stone px-2.5 py-1">
+            {questionCount} questions
           </li>
-        ) : null}
-      </ul>
+          <li className="border border-stone px-2.5 py-1">
+            {exam.duration_minutes} minutes
+          </li>
+          <li className="border border-stone px-2.5 py-1">
+            Pass {exam.pass_percent}%
+          </li>
+          {exam.counts_toward_record ? (
+            <li className="border border-celadon/30 bg-celadon/10 px-2.5 py-1 text-pine">
+              Counts to records
+            </li>
+          ) : null}
+        </ul>
+      ) : null}
       {error ? (
         <p className="mt-4 text-sm text-red-800" role="alert">
           {error}
@@ -166,7 +214,7 @@ export function StudentExamClient({
       ) : null}
       <button
         type="button"
-        disabled={busy || Boolean(windowClosed)}
+        disabled={busy || Boolean(windowClosed) || locked}
         onClick={() => {
           setBusyLabel("Starting exam…");
           startTransition(async () => {
@@ -210,8 +258,19 @@ export function StudentExamClient({
         }}
         className="mt-6 bg-pine px-5 py-3 text-sm font-medium text-mist disabled:opacity-50"
       >
-        {busy ? "Starting…" : windowClosed ? "Exam not open" : "Begin exam"}
+        {busy
+          ? "Starting…"
+          : locked
+            ? "Locked"
+            : windowClosed
+              ? "Exam not open"
+              : "Begin exam"}
       </button>
+      {locked ? (
+        <p className="mt-4 text-sm text-ink/55">
+          Need help? Contact Admin to unlock attendance for this month.
+        </p>
+      ) : null}
     </div>
   );
 }

@@ -537,15 +537,26 @@ export function StudentsManager({
                           }}
                           className="flex min-w-0 flex-1 items-start gap-3 text-left"
                         >
-                        <span
-                          className={`mt-0.5 flex size-9 shrink-0 items-center justify-center text-xs font-medium ${
-                            active
-                              ? "bg-mist/15 text-mist"
-                              : "bg-stone/70 text-pine"
-                          }`}
-                        >
-                          {initials(name)}
-                        </span>
+                        {student.passport_url ? (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img
+                            src={student.passport_url}
+                            alt=""
+                            className={`mt-0.5 size-9 shrink-0 object-cover ${
+                              active ? "ring-1 ring-mist/30" : "ring-1 ring-pine/10"
+                            }`}
+                          />
+                        ) : (
+                          <span
+                            className={`mt-0.5 flex size-9 shrink-0 items-center justify-center text-xs font-medium ${
+                              active
+                                ? "bg-mist/15 text-mist"
+                                : "bg-stone/70 text-pine"
+                            }`}
+                          >
+                            {initials(name)}
+                          </span>
+                        )}
                         <span className="min-w-0 flex-1">
                           <span className="flex items-start justify-between gap-2">
                             <span className="truncate font-medium">{name}</span>

@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Figtree, Newsreader } from "next/font/google";
+import { AssistantRoot } from "@/components/assistant/assistant-root";
 import { ToastProvider } from "@/components/ui/toast";
 import "./globals.css";
 
@@ -36,7 +37,10 @@ export default function RootLayout({
         className="min-h-full flex flex-col font-sans"
         suppressHydrationWarning
       >
-        <ToastProvider>{children}</ToastProvider>
+        <ToastProvider>
+          {children}
+          <AssistantRoot />
+        </ToastProvider>
       </body>
     </html>
   );

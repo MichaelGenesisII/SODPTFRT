@@ -27,7 +27,7 @@ type DeskAttachmentPickerProps = {
   disabled?: boolean;
   /** When true, admin picks view / download / both per file (notices). */
   enableAccessMode?: boolean;
-  /** Cap uploads (e.g. campaigns match the email backend limit of 5). */
+  /** Cap uploads (e.g. campaigns match the 5-attachment limit). */
   maxFiles?: number;
 };
 

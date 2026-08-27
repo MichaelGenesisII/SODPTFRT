@@ -67,23 +67,43 @@ export async function writeAttendanceToStudentRecord(input: {
   sessionDate: string;
   label: string;
   present: boolean;
+  /** Programme month 1–10 — unlocks Exam Year N when present. */
+  monthIndex?: number | null;
 }): Promise<boolean> {
   const recordId = await ensureStudentRecordId(input.userId);
   if (!recordId) return false;
 
   const supabase = createServiceSupabaseClient();
   const label = input.label.trim() || "Session";
+  const monthIndex =
+    input.monthIndex != null &&
+    Number.isInteger(Number(input.monthIndex)) &&
+    Number(input.monthIndex) >= 1 &&
+    Number(input.monthIndex) <= 10
+      ? Number(input.monthIndex)
+      : null;
+
   const { error } = await supabase.from("student_record_sessions").upsert(
     {
       record_id: recordId,
       session_date: input.sessionDate,
       label,
       present: input.present,
+      ...(monthIndex != null ? { month_index: monthIndex } : {}),
     },
     { onConflict: "record_id,session_date,label" },
   );
 
   if (error) {
+    // Already present for this programme month (unique month unlock).
+    if (
+      monthIndex != null &&
+      /student_record_sessions_record_month|unique|duplicate/i.test(
+        error.message,
+      )
+    ) {
+      return true;
+    }
     console.error("class attendance → records:", error.message);
     return false;
   }

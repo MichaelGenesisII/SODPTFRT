@@ -127,19 +127,21 @@ async function requireAccessibleExam(examId: string): Promise<
 }
 
 /**
- * Force parish from actor for parish desks; when a batch is chosen, parish
- * must match that batch (and is filled from the batch when national picks
- * batch-only so parish desks can still see the paper).
+ * Batch is optional. Parish is no longer chosen in the UI:
+ * - National: null parish unless a batch stamps its parish
+ * - Parish desk: always stamp actor.parish_id (RLS)
  */
 async function resolveExamParishBatch(
   actor: AdminProfile,
-  input: { parish_id: string | null; batch_id: string | null },
+  input: { batch_id: string | null },
   supabase: Supabase,
 ): Promise<
   { parish_id: string | null; batch_id: string | null } | ExamActionResult
 > {
-  let parishId = isNationalAdmin(actor) ? input.parish_id : actor.parish_id;
   const batchId = input.batch_id || null;
+  let parishId: string | null = isNationalAdmin(actor)
+    ? null
+    : (actor.parish_id ?? null);
 
   if (batchId) {
     const { data: batch, error } = await supabase
@@ -151,10 +153,9 @@ async function resolveExamParishBatch(
     if (!batch) {
       return { ok: false, message: "Batch not found or outside your parish." };
     }
-    if (parishId && batch.parish_id !== parishId) {
-      return { ok: false, message: "Batch does not match the parish." };
+    if (!isNationalAdmin(actor) && actor.parish_id && batch.parish_id !== actor.parish_id) {
+      return { ok: false, message: "Batch does not match your parish." };
     }
-    // Batch always belongs to one parish — stamp it for isolation.
     parishId = batch.parish_id;
   }
 
@@ -162,6 +163,13 @@ async function resolveExamParishBatch(
   if (scope) return scope;
 
   return { parish_id: parishId ?? null, batch_id: batchId };
+}
+
+function normalizeYearIndex(value: unknown): number | null {
+  if (value == null || value === "") return null;
+  const n = Number(value);
+  if (!Number.isInteger(n) || n < 1 || n > 10) return null;
+  return n;
 }
 
 function revalidateExams() {
@@ -195,7 +203,7 @@ export async function listAdminExams(): Promise<Exam[]> {
   let q = supabase
     .from("exams")
     .select(
-      "id, title, slug, audience, status, duration_minutes, pass_percent, counts_toward_record, visitor_reveal_score, visitor_email_scorecard, parish_id, batch_id, instructions, opens_at, closes_at, created_by, created_at, updated_at, parishes(name), batches(name)",
+      "id, title, slug, audience, status, duration_minutes, pass_percent, counts_toward_record, visitor_reveal_score, visitor_email_scorecard, year_index, parish_id, batch_id, instructions, opens_at, closes_at, created_by, created_at, updated_at, parishes(name), batches(name)",
     )
     .order("updated_at", { ascending: false });
 
@@ -205,10 +213,12 @@ export async function listAdminExams(): Promise<Exam[]> {
 
   let { data, error } = await q;
 
-  // Graceful until fix-exams-visitor-score.sql is applied.
+  // Graceful until migrations for visitor columns / year_index are applied.
   if (
     error &&
-    /visitor_reveal_score|visitor_email_scorecard|column/i.test(error.message)
+    /visitor_reveal_score|visitor_email_scorecard|year_index|column/i.test(
+      error.message,
+    )
   ) {
     let fallback = supabase
       .from("exams")
@@ -241,6 +251,7 @@ export async function listAdminExams(): Promise<Exam[]> {
   return (data ?? []).map((row) => {
     const parish = row.parishes as { name?: string } | null;
     const batch = row.batches as { name?: string } | null;
+    const yearRaw = (row as { year_index?: number | null }).year_index;
     return {
       id: row.id,
       title: row.title,
@@ -250,8 +261,13 @@ export async function listAdminExams(): Promise<Exam[]> {
       duration_minutes: row.duration_minutes,
       pass_percent: Number(row.pass_percent),
       counts_toward_record: row.counts_toward_record,
-      visitor_reveal_score: Boolean(row.visitor_reveal_score),
-      visitor_email_scorecard: Boolean(row.visitor_email_scorecard),
+      visitor_reveal_score: Boolean(
+        (row as { visitor_reveal_score?: boolean }).visitor_reveal_score,
+      ),
+      visitor_email_scorecard: Boolean(
+        (row as { visitor_email_scorecard?: boolean }).visitor_email_scorecard,
+      ),
+      year_index: yearRaw != null ? Number(yearRaw) : null,
       parish_id: row.parish_id,
       batch_id: row.batch_id,
       instructions: row.instructions,
@@ -293,6 +309,10 @@ export async function getAdminExam(
     exam: {
       ...row,
       pass_percent: Number(row.pass_percent),
+      year_index:
+        (row as { year_index?: number | null }).year_index != null
+          ? Number((row as { year_index?: number | null }).year_index)
+          : null,
       visitor_reveal_score: Boolean(
         (row as { visitor_reveal_score?: boolean }).visitor_reveal_score,
       ),
@@ -317,7 +337,7 @@ export async function createExam(input: {
   counts_toward_record: boolean;
   visitor_reveal_score: boolean;
   visitor_email_scorecard: boolean;
-  parish_id: string | null;
+  year_index?: number | null;
   batch_id: string | null;
   instructions: string;
 }): Promise<ExamActionResult> {
@@ -333,10 +353,15 @@ export async function createExam(input: {
     return { ok: false, message: "Title is required." };
   }
 
+  const yearIndex = normalizeYearIndex(input.year_index);
+  if (input.year_index != null && yearIndex == null) {
+    return { ok: false, message: "Exam year must be between 1 and 10." };
+  }
+
   const supabase = await createServerSupabaseClient();
   const resolved = await resolveExamParishBatch(
     actor,
-    { parish_id: input.parish_id, batch_id: input.batch_id },
+    { batch_id: input.batch_id },
     supabase,
   );
   if ("ok" in resolved) return resolved;
@@ -358,6 +383,7 @@ export async function createExam(input: {
         openAudience && input.visitor_reveal_score
           ? Boolean(input.visitor_email_scorecard)
           : false,
+      year_index: openAudience ? null : yearIndex,
       parish_id: resolved.parish_id,
       batch_id: resolved.batch_id,
       instructions: input.instructions.trim() || null,
@@ -387,7 +413,7 @@ export async function updateExamMeta(
     counts_toward_record: boolean;
     visitor_reveal_score: boolean;
     visitor_email_scorecard: boolean;
-    parish_id: string | null;
+    year_index?: number | null;
     batch_id: string | null;
     instructions: string;
     opens_at: string | null;
@@ -399,9 +425,14 @@ export async function updateExamMeta(
 
   const { actor, supabase, exam: existing } = access;
 
+  const yearIndex = normalizeYearIndex(input.year_index);
+  if (input.year_index != null && yearIndex == null) {
+    return { ok: false, message: "Exam year must be between 1 and 10." };
+  }
+
   const resolved = await resolveExamParishBatch(
     actor,
-    { parish_id: input.parish_id, batch_id: input.batch_id },
+    { batch_id: input.batch_id },
     supabase,
   );
   if ("ok" in resolved) return resolved;
@@ -432,6 +463,7 @@ export async function updateExamMeta(
         openAudience && input.visitor_reveal_score
           ? Boolean(input.visitor_email_scorecard)
           : false,
+      year_index: openAudience ? null : yearIndex,
       parish_id: resolved.parish_id,
       batch_id: resolved.batch_id,
       instructions: input.instructions.trim() || null,
@@ -644,6 +676,8 @@ export async function createExamFromQuestionFile(
   options?: {
     title?: string;
     audience?: ExamAudience;
+    year_index?: number | null;
+    batch_id?: string | null;
   },
 ): Promise<ExamActionResult & { imported?: number }> {
   let actor: AdminProfile;
@@ -674,12 +708,20 @@ export async function createExamFromQuestionFile(
   ).slice(0, 160);
 
   const audience: ExamAudience = options?.audience ?? "student";
-  const parishId = isNationalAdmin(actor) ? null : actor.parish_id;
-  const scope = assertExamScope(actor, parishId ?? null);
-  if (scope) return scope;
+  const yearIndex = normalizeYearIndex(options?.year_index);
+  if (options?.year_index != null && yearIndex == null) {
+    return { ok: false, message: "Exam year must be between 1 and 10." };
+  }
+
+  const supabase = await createServerSupabaseClient();
+  const resolved = await resolveExamParishBatch(
+    actor,
+    { batch_id: options?.batch_id ?? null },
+    supabase,
+  );
+  if ("ok" in resolved) return resolved;
 
   const slug = await uniqueSlug(slugifyExamTitle(title));
-  const supabase = await createServerSupabaseClient();
   const { data: exam, error: examError } = await supabase
     .from("exams")
     .insert({
@@ -691,8 +733,9 @@ export async function createExamFromQuestionFile(
       counts_toward_record: audience === "student",
       visitor_reveal_score: false,
       visitor_email_scorecard: false,
-      parish_id: parishId,
-      batch_id: null,
+      year_index: audience === "open" ? null : yearIndex,
+      parish_id: resolved.parish_id,
+      batch_id: resolved.batch_id,
       instructions:
         "Imported from file. Review questions in Compose before publishing.",
       created_by: actor.id,

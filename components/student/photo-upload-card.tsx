@@ -41,7 +41,7 @@ export function PhotoUploadCard({
   const title = isPassport ? "Passport photograph" : "Graduation selfie";
   const body = isPassport
     ? "A clear head-and-shoulders passport-style photo. This becomes your student account image and cannot be changed."
-    : "A clear selfie from the chest or tummy upward. Used for graduation certificates and the student gallery. You can replace or remove it anytime.";
+    : "A clear selfie from the chest or tummy upward. Used for the student gallery. You can replace or remove it anytime.";
 
   function onFileChange(file: File | null) {
     if (preview) URL.revokeObjectURL(preview);
