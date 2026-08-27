@@ -85,41 +85,74 @@ export async function listStudentPassedYearIndexes(
   return [...passed].sort((a, b) => a - b);
 }
 
+/**
+ * Derive unlock state for many year indexes with one attendance + one
+ * attempts fetch (avoids N× getYearUnlockState round-trips).
+ */
+export async function getYearUnlockStates(
+  userId: string,
+  yearIndexes: number[],
+): Promise<Map<number, YearUnlockState>> {
+  const unique = [
+    ...new Set(yearIndexes.filter((y) => isProgrammeMonth(y))),
+  ];
+  const out = new Map<number, YearUnlockState>();
+  if (!unique.length) return out;
+
+  const [presentMonths, passedYears] = await Promise.all([
+    listStudentPresentMonths(userId),
+    listStudentPassedYearIndexes(userId),
+  ]);
+
+  for (const yearIndex of unique) {
+    const attendancePresent = presentMonths.includes(yearIndex);
+    const priorPassed =
+      yearIndex <= 1 ? true : passedYears.includes(yearIndex - 1);
+    if (!attendancePresent) {
+      out.set(yearIndex, {
+        yearIndex,
+        attendancePresent: false,
+        priorPassed,
+        available: false,
+        blockedReason: "attendance",
+      });
+      continue;
+    }
+    if (!priorPassed) {
+      out.set(yearIndex, {
+        yearIndex,
+        attendancePresent: true,
+        priorPassed: false,
+        available: false,
+        blockedReason: "prior_exam",
+      });
+      continue;
+    }
+    out.set(yearIndex, {
+      yearIndex,
+      attendancePresent: true,
+      priorPassed: true,
+      available: true,
+      blockedReason: null,
+    });
+  }
+  return out;
+}
+
 export async function getYearUnlockState(
   userId: string,
   yearIndex: number,
 ): Promise<YearUnlockState> {
-  const presentMonths = await listStudentPresentMonths(userId);
-  const passedYears = await listStudentPassedYearIndexes(userId);
-  const attendancePresent = presentMonths.includes(yearIndex);
-  const priorPassed =
-    yearIndex <= 1 ? true : passedYears.includes(yearIndex - 1);
-
-  if (!attendancePresent) {
-    return {
+  const map = await getYearUnlockStates(userId, [yearIndex]);
+  return (
+    map.get(yearIndex) ?? {
       yearIndex,
       attendancePresent: false,
-      priorPassed,
+      priorPassed: yearIndex <= 1,
       available: false,
       blockedReason: "attendance",
-    };
-  }
-  if (!priorPassed) {
-    return {
-      yearIndex,
-      attendancePresent: true,
-      priorPassed: false,
-      available: false,
-      blockedReason: "prior_exam",
-    };
-  }
-  return {
-    yearIndex,
-    attendancePresent: true,
-    priorPassed: true,
-    available: true,
-    blockedReason: null,
-  };
+    }
+  );
 }
 
 /**

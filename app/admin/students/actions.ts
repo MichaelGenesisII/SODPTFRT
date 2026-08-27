@@ -20,7 +20,6 @@ import { syncTuitionFeePaymentStatus } from "@/lib/payments/service";
 import { sendManualsSentEmail } from "@/lib/email/payment-mail";
 import { portalBaseUrl } from "@/lib/email/backend";
 import { SOD_SITE } from "@/lib/site-nav";
-import { signStudentPhotoUrls } from "@/lib/student/photos";
 import { removeStudentStorageFolder } from "@/lib/student/storage-wipe";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { createServiceSupabaseClient } from "@/lib/supabase/service";
@@ -392,12 +391,8 @@ export async function listAdminStudents(): Promise<AdminStudentRecord[]> {
     exam_entries: 0,
   });
 
-  const passportUrls = await signStudentPhotoUrls(
-    (profiles ?? []).map(
-      (p) => (p as { passport_path?: string | null }).passport_path,
-    ),
-  );
-
+  // List view uses initials — signing hundreds of passports blocked first paint.
+  // Dossier can live without a signed URL until the row is refreshed later.
   return ((profiles ?? []) as (Omit<
     AdminStudentRecord,
     "enrolment" | "fees" | "path" | "passport_url"
@@ -420,13 +415,10 @@ export async function listAdminStudents(): Promise<AdminStudentRecord[]> {
           ? Math.round((ents.includedSum / ents.includedN) * 100) / 100
           : null;
     }
-    const passportPath = profile.passport_path ?? null;
     const { passport_path: _drop, ...rest } = profile;
     return {
       ...rest,
-      passport_url: passportPath
-        ? (passportUrls.get(passportPath) ?? null)
-        : null,
+      passport_url: null,
       enrolment: latestByUser.get(profile.id) ?? null,
       fees: feesByUser.get(profile.id) ?? [],
       path,

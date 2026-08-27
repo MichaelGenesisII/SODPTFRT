@@ -22,7 +22,8 @@ export default async function AdminTicketsPage() {
     .select(
       "id, reference, topic, name, email, message, status, priority, assigned_to, user_id, intake_source, created_at, updated_at, resolved_at",
     )
-    .order("created_at", { ascending: false });
+    .order("created_at", { ascending: false })
+    .limit(200);
 
   let ticketData = ticketRows;
   let loadError = ticketsError;
@@ -33,7 +34,8 @@ export default async function AdminTicketsPage() {
       .select(
         "id, reference, topic, name, email, message, status, priority, assigned_to, user_id, created_at, updated_at, resolved_at",
       )
-      .order("created_at", { ascending: false });
+      .order("created_at", { ascending: false })
+      .limit(200);
     ticketData = (retry.data ?? []).map((row) => ({
       ...row,
       intake_source: null,

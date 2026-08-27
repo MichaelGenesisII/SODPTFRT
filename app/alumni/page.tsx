@@ -1,6 +1,6 @@
 import Link from "next/link";
-import { ensureStudentFeeRows } from "@/lib/payments/service";
 import { feeRemaining } from "@/lib/payments/fees";
+import { listStudentFeePayments } from "@/lib/payments/service";
 import {
   getSessionAlumni,
   getStudentEnrolment,
@@ -12,9 +12,11 @@ export default async function AlumniOverviewPage() {
   const profile = await getSessionAlumni();
   if (!profile) return null;
 
-  const enrolment = await getStudentEnrolment(profile.id);
   const supabase = await createServerSupabaseClient();
-  const fees = await ensureStudentFeeRows(supabase, profile.id).catch(() => []);
+  const [enrolment, fees] = await Promise.all([
+    getStudentEnrolment(profile.id),
+    listStudentFeePayments(supabase, profile.id).catch(() => []),
+  ]);
   const tuition = fees.find((f) => f.fee_type === "tuition");
   const remaining = tuition ? feeRemaining(tuition) : 0;
 
@@ -53,6 +55,7 @@ export default async function AlumniOverviewPage() {
           </p>
           <Link
             href="/alumni/payments"
+            prefetch={false}
             className="mt-3 inline-block text-sm font-medium text-pine underline"
           >
             Pay tuition

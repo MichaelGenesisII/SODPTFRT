@@ -1,12 +1,13 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import {
   isNationalAdmin,
   isParishAdmin,
   type AdminProfile,
 } from "@/lib/admin/profile";
+
+const ADMIN_WELCOME_KEY = "sod-admin-welcome";
 
 function welcomeBody(profile: AdminProfile, deskLabel: string) {
   if (profile.role === "master") {
@@ -28,9 +29,6 @@ export function AdminWelcome({
   profile: AdminProfile;
   deskLabel: string;
 }) {
-  const searchParams = useSearchParams();
-  const router = useRouter();
-  const pathname = usePathname();
   const [phase, setPhase] = useState<"hidden" | "in" | "out">("hidden");
 
   function dismiss() {
@@ -39,14 +37,14 @@ export function AdminWelcome({
   }
 
   useEffect(() => {
-    if (searchParams.get("welcome") !== "1") return;
-
+    try {
+      if (window.sessionStorage.getItem(ADMIN_WELCOME_KEY) !== "1") return;
+      window.sessionStorage.removeItem(ADMIN_WELCOME_KEY);
+    } catch {
+      return;
+    }
     setPhase("in");
-    const params = new URLSearchParams(searchParams.toString());
-    params.delete("welcome");
-    const next = params.toString();
-    router.replace(next ? `${pathname}?${next}` : pathname, { scroll: false });
-  }, [searchParams, router, pathname]);
+  }, []);
 
   useEffect(() => {
     if (phase !== "in") return;

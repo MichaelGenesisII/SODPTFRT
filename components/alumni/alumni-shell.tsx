@@ -45,6 +45,7 @@ export function AlumniShell({
                 <Link
                   key={item.href}
                   href={item.href}
+                  prefetch={false}
                   className={`px-3 py-2 text-sm ${
                     active
                       ? "bg-pine text-mist"

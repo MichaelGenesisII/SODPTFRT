@@ -6,7 +6,6 @@ import type {
 } from "@/lib/student/types";
 import { formatBatchLabel } from "@/lib/parishes";
 import { formatCohortLabel } from "@/lib/cohorts";
-import { signStudentPhotoUrl } from "@/lib/student/photos";
 
 export type {
   EnrolmentStatus,
@@ -16,7 +15,10 @@ export type {
 } from "@/lib/student/types";
 export { studentDisplayName } from "@/lib/student/types";
 
-/** Deduped per request — login/layout/page used to call this many times. */
+/**
+ * Deduped per request. Does not sign passport URLs — Storage signing is done
+ * only where the avatar is shown (layout / payments), not on every auth check.
+ */
 export const getSessionStudent = cache(
   async (): Promise<StudentProfile | null> => {
     const supabase = await createServerSupabaseClient();
@@ -36,8 +38,7 @@ export const getSessionStudent = cache(
 
     if (error || !data || !data.is_active) return null;
 
-    const passportUrl = await signStudentPhotoUrl(data.passport_path);
-    return { ...(data as StudentProfile), passportUrl };
+    return { ...(data as StudentProfile), passportUrl: null };
   },
 );
 

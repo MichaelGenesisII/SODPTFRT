@@ -6,6 +6,7 @@ import { usePathname } from "next/navigation";
 import { useEffect, useState, type MouseEvent, type ReactNode } from "react";
 import { signOutStudent } from "@/app/student/actions";
 import { useStudentSupportLive } from "@/components/student/support-live";
+import { NavProgress } from "@/components/ui/nav-progress";
 import {
   studentDisplayName,
   type StudentProfile,
@@ -431,6 +432,7 @@ export function StudentShell({ profile, children }: StudentShellProps) {
           : ""
       }`}
     >
+      <NavProgress />
       <div
         className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_top_right,_rgba(95,143,122,0.12),_transparent_45%),radial-gradient(ellipse_at_bottom_left,_rgba(20,53,44,0.06),_transparent_40%)]"
         aria-hidden
@@ -569,6 +571,7 @@ export function StudentShell({ profile, children }: StudentShellProps) {
                 <Link
                   key={entry.id}
                   href={entry.href}
+                  prefetch={false}
                   onClick={(event) => onNavClick(event, entry)}
                   tabIndex={desktopOpen ? undefined : -1}
                   className={`group relative flex animate-slide-in-left items-start gap-3 px-3 py-3.5 transition-colors duration-300 ${
@@ -692,6 +695,7 @@ export function StudentShell({ profile, children }: StudentShellProps) {
                           <Link
                             key={child.id}
                             href={child.href}
+                            prefetch={false}
                             onClick={(event) => onNavClick(event, child)}
                             tabIndex={desktopOpen && open ? undefined : -1}
                             className={`group/child relative flex items-start gap-2 px-2.5 py-2.5 transition-colors duration-300 ${

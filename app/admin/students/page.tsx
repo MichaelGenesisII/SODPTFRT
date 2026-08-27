@@ -22,22 +22,30 @@ export default async function AdminStudentsPage() {
   let students: AdminStudentRecord[] = [];
   let loadError: string | null = null;
 
-  try {
-    students = await listAdminStudents();
-  } catch (error) {
-    console.error("admin students:", error);
-    loadError = publicActionMessage(
-      error,
-      publicUnavailableMessage("Students"),
-    );
-  }
-
-  const [parishes, batches] = await Promise.all([
+  const [studentsResult, parishes, batches] = await Promise.all([
+    listAdminStudents()
+      .then((rows) => ({ ok: true as const, rows }))
+      .catch((error: unknown) => {
+        console.error("admin students:", error);
+        return {
+          ok: false as const,
+          message: publicActionMessage(
+            error,
+            publicUnavailableMessage("Students"),
+          ),
+        };
+      }),
     listParishesForAdmin().catch(() => []),
     listBatchesForAdmin(
       isNationalAdmin(profile) ? null : profile.parish_id,
     ).catch(() => []),
   ]);
+
+  if (studentsResult.ok) {
+    students = studentsResult.rows;
+  } else {
+    loadError = studentsResult.message;
+  }
 
   return (
     <div className="mx-auto max-w-6xl">

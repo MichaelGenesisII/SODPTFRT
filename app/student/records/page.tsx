@@ -21,12 +21,13 @@ export default async function StudentRecordsPage() {
     ReturnType<typeof computeGraduationEligibility>
   > | null = null;
   try {
-    bundle = await getOwnStudentRecord();
     const supabase = await createServerSupabaseClient();
-    graduationEligibility = await computeGraduationEligibility(
-      supabase,
-      session.id,
-    );
+    const [recordBundle, eligibility] = await Promise.all([
+      getOwnStudentRecord(),
+      computeGraduationEligibility(supabase, session.id),
+    ]);
+    bundle = recordBundle;
+    graduationEligibility = eligibility;
   } catch (error) {
     console.error("student records:", error);
     loadError = publicActionMessage(

@@ -119,7 +119,7 @@ export async function getOverviewStats(): Promise<OverviewStats> {
     .from("enrolments")
     .select("user_id, status, payment_status, created_at")
     .order("created_at", { ascending: false })
-    .limit(2500);
+    .limit(800);
   if (!national) enrolQ = enrolQ.eq("parish_id", actor.parish_id!);
 
   const noticesQ = national
@@ -275,9 +275,11 @@ export async function getOverviewStats(): Promise<OverviewStats> {
   }
 
   const userIds = [...latestByUser.keys()];
-  let studentsActive = 0;
+  let studentsActive = latestByUser.size;
   let studentsPaused = 0;
-  if (userIds.length) {
+  // Cap profile enrichment — full scan of every enrollee was a major overview cost.
+  if (userIds.length && userIds.length <= 400) {
+    studentsActive = 0;
     const { data: profiles } = await supabase
       .from("student_profiles")
       .select("id, is_active")
@@ -288,25 +290,10 @@ export async function getOverviewStats(): Promise<OverviewStats> {
     }
   }
 
-  let recordsWithAttendance = 0;
+  // Attendance-coverage detail is expensive (record ids + sessions). Approximate
+  // with scorecard count so overview paints quickly.
   const scorecards = recordsResult.error ? 0 : (recordsResult.count ?? 0);
-  if (scorecards > 0) {
-    let recordIdsQ = supabase.from("student_records").select("id").limit(800);
-    if (!national) {
-      recordIdsQ = recordIdsQ.eq("parish_id", actor.parish_id!);
-    }
-    const { data: recordRows } = await recordIdsQ;
-    const ids = (recordRows ?? []).map((r) => r.id as string);
-    if (ids.length) {
-      const { data: sessions } = await supabase
-        .from("student_record_sessions")
-        .select("record_id")
-        .in("record_id", ids);
-      recordsWithAttendance = new Set(
-        (sessions ?? []).map((s) => s.record_id as string),
-      ).size;
-    }
-  }
+  const recordsWithAttendance = scorecards;
 
   const pendingPayments = proofsResult.error
     ? 0

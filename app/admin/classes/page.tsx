@@ -30,27 +30,40 @@ export default async function AdminClassesPage() {
   let loadError: string | null = null;
   let zoomReady = false;
   let meetingSdkReady = false;
+  let parishes: Awaited<ReturnType<typeof listParishesForAdmin>> = [];
+  let batches: Awaited<ReturnType<typeof listBatchesForAdmin>> = [];
+  let cohorts: Awaited<ReturnType<typeof listCohortsForAdmin>> = [];
 
   try {
-    [classes, zoomReady, meetingSdkReady] = await Promise.all([
+    const [
+      classRows,
+      zoomOk,
+      sdkOk,
+      parishRows,
+      batchRows,
+      cohortRows,
+    ] = await Promise.all([
       listAdminClasses(),
       zoomIntegrationReady(),
       meetingSdkIntegrationReady(),
+      listParishesForAdmin().catch(() => []),
+      listBatchesForAdmin(
+        isNationalAdmin(profile) ? null : profile.parish_id,
+      ).catch(() => []),
+      isNationalAdmin(profile)
+        ? listCohortsForAdmin().catch(() => [])
+        : Promise.resolve([]),
     ]);
+    classes = classRows;
+    zoomReady = zoomOk;
+    meetingSdkReady = sdkOk;
+    parishes = parishRows;
+    batches = batchRows;
+    cohorts = cohortRows;
   } catch (error) {
     console.error("admin classes:", error);
     loadError = publicActionMessage(error, publicUnavailableMessage("Classes"));
   }
-
-  const [parishes, batches, cohorts] = await Promise.all([
-    listParishesForAdmin().catch(() => []),
-    listBatchesForAdmin(
-      isNationalAdmin(profile) ? null : profile.parish_id,
-    ).catch(() => []),
-    isNationalAdmin(profile)
-      ? listCohortsForAdmin().catch(() => [])
-      : Promise.resolve([]),
-  ]);
 
   return (
     <div className="mx-auto max-w-6xl">

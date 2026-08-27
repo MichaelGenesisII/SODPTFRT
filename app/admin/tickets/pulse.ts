@@ -27,10 +27,8 @@ function previewBody(body: string) {
 }
 
 /**
- * Badge counts for the admin shell. Called often (realtime nudges + a slow
- * fallback poll), so it deliberately skips a separate session lookup: the
- * cookie-scoped client is subject to RLS, and only active admins can read
- * support_tickets, so anyone else simply counts zero rows.
+ * Badge counts for the admin shell. Called from the client (realtime + poll),
+ * not from the admin layout — so navigations stay light.
  */
 export async function getDeskPulse(): Promise<DeskPulse> {
   try {
@@ -52,21 +50,27 @@ export async function getDeskPulse(): Promise<DeskPulse> {
           )
           .eq("is_internal", false)
           .order("created_at", { ascending: false })
-          // RLS already scopes notes to accessible tickets; take a few so we
-          // still surface the newest in-scope chat if the absolute latest is filtered out.
           .limit(8),
       ]);
 
     let latestChat: DeskChatEvent | null = null;
     const noteRows = notesResult.error ? [] : (notesResult.data ?? []);
-    for (const latest of noteRows) {
-      const { data: ticket } = await supabase
+    const ticketIds = [
+      ...new Set(noteRows.map((n) => n.ticket_id as string).filter(Boolean)),
+    ];
+
+    if (ticketIds.length) {
+      const { data: tickets } = await supabase
         .from("support_tickets")
         .select("id, reference, topic")
-        .eq("id", latest.ticket_id)
-        .maybeSingle();
+        .in("id", ticketIds);
+      const byId = new Map(
+        (tickets ?? []).map((t) => [t.id as string, t] as const),
+      );
 
-      if (ticket) {
+      for (const latest of noteRows) {
+        const ticket = byId.get(latest.ticket_id as string);
+        if (!ticket) continue;
         latestChat = {
           noteId: latest.id as string,
           ticketId: ticket.id as string,

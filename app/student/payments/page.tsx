@@ -50,10 +50,12 @@ export default async function StudentPaymentsPage({ searchParams }: PageProps) {
 
   const graduationTakenDown =
     profile.selfie_moderation_status === "taken_down";
-  const graduationSelfieUrl =
+  const [passportUrl, graduationSelfieUrl] = await Promise.all([
+    signStudentPhotoUrl(profile.passport_path),
     profile.graduation_selfie_path && !graduationTakenDown
-      ? await signStudentPhotoUrl(profile.graduation_selfie_path)
-      : null;
+      ? signStudentPhotoUrl(profile.graduation_selfie_path)
+      : Promise.resolve(null),
+  ]);
 
   const params = searchParams ? await searchParams : {};
   const paid = typeof params.paid === "string" ? params.paid : null;
@@ -83,7 +85,7 @@ export default async function StudentPaymentsPage({ searchParams }: PageProps) {
       loadError={loadError}
       cardReady={cardReady}
       passportUploaded={Boolean(profile.passport_path)}
-      passportUrl={profile.passportUrl}
+      passportUrl={passportUrl}
       graduationSelfieUploaded={Boolean(profile.graduation_selfie_path)}
       graduationSelfieUrl={graduationSelfieUrl}
       graduationSelfieTakenDown={graduationTakenDown}

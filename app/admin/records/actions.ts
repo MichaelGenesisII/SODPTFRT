@@ -338,25 +338,26 @@ export async function getRecordBundle(
     .maybeSingle();
   if (!record) return null;
 
-  const { data: profile } = await supabase
-    .from("student_profiles")
-    .select(
-      "email, first_name, middle_name, last_name, passport_path, graduation_gate_override_note",
-    )
-    .eq("id", record.user_id)
-    .maybeSingle();
-
-  const { data: sessions } = await supabase
-    .from("student_record_sessions")
-    .select("*")
-    .eq("record_id", recordId)
-    .order("session_date", { ascending: true });
-
-  const { data: entries } = await supabase
-    .from("student_record_entries")
-    .select("*")
-    .eq("record_id", recordId)
-    .order("created_at", { ascending: true });
+  const [{ data: profile }, { data: sessions }, { data: entries }] =
+    await Promise.all([
+      supabase
+        .from("student_profiles")
+        .select(
+          "email, first_name, middle_name, last_name, passport_path, graduation_gate_override_note",
+        )
+        .eq("id", record.user_id)
+        .maybeSingle(),
+      supabase
+        .from("student_record_sessions")
+        .select("*")
+        .eq("record_id", recordId)
+        .order("session_date", { ascending: true }),
+      supabase
+        .from("student_record_entries")
+        .select("*")
+        .eq("record_id", recordId)
+        .order("created_at", { ascending: true }),
+    ]);
 
   const parish = record.parishes as { name?: string } | null;
   const batch = record.batches as { name?: string; year?: number } | null;

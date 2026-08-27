@@ -39,7 +39,8 @@ export default async function AdminAnnouncementsPage() {
       .select(
         "id, title, body, href, href_label, audience, is_published, published_at, created_at, updated_at, parish_id, batch_id",
       )
-      .order("updated_at", { ascending: false }),
+      .order("updated_at", { ascending: false })
+      .limit(100),
     listParishesForAdmin().catch(() => []),
     listBatchesForAdmin(
       isNationalAdmin(profile) ? null : profile.parish_id,
@@ -64,29 +65,58 @@ export default async function AdminAnnouncementsPage() {
       announcements.map((item) => item.id),
     );
 
+    const filesFlat: {
+      announcementId: string;
+      file: {
+        id: string;
+        original_name: string;
+        mime: string;
+        byte_size: number;
+        storage_path: string;
+        access_mode: "view" | "download" | "both";
+      };
+    }[] = [];
     for (const item of announcements) {
-      const files = attachmentMap.get(item.id) ?? [];
-      item.attachments = (
-        await Promise.all(
-          files.map(async (file) => {
-            const urls = await signedNoticeAttachmentUrls(
-              file.storage_path,
-              file.original_name,
-              file.access_mode,
-            );
-            if (!urls.url && !urls.downloadUrl) return null;
-            return {
-              id: file.id,
-              name: file.original_name,
-              mime: file.mime,
-              byteSize: file.byte_size,
-              access: file.access_mode,
-              url: urls.url,
-              downloadUrl: urls.downloadUrl,
-            };
-          }),
-        )
-      ).filter((file): file is NonNullable<typeof file> => Boolean(file));
+      for (const file of attachmentMap.get(item.id) ?? []) {
+        filesFlat.push({ announcementId: item.id, file });
+      }
+    }
+
+    const signedList = await Promise.all(
+      filesFlat.map(async ({ announcementId, file }) => {
+        const urls = await signedNoticeAttachmentUrls(
+          file.storage_path,
+          file.original_name,
+          file.access_mode,
+        );
+        if (!urls.url && !urls.downloadUrl) return null;
+        return {
+          announcementId,
+          attachment: {
+            id: file.id,
+            name: file.original_name,
+            mime: file.mime,
+            byteSize: file.byte_size,
+            access: file.access_mode,
+            url: urls.url,
+            downloadUrl: urls.downloadUrl,
+          },
+        };
+      }),
+    );
+
+    const byAnnouncement = new Map<
+      string,
+      NonNullable<(typeof signedList)[number]>["attachment"][]
+    >();
+    for (const item of signedList) {
+      if (!item) continue;
+      const list = byAnnouncement.get(item.announcementId) ?? [];
+      list.push(item.attachment);
+      byAnnouncement.set(item.announcementId, list);
+    }
+    for (const item of announcements) {
+      item.attachments = byAnnouncement.get(item.id) ?? [];
     }
   }
 

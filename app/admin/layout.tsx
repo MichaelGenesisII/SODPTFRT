@@ -1,13 +1,11 @@
 import { redirect } from "next/navigation";
 import { AdminShell } from "@/components/admin/admin-shell";
-import { getPaymentsPulse } from "@/app/admin/payments/pulse";
-import { getDeskPulse } from "@/app/admin/tickets/pulse";
 import { getSessionAdmin } from "@/lib/admin/auth";
 import { parishAdminEnabled } from "@/lib/admin/features";
 import { adminDeskScopeLabel } from "@/lib/admin/profile";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 
-/** Auth + desk data — never statically prerender (needs Supabase at request time). */
+/** Auth — never statically prerender (needs Supabase at request time). */
 export const dynamic = "force-dynamic";
 
 export default async function AdminLayout({
@@ -33,17 +31,12 @@ export default async function AdminLayout({
 
   const deskLabel = adminDeskScopeLabel(profile, parishName);
 
-  const [deskPulse, paymentsPulse] = await Promise.all([
-    getDeskPulse(),
-    getPaymentsPulse(),
-  ]);
-
+  // Desk / payments badges load on the client — awaiting them here made every
+  // /admin/* soft navigation pay for pulse queries before the page could paint.
   return (
     <AdminShell
       profile={profile}
       deskLabel={deskLabel}
-      deskPulse={deskPulse}
-      paymentsPulse={paymentsPulse}
       parishAdminEnabled={parishAdminEnabled()}
     >
       {children}

@@ -3,14 +3,13 @@
 import Image from "next/image";
 import Link from "next/link";
 import {
-  Suspense,
   useEffect,
   useMemo,
   useRef,
   useState,
   type ReactNode,
 } from "react";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname } from "next/navigation";
 import { signOutAdmin } from "@/app/admin/actions";
 import {
   getDeskPulse,
@@ -21,6 +20,7 @@ import {
   type PaymentsPulse,
 } from "@/app/admin/payments/pulse";
 import { AdminWelcome } from "@/components/admin/admin-welcome";
+import { NavProgress } from "@/components/ui/nav-progress";
 import { useToast } from "@/components/ui/toast";
 import type { AdminProfile } from "@/lib/admin/profile";
 import { isNationalAdmin, isParishAdmin } from "@/lib/admin/profile";
@@ -32,6 +32,13 @@ const DESK_SEEN_CHAT_KEY = "sod-desk-chat-seen";
 // Realtime drives the badge; this is only a safety net if the socket drops.
 const DESK_FALLBACK_POLL_MS = 120_000;
 const DESK_BURST_MS = 400;
+
+const EMPTY_DESK_PULSE: DeskPulse = {
+  open: 0,
+  unsettled: 0,
+  latestChat: null,
+};
+const EMPTY_PAYMENTS_PULSE: PaymentsPulse = { pending: 0 };
 
 type NavIcon = (props: { className?: string }) => ReactNode;
 
@@ -711,20 +718,19 @@ function ProfileMenu({
 export function AdminShell({
   profile,
   deskLabel,
-  deskPulse: initialPulse,
-  paymentsPulse: initialPaymentsPulse,
+  deskPulse: initialPulse = EMPTY_DESK_PULSE,
+  paymentsPulse: initialPaymentsPulse = EMPTY_PAYMENTS_PULSE,
   parishAdminEnabled = false,
   children,
 }: {
   profile: AdminProfile;
   deskLabel: string;
-  deskPulse: DeskPulse;
-  paymentsPulse: PaymentsPulse;
+  deskPulse?: DeskPulse;
+  paymentsPulse?: PaymentsPulse;
   parishAdminEnabled?: boolean;
   children: ReactNode;
 }) {
   const pathname = usePathname();
-  const router = useRouter();
   const { toast } = useToast();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [desktopOpen, setDesktopOpen] = useState(true);
@@ -737,19 +743,6 @@ export function AdminShell({
     () => filterNav(nav, parishAdminEnabled, isNationalAdmin(profile)),
     [parishAdminEnabled, profile],
   );
-
-  // Fresh server counts win over the last polled value.
-  const [lastServerPulse, setLastServerPulse] = useState(initialPulse);
-  if (lastServerPulse !== initialPulse) {
-    setLastServerPulse(initialPulse);
-    setDeskPulse(initialPulse);
-  }
-  const [lastPaymentsPulse, setLastPaymentsPulse] =
-    useState(initialPaymentsPulse);
-  if (lastPaymentsPulse !== initialPaymentsPulse) {
-    setLastPaymentsPulse(initialPaymentsPulse);
-    setPaymentsPulse(initialPaymentsPulse);
-  }
 
   // Open the group for the current route on navigation only.
   // Do not depend on `visibleNav` identity — a fresh array every render was
@@ -868,14 +861,8 @@ export function AdminShell({
         notifyOpen(next.open);
         notifyChat(next.latestChat, { announce: true });
         const chatId = next.latestChat?.noteId ?? null;
-        if (
-          next.open > lastOpen ||
-          (chatId &&
-            chatId !== lastChatId &&
-            next.latestChat?.fromStudent)
-        ) {
-          router.refresh();
-        }
+        // Do not router.refresh() here — that re-ran the entire admin layout
+        // on every new ticket note and made soft navigations feel stuck.
         lastOpen = next.open;
         lastChatId = chatId;
       } catch {
@@ -927,6 +914,9 @@ export function AdminShell({
     window.addEventListener("focus", onWake);
     document.addEventListener("visibilitychange", onWake);
 
+    // First badge fetch after paint — layout no longer awaits pulses.
+    void refreshPulse();
+
     return () => {
       cancelled = true;
       window.clearTimeout(burstTimer);
@@ -937,7 +927,7 @@ export function AdminShell({
     };
   // Intentionally omit initialPulse — toast once on auth/mount, then subscribe.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [toast, router]);
+  }, [toast]);
 
   const unsettled = deskPulse.unsettled;
   const paymentsPending = paymentsPulse.pending;
@@ -964,6 +954,7 @@ export function AdminShell({
 
   return (
     <div className="relative flex min-h-svh flex-col bg-mist text-ink lg:flex-row">
+      <NavProgress />
       <div
         className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_top_right,_rgba(95,143,122,0.12),_transparent_45%),radial-gradient(ellipse_at_bottom_left,_rgba(20,53,44,0.06),_transparent_40%)]"
         aria-hidden
@@ -1121,6 +1112,7 @@ export function AdminShell({
                 <Link
                   key={entry.href}
                   href={entry.href}
+                  prefetch={false}
                   onClick={() => setMobileOpen(false)}
                   tabIndex={desktopOpen ? undefined : -1}
                   className={`group relative flex animate-slide-in-left items-start gap-3 px-3 py-3.5 transition-colors duration-300 ${
@@ -1251,6 +1243,7 @@ export function AdminShell({
                           <Link
                             key={child.href}
                             href={child.href}
+                            prefetch={false}
                             onClick={() => setMobileOpen(false)}
                             tabIndex={desktopOpen && open ? undefined : -1}
                             className={`group/child relative flex items-start gap-2 px-2.5 py-2.5 transition-colors duration-300 ${
@@ -1369,6 +1362,7 @@ export function AdminShell({
             {paymentsPending > 0 ? (
               <Link
                 href="/admin/payments"
+                prefetch={false}
                 className="group inline-flex h-12 items-center gap-2 border border-stone bg-white/45 px-3 text-sm text-ink/60 transition-colors hover:border-pine/30 hover:text-pine"
               >
                 <span>Payments</span>
@@ -1380,6 +1374,7 @@ export function AdminShell({
             {unsettled > 0 ? (
               <Link
                 href="/admin/tickets"
+                prefetch={false}
                 className="group inline-flex h-12 items-center gap-2 border border-stone bg-white/45 px-3 text-sm text-ink/60 transition-colors hover:border-pine/30 hover:text-pine"
               >
                 <span className="relative">
@@ -1404,9 +1399,7 @@ export function AdminShell({
         </div>
       </div>
 
-      <Suspense fallback={null}>
-        <AdminWelcome profile={profile} deskLabel={deskLabel} />
-      </Suspense>
+      <AdminWelcome profile={profile} deskLabel={deskLabel} />
     </div>
   );
 }

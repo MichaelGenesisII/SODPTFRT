@@ -1,10 +1,9 @@
 import { redirect } from "next/navigation";
-import { getStudentSupportPulse } from "@/app/student/support/pulse";
 import { StudentShell } from "@/components/student/student-shell";
 import { StudentSupportLiveProvider } from "@/components/student/support-live";
 import { getSessionStudent } from "@/lib/student/auth";
 
-/** Auth + desk data — never statically prerender (needs Supabase at request time). */
+/** Auth — never statically prerender (needs Supabase at request time). */
 export const dynamic = "force-dynamic";
 
 export default async function StudentLayout({
@@ -20,11 +19,10 @@ export default async function StudentLayout({
     redirect("/alumni");
   }
 
-  // Pulse uses cached session; claim work is non-blocking inside pulse.
-  const supportPulse = await getStudentSupportPulse();
-
+  // Avatar signing is page-local (home/payments). Layout stays auth-only so
+  // every soft navigation does not wait on Storage.
   return (
-    <StudentSupportLiveProvider profile={profile} initialPulse={supportPulse}>
+    <StudentSupportLiveProvider profile={profile}>
       <StudentShell profile={profile}>{children}</StudentShell>
     </StudentSupportLiveProvider>
   );

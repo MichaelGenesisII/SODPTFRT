@@ -156,11 +156,19 @@ export async function mapGalleryPhotos(
   );
 
   // Retry any paths the batch signer skipped so the page stays full.
-  for (const row of rows) {
-    const path = row.selfie_path;
-    if (!path || signed.has(path)) continue;
-    const retry = await signStudentPhotoUrl(path, GALLERY_SIGNED_URL_TTL_SEC);
-    if (retry) signed.set(path, retry);
+  const missing = rows
+    .map((row) => row.selfie_path)
+    .filter(
+      (path): path is string =>
+        typeof path === "string" && path.length > 0 && !signed.has(path),
+    );
+  if (missing.length) {
+    await Promise.all(
+      missing.map(async (path) => {
+        const retry = await signStudentPhotoUrl(path, GALLERY_SIGNED_URL_TTL_SEC);
+        if (retry) signed.set(path, retry);
+      }),
+    );
   }
 
   return rows.map((row) => {
@@ -185,11 +193,19 @@ export async function mapAdminGalleryItems(rows: GalleryPortraitRow[]) {
     GALLERY_SIGNED_URL_TTL_SEC,
   );
 
-  for (const row of rows) {
-    const path = row.selfie_path;
-    if (!path || signed.has(path)) continue;
-    const retry = await signStudentPhotoUrl(path, GALLERY_SIGNED_URL_TTL_SEC);
-    if (retry) signed.set(path, retry);
+  const missing = rows
+    .map((row) => row.selfie_path)
+    .filter(
+      (path): path is string =>
+        typeof path === "string" && path.length > 0 && !signed.has(path),
+    );
+  if (missing.length) {
+    await Promise.all(
+      missing.map(async (path) => {
+        const retry = await signStudentPhotoUrl(path, GALLERY_SIGNED_URL_TTL_SEC);
+        if (retry) signed.set(path, retry);
+      }),
+    );
   }
 
   return rows.map((row) => {

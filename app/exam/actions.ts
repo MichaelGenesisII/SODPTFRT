@@ -26,11 +26,13 @@ import {
 } from "@/lib/exams/attempts";
 import {
   getYearUnlockState,
+  getYearUnlockStates,
   isProgrammeMonth,
   yearUnlockMessage,
   type YearUnlockState,
 } from "@/lib/exams/year-unlock";
 import { publicActionMessage } from "@/lib/safe-action-message";
+import { getSessionStudent } from "@/lib/student/auth";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { createServiceSupabaseClient } from "@/lib/supabase/service";
 
@@ -924,33 +926,34 @@ export async function requestOpenExamCertificateEmail(
 }
 
 export async function listStudentExams(): Promise<StudentExamListItem[]> {
-  const supabase = await createServerSupabaseClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) return [];
+  const student = await getSessionStudent();
+  if (!student) return [];
 
+  const supabase = await createServerSupabaseClient();
   const { data: exams } = await supabase
     .from("exams")
-    .select("*")
+    .select(
+      "id, title, description, status, audience, duration_minutes, pass_percent, opens_at, closes_at, year_index, updated_at",
+    )
     .eq("audience", "student")
     .in("status", ["published", "closed"])
     .order("updated_at", { ascending: false });
 
-  const rows = (exams ?? []).map((e) => ({
-    ...(e as Exam),
-    pass_percent: Number(e.pass_percent),
-    year_index:
-      (e as { year_index?: number | null }).year_index != null
-        ? Number((e as { year_index?: number | null }).year_index)
-        : null,
-  }));
+  const rows = (exams ?? []).map((e) => {
+    const row = e as unknown as Exam & { year_index?: number | null };
+    return {
+      ...row,
+      pass_percent: Number(row.pass_percent),
+      year_index:
+        row.year_index != null ? Number(row.year_index) : null,
+    };
+  });
   if (!rows.length) return [];
 
   const { data: attempts } = await supabase
     .from("exam_attempts")
     .select("exam_id, status, started_at")
-    .eq("user_id", user.id)
+    .eq("user_id", student.id)
     .in(
       "exam_id",
       rows.map((e) => e.id),
@@ -976,12 +979,7 @@ export async function listStudentExams(): Promise<StudentExamListItem[]> {
         .filter((y): y is number => isProgrammeMonth(y)),
     ),
   ];
-  const unlockByYear = new Map<number, YearUnlockState>();
-  await Promise.all(
-    yearIndexes.map(async (y) => {
-      unlockByYear.set(y, await getYearUnlockState(user.id, y));
-    }),
-  );
+  const unlockByYear = await getYearUnlockStates(student.id, yearIndexes);
 
   return rows.map((e) => {
     const unlock =

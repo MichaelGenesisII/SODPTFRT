@@ -28,6 +28,10 @@ async function getActiveStudentProfile(
   return data && data.is_active ? data : null;
 }
 
+/**
+ * Auth gate only. Profile / role checks live in layouts so every soft
+ * navigation does not pay an extra Supabase round-trip here.
+ */
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
   const { supabase, response, user } = await createMiddlewareSession(request);
@@ -72,91 +76,33 @@ export async function middleware(request: NextRequest) {
     return response;
   }
 
-  if (pathname.startsWith("/alumni")) {
+  if (
+    pathname.startsWith("/alumni") ||
+    pathname.startsWith("/student") ||
+    pathname.startsWith("/admin")
+  ) {
     if (!supabase) {
       const login = request.nextUrl.clone();
-      login.pathname = "/login/alumni";
+      login.pathname = pathname.startsWith("/admin")
+        ? "/login/admin"
+        : pathname.startsWith("/alumni")
+          ? "/login/alumni"
+          : "/login/student";
       login.searchParams.set("error", "config");
       return NextResponse.redirect(login);
     }
 
     if (!user) {
       const login = request.nextUrl.clone();
-      login.pathname = "/login/alumni";
-      return NextResponse.redirect(login);
-    }
-
-    const profile = await getActiveStudentProfile(supabase, user.id);
-
-    if (!profile || profile.account_kind !== "alumni") {
-      await supabase.auth.signOut();
-      const login = request.nextUrl.clone();
-      login.pathname = "/login/alumni";
-      login.searchParams.set("error", "forbidden");
+      login.pathname = pathname.startsWith("/admin")
+        ? "/login/admin"
+        : pathname.startsWith("/alumni")
+          ? "/login/alumni"
+          : "/login/student";
       return NextResponse.redirect(login);
     }
 
     return response;
-  }
-
-  if (pathname.startsWith("/student")) {
-    if (!supabase) {
-      const login = request.nextUrl.clone();
-      login.pathname = "/login/student";
-      login.searchParams.set("error", "config");
-      return NextResponse.redirect(login);
-    }
-
-    if (!user) {
-      const login = request.nextUrl.clone();
-      login.pathname = "/login/student";
-      return NextResponse.redirect(login);
-    }
-
-    const profile = await getActiveStudentProfile(supabase, user.id);
-
-    if (!profile) {
-      await supabase.auth.signOut();
-      const login = request.nextUrl.clone();
-      login.pathname = "/login/student";
-      login.searchParams.set("error", "forbidden");
-      return NextResponse.redirect(login);
-    }
-
-    if (profile.account_kind === "alumni") {
-      const alumni = request.nextUrl.clone();
-      alumni.pathname = pathname.replace(/^\/student/, "/alumni");
-      return NextResponse.redirect(alumni);
-    }
-
-    return response;
-  }
-
-  if (!pathname.startsWith("/admin")) {
-    return response;
-  }
-
-  if (!supabase) {
-    const login = request.nextUrl.clone();
-    login.pathname = "/login/admin";
-    login.searchParams.set("error", "config");
-    return NextResponse.redirect(login);
-  }
-
-  if (!user) {
-    const login = request.nextUrl.clone();
-    login.pathname = "/login/admin";
-    return NextResponse.redirect(login);
-  }
-
-  const profile = await getActiveAdminProfile(supabase, user.id);
-
-  if (!profile) {
-    await supabase.auth.signOut();
-    const login = request.nextUrl.clone();
-    login.pathname = "/login/admin";
-    login.searchParams.set("error", "forbidden");
-    return NextResponse.redirect(login);
   }
 
   return response;

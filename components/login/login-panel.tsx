@@ -177,7 +177,12 @@ export function LoginPanel({ role }: LoginPanelProps) {
           return;
         }
 
-        router.replace("/admin?welcome=1");
+        try {
+          window.sessionStorage.setItem("sod-admin-welcome", "1");
+        } catch {
+          // Welcome overlay is optional if storage is blocked.
+        }
+        router.replace("/admin");
         return;
       }
 

@@ -9,7 +9,6 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { usePathname, useRouter } from "next/navigation";
 import {
   getStudentSupportPulse,
   markStudentTicketRead,
@@ -23,6 +22,12 @@ import type { StudentProfile } from "@/lib/student/types";
 const TOAST_SEEN_KEY = "sod-student-chat-toast-seen";
 const FALLBACK_POLL_MS = 90_000;
 const BURST_MS = 450;
+
+const EMPTY_PULSE: StudentSupportPulse = {
+  notes: [],
+  latestNoteId: null,
+  reads: {},
+};
 
 type ReadMap = Record<string, string>;
 
@@ -103,25 +108,17 @@ function mergeReadMaps(local: ReadMap, server: ReadMap): ReadMap {
 
 export function StudentSupportLiveProvider({
   profile,
-  initialPulse,
+  initialPulse = EMPTY_PULSE,
   children,
 }: {
   profile: StudentProfile;
-  initialPulse: StudentSupportPulse;
+  initialPulse?: StudentSupportPulse;
   children: ReactNode;
 }) {
-  const pathname = usePathname();
-  const router = useRouter();
   const { toast } = useToast();
   const [notes, setNotes] = useState(initialPulse.notes);
   const [readMap, setReadMap] = useState<ReadMap>({});
   const [hydrated, setHydrated] = useState(false);
-  const [serverPulse, setServerPulse] = useState(initialPulse);
-
-  if (serverPulse !== initialPulse) {
-    setServerPulse(initialPulse);
-    setNotes(initialPulse.notes);
-  }
 
   useEffect(() => {
     const merged = mergeReadMaps(
@@ -168,11 +165,9 @@ export function StudentSupportLiveProvider({
       if (next.latestNoteId) seen.add(next.latestNoteId);
       writeSeenNoteIds(seen);
 
-      if (novel.length > 0 && pathname.startsWith("/student/support")) {
-        router.refresh();
-      }
+      // Local pulse already updated notes/unread; no full RSC remount.
     },
-    [pathname, profile.id, router, toast],
+    [profile.id, toast],
   );
 
   useEffect(() => {
@@ -240,6 +235,8 @@ export function StudentSupportLiveProvider({
     window.addEventListener("focus", onWake);
     document.addEventListener("visibilitychange", onWake);
 
+    void refreshPulse(false);
+
     return () => {
       cancelled = true;
       window.clearTimeout(burstTimer);
@@ -249,7 +246,7 @@ export function StudentSupportLiveProvider({
       if (supabase && channel) void supabase.removeChannel(channel);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [toast, router, applyPulse]);
+  }, [toast, applyPulse]);
 
   const markTicketRead = useCallback(
     async (ticketId: string) => {

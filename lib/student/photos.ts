@@ -1,3 +1,4 @@
+import { cache } from "react";
 import { createServiceSupabaseClient } from "@/lib/supabase/service";
 
 /** Passport + graduation selfie photo rules. */
@@ -55,6 +56,11 @@ export async function signStudentPhotoUrl(
     return null;
   }
 }
+
+/** Deduped per RSC request when layout + page both need the same path. */
+export const cachedSignStudentPhotoUrl = cache(
+  (path: string | null | undefined) => signStudentPhotoUrl(path),
+);
 
 /** Batch-sign gallery paths → Map<path, signedUrl>. */
 export async function signStudentPhotoUrls(

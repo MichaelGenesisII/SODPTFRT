@@ -63,6 +63,7 @@ function MetricLink({
   return (
     <Link
       href={href}
+      prefetch={false}
       className={`flex flex-col justify-between transition-colors ${shell} ${
         compact
           ? "min-h-[5.25rem] px-3 py-3 sm:min-h-[6.25rem] sm:px-3.5 sm:py-3.5"
@@ -105,7 +106,7 @@ function FunnelBar({
 }) {
   const width = total > 0 ? Math.max(4, pct(count, total)) : 0;
   return (
-    <Link href={href} className="group block py-1 sm:py-1.5">
+    <Link href={href} prefetch={false} className="group block py-1 sm:py-1.5">
       <div className="flex items-baseline justify-between gap-2 text-xs sm:gap-3 sm:text-sm">
         <span className="min-w-0 truncate text-ink/70 group-hover:text-pine">
           {label}

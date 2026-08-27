@@ -117,30 +117,59 @@ export async function fetchPublishedAnnouncements(
     }
 
     const notices: Announcement[] = [];
+    const filesFlat: {
+      announcementId: string;
+      file: {
+        id: string;
+        name: string;
+        mime: string;
+        byteSize: number;
+        storage_path: string;
+        access: NoticeAttachmentAccess;
+      };
+    }[] = [];
     for (const row of rows) {
-      const files = attachmentMap.get(row.id) ?? [];
-      const attachments = (
-        await Promise.all(
-          files.map(async (file): Promise<AnnouncementAttachmentView | null> => {
-            const urls = await signedNoticeAttachmentUrls(
-              file.storage_path,
-              file.name,
-              file.access,
-            );
-            if (!urls.url && !urls.downloadUrl) return null;
-            return {
-              id: file.id,
-              name: file.name,
-              mime: file.mime,
-              byteSize: file.byteSize,
-              access: file.access,
-              url: urls.url,
-              downloadUrl: urls.downloadUrl,
-            };
-          }),
-        )
-      ).filter((item): item is AnnouncementAttachmentView => Boolean(item));
+      for (const file of attachmentMap.get(row.id) ?? []) {
+        filesFlat.push({ announcementId: row.id, file });
+      }
+    }
 
+    const signedList = await Promise.all(
+      filesFlat.map(async ({ announcementId, file }) => {
+        const urls = await signedNoticeAttachmentUrls(
+          file.storage_path,
+          file.name,
+          file.access,
+        );
+        if (!urls.url && !urls.downloadUrl) return null;
+        return {
+          announcementId,
+          attachment: {
+            id: file.id,
+            name: file.name,
+            mime: file.mime,
+            byteSize: file.byteSize,
+            access: file.access,
+            url: urls.url,
+            downloadUrl: urls.downloadUrl,
+          } satisfies AnnouncementAttachmentView,
+        };
+      }),
+    );
+
+    const attachmentsByAnnouncement = new Map<
+      string,
+      AnnouncementAttachmentView[]
+    >();
+    for (const item of signedList) {
+      if (!item) continue;
+      const list = attachmentsByAnnouncement.get(item.announcementId) ?? [];
+      list.push(item.attachment);
+      attachmentsByAnnouncement.set(item.announcementId, list);
+    }
+
+    for (const row of rows) {
+      const attachments = attachmentsByAnnouncement.get(row.id);
       notices.push({
         id: row.id,
         title: row.title,
@@ -150,7 +179,7 @@ export async function fetchPublishedAnnouncements(
         hrefLabel: row.href_label ?? undefined,
         source: "admin" as const,
         audience: row.audience ?? audience,
-        attachments: attachments.length ? attachments : undefined,
+        attachments: attachments?.length ? attachments : undefined,
       });
     }
 
@@ -165,8 +194,10 @@ export async function fetchPublishedAnnouncements(
 }
 
 /** Student-only board notices for the signed-in portal. */
-export async function fetchStudentAnnouncements(): Promise<Announcement[]> {
-  return fetchPublishedAnnouncements("students", MAX_STUDENT_ANNOUNCEMENTS);
+export async function fetchStudentAnnouncements(
+  limit = MAX_STUDENT_ANNOUNCEMENTS,
+): Promise<Announcement[]> {
+  return fetchPublishedAnnouncements("students", limit);
 }
 
 /** Home-page general notices with attachments. */
