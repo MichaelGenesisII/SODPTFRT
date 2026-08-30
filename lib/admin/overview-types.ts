@@ -53,18 +53,31 @@ export type StatementReportRow = {
   enrolment_status: string;
   payment_status: string;
   tuition_paid: boolean;
-  application_proof: "Recorded" | "Missing";
-  attendance_proof: "Recorded" | "Pending";
+  /** Enrolment / application evidence on the live desk. */
+  application_proof: "On file" | "No reference";
+  /** Attendance marks from Records. */
+  attendance_proof: "On file" | "Not marked";
   attendance_percent: number | null;
   sessions_present: number;
   sessions_total: number;
 };
 
+export type StatementReportSummary = {
+  total: number;
+  applicationOnFile: number;
+  attendanceOnFile: number;
+  attendanceNotMarked: number;
+  averageAttendancePercent: number | null;
+};
+
 export type StatementReportBundle = {
   title: string;
   subtitle: string;
+  purpose: string;
   issuedAtLabel: string;
   issuedBy: string;
   scopeLabel: string;
+  filterLabel: string;
+  summary: StatementReportSummary;
   rows: StatementReportRow[];
 };

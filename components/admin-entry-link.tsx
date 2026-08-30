@@ -45,7 +45,17 @@ export function AdminEntryLink({
       try {
         const {
           data: { user },
+          error: authError,
         } = await supabase.auth.getUser();
+
+        if (
+          authError &&
+          /refresh_token|session not found/i.test(
+            `${authError.code ?? ""} ${authError.message ?? ""}`,
+          )
+        ) {
+          await supabase.auth.signOut({ scope: "local" }).catch(() => undefined);
+        }
 
         if (!user) {
           if (!cancelled) {

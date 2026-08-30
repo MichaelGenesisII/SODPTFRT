@@ -1,7 +1,10 @@
 import { redirect } from "next/navigation";
+import { Suspense } from "react";
 import { StudentShell } from "@/components/student/student-shell";
 import { StudentSupportLiveProvider } from "@/components/student/support-live";
+import { StudentTourProvider } from "@/components/student/student-tour-provider";
 import { getSessionStudent } from "@/lib/student/auth";
+import { cachedSignStudentPhotoUrl } from "@/lib/student/photos";
 
 /** Auth — never statically prerender (needs Supabase at request time). */
 export const dynamic = "force-dynamic";
@@ -11,19 +14,24 @@ export default async function StudentLayout({
 }: {
   children: React.ReactNode;
 }) {
-  const profile = await getSessionStudent();
-  if (!profile) {
+  const session = await getSessionStudent();
+  if (!session) {
     redirect("/login/student");
   }
-  if (profile.account_kind === "alumni") {
+  if (session.account_kind === "alumni") {
     redirect("/alumni");
   }
 
-  // Avatar signing is page-local (home/payments). Layout stays auth-only so
-  // every soft navigation does not wait on Storage.
+  const passportUrl = await cachedSignStudentPhotoUrl(session.passport_path);
+  const profile = passportUrl ? { ...session, passportUrl } : session;
+
   return (
     <StudentSupportLiveProvider profile={profile}>
-      <StudentShell profile={profile}>{children}</StudentShell>
+      <Suspense fallback={null}>
+        <StudentTourProvider firstName={profile.first_name}>
+          <StudentShell profile={profile}>{children}</StudentShell>
+        </StudentTourProvider>
+      </Suspense>
     </StudentSupportLiveProvider>
   );
 }

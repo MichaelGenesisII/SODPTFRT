@@ -16,9 +16,25 @@ export const metadata: Metadata = {
   title: "Records | School of Disciples Portal",
 };
 
-export default async function AdminRecordsPage() {
+type Props = {
+  searchParams?: Promise<{
+    parish?: string;
+    batch?: string;
+    page?: string;
+    q?: string;
+  }>;
+};
+
+export default async function AdminRecordsPage({ searchParams }: Props) {
   const profile = await getSessionAdmin();
   if (!profile) redirect("/login/admin");
+
+  const params = (await searchParams) ?? {};
+  const initialPage = Math.max(1, Number(params.page) || 1);
+  const initialParishId =
+    params.parish ??
+    (isNationalAdmin(profile) ? "" : profile.parish_id ?? "");
+  const initialBatchId = params.batch ?? "";
 
   let students: Awaited<ReturnType<typeof listRecordStudents>>["items"] = [];
   let parishes: Awaited<ReturnType<typeof listParishesForAdmin>> = [];
@@ -30,8 +46,13 @@ export default async function AdminRecordsPage() {
     const [listed, parishRows, batchRows] = await Promise.all([
       listRecordStudents(
         isNationalAdmin(profile)
-          ? { page: 1, pageSize: 50 }
-          : { parishId: profile.parish_id ?? undefined, page: 1, pageSize: 50 },
+          ? { page: initialPage, pageSize: 50, parishId: initialParishId || undefined, batchId: initialBatchId || undefined }
+          : {
+              parishId: profile.parish_id ?? undefined,
+              batchId: initialBatchId || undefined,
+              page: initialPage,
+              pageSize: 50,
+            },
       ),
       listParishesForAdmin(),
       listBatchesForAdmin(
@@ -57,10 +78,9 @@ export default async function AdminRecordsPage() {
           Records
         </h1>
         <p className="mt-1.5 max-w-2xl text-sm leading-relaxed text-ink/70">
-          Per-student scorecards — attendance sessions and exam percentages
-          (including which scores count). Parish desks only open students in
-          their parish; national desks can filter any parish. Online papers are
-          authored and graded on Exams.
+          Per-student scorecards — attendance from Classes and exam scores from
+          released Exams. Open any row for the full card. Online papers are
+          authored and graded on Exams; live sessions on Classes.
         </p>
       </section>
 
@@ -76,6 +96,9 @@ export default async function AdminRecordsPage() {
           profile={profile}
           initialStudents={students}
           initialTotal={studentsTotal}
+          initialPage={initialPage}
+          initialParishId={initialParishId}
+          initialBatchId={initialBatchId}
           parishes={parishes}
           batches={batches}
         />

@@ -34,6 +34,12 @@ function evalFail(
   return { ok: false, message: publicActionMessage(error, fallback) };
 }
 
+function revalidateRecordPaths(userId?: string | null) {
+  revalidatePath("/admin/records");
+  if (userId) revalidatePath(`/admin/records/${userId}`);
+  revalidatePath("/student/records");
+}
+
 export type EvaluationAttemptRow = ExamAttempt & {
   exam_title: string;
   exam_audience: "student" | "open";
@@ -456,8 +462,7 @@ export async function releaseAttempt(
         if (!mailed.ok) {
           console.error("[eval] certificate email", mailed.message);
           revalidatePath("/admin/exams");
-          revalidatePath("/admin/records");
-          revalidatePath("/student/records");
+          revalidateRecordPaths(detail.attempt.user_id);
           return {
             ok: true,
             message:
@@ -469,8 +474,7 @@ export async function releaseAttempt(
   }
 
   revalidatePath("/admin/exams");
-  revalidatePath("/admin/records");
-  revalidatePath("/student/records");
+  revalidateRecordPaths(detail.attempt.user_id);
   return {
     ok: true,
     message: recordsNote
@@ -513,8 +517,8 @@ export async function unreleaseAttempt(
   if (entryError) {
     console.error("[eval] unrelease records entry:", entryError.message);
     revalidatePath("/admin/exams");
-    revalidatePath("/admin/records");
-    revalidatePath("/student/records");
+    revalidateRecordPaths(detail.attempt.user_id);
+    revalidatePath("/student/exams");
     return {
       ok: true,
       message:
@@ -523,8 +527,7 @@ export async function unreleaseAttempt(
   }
 
   revalidatePath("/admin/exams");
-  revalidatePath("/admin/records");
-  revalidatePath("/student/records");
+  revalidateRecordPaths(detail.attempt.user_id);
   revalidatePath("/student/exams");
   return {
     ok: true,

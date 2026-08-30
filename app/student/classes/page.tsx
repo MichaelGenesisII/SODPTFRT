@@ -5,7 +5,7 @@ import {
   listStudentClasses,
   meetingSdkReadyForStudent,
 } from "@/app/student/classes/actions";
-import { StudentClassesClient } from "@/components/student/student-classes";
+import { StudentClassesClient, StudentClassesRefresh } from "@/components/student/student-classes";
 import { TempCohortSwitchCard } from "@/components/student/temp-cohort-switch";
 import { publicActionMessage, publicUnavailableMessage } from "@/lib/safe-action-message";
 import { getSessionStudent } from "@/lib/student/auth";
@@ -36,7 +36,7 @@ export default async function StudentClassesPage() {
 
   return (
     <div className="mx-auto w-full max-w-4xl">
-      <section className="animate-fade-rise mb-4 sm:mb-6">
+      <section className="animate-fade-rise mb-4 sm:mb-6" data-tour="student-classes-header">
         <p className="text-[0.65rem] font-medium uppercase tracking-[0.18em] text-celadon">
           Live hall
         </p>
@@ -57,7 +57,7 @@ export default async function StudentClassesPage() {
           {loadError}
         </div>
       ) : (
-        <>
+        <StudentClassesRefresh>
           <TempCohortSwitchCard />
           <StudentClassesClient
             profile={profile}
@@ -65,7 +65,7 @@ export default async function StudentClassesPage() {
             attendance={attendance}
             meetingSdkReady={meetingSdkReady}
           />
-        </>
+        </StudentClassesRefresh>
       )}
     </div>
   );

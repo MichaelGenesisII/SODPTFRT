@@ -2,6 +2,7 @@
 
 import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport } from "ai";
+import Image from "next/image";
 import {
   useCallback,
   useEffect,
@@ -12,7 +13,6 @@ import {
 } from "react";
 import { AssistantLauncher } from "@/components/assistant/assistant-launcher";
 import { AssistantMessageBody } from "@/components/assistant/assistant-message";
-import { SupportHeadsetIcon } from "@/components/assistant/support-headset-icon";
 import {
   ASSISTANT_NAME,
   DAVID_GREETING,
@@ -35,10 +35,16 @@ const ASSISTANT_UNAVAILABLE =
 function DavidAvatar({ className = "h-7 w-7" }: { className?: string }) {
   return (
     <span
-      className={`inline-flex shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-pine to-celadon text-mist shadow-sm ${className}`}
+      className={`relative inline-flex shrink-0 overflow-hidden rounded-full bg-pine shadow-sm ring-1 ring-pine/20 ${className}`}
       aria-hidden
     >
-      <SupportHeadsetIcon className="h-[55%] w-[55%]" />
+      <Image
+        src="/davi.png"
+        alt=""
+        width={72}
+        height={72}
+        className="h-full w-full object-cover object-[center_18%]"
+      />
     </span>
   );
 }

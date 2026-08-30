@@ -1,11 +1,12 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useRef, useState, useTransition } from "react";
 import {
   changeStudentPassword,
   type StudentAccountActionResult,
 } from "@/app/student/account/actions";
-import { DeskLoader, DeskLoaderOverlay } from "@/components/ui/desk-loader";
+import { DeskConfirmModal } from "@/components/ui/desk-confirm-modal";
+import { DeskLoader } from "@/components/ui/desk-loader";
 import { useToast } from "@/components/ui/toast";
 import {
   studentDisplayName,
@@ -31,6 +32,8 @@ export function StudentAccountManager({
   const [panel, setPanel] = useState<Panel>("profile");
   const [pending, startTransition] = useTransition();
   const [showPassword, setShowPassword] = useState(false);
+  const [confirmPasswordOpen, setConfirmPasswordOpen] = useState(false);
+  const passwordFormRef = useRef<HTMLFormElement>(null);
 
   const tabs: { id: Panel; label: string }[] = [
     { id: "profile", label: "Profile" },
@@ -46,6 +49,7 @@ export function StudentAccountManager({
       if (result.ok) {
         success(result.message, "Account");
         form?.reset();
+        setConfirmPasswordOpen(false);
       } else {
         error(result.message, "Account");
       }
@@ -53,9 +57,36 @@ export function StudentAccountManager({
   }
 
   const name = studentDisplayName(profile);
+  const initials = name
+    .split(/\s+/)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase() ?? "")
+    .join("");
 
   return (
-    <div className="space-y-4 sm:space-y-6">
+    <div className="space-y-4 sm:space-y-5">
+      <section
+        className="grid grid-cols-2 gap-px overflow-hidden border border-stone bg-stone sm:grid-cols-4"
+        data-tour="student-account-stats"
+      >
+        <AccountStat label="Status" value={profile.is_active ? "Active" : "Inactive"} />
+        <AccountStat
+          label="Parish"
+          value={enrolment?.parish_name ?? "Pending"}
+          text
+        />
+        <AccountStat
+          label="Batch"
+          value={enrolment?.batch_label ?? "Pending"}
+          text
+        />
+        <AccountStat
+          label="Reference"
+          value={enrolment?.reference ?? "—"}
+          mono
+        />
+      </section>
+
       <nav
         className="flex gap-1 border-b border-stone/80"
         aria-label="Account sections"
@@ -82,18 +113,43 @@ export function StudentAccountManager({
         ))}
       </nav>
 
-      <div className="relative border border-stone bg-mist px-4 py-5 sm:px-6 sm:py-7">
+      <div className="relative border border-stone bg-mist px-4 py-5 sm:px-7 sm:py-8">
         {panel === "profile" ? (
-          <div className="space-y-5">
-            <div>
-              <p className="text-[0.65rem] font-medium uppercase tracking-[0.14em] text-celadon">
-                Signed in as
+          <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)] lg:gap-10">
+            <div className="space-y-5">
+              <div className="flex items-start gap-4">
+                <span
+                  className="inline-flex h-16 w-16 shrink-0 items-center justify-center bg-pine text-lg font-semibold tracking-wide text-mist"
+                  aria-hidden
+                >
+                  {initials || "?"}
+                </span>
+                <div className="min-w-0 pt-0.5">
+                  <p className="text-[0.65rem] font-medium uppercase tracking-[0.14em] text-celadon">
+                    Signed in as
+                  </p>
+                  <p className="mt-1.5 font-display text-2xl text-pine sm:text-3xl">
+                    {name}
+                  </p>
+                  <p className="mt-1 truncate text-sm text-ink/60">
+                    {profile.email}
+                  </p>
+                </div>
+              </div>
+
+              <p className="text-sm leading-relaxed text-ink/55">
+                To update your name, address, or parish placement, open{" "}
+                <a
+                  href="/student/support"
+                  className="font-medium text-pine underline decoration-pine/30 underline-offset-4"
+                >
+                  Support
+                </a>
+                . The desk can amend your enrolment record.
               </p>
-              <p className="mt-2 font-display text-2xl text-pine">{name}</p>
-              <p className="mt-1 text-sm text-ink/60">{profile.email}</p>
             </div>
 
-            <dl className="grid gap-4 border-t border-stone/80 pt-5 sm:grid-cols-2">
+            <dl className="grid gap-4 border-t border-stone/80 pt-5 sm:grid-cols-2 lg:border-t-0 lg:border-l lg:pl-10 lg:pt-0">
               <ProfileRow
                 label="Parish"
                 value={enrolment?.parish_name ?? "Not assigned yet"}
@@ -111,32 +167,30 @@ export function StudentAccountManager({
                 value={profile.is_active ? "Active" : "Inactive"}
               />
             </dl>
-
-            <p className="text-sm leading-relaxed text-ink/55">
-              To update your name, address, or parish placement, open{" "}
-              <a
-                href="/student/support"
-                className="font-medium text-pine underline decoration-pine/30 underline-offset-4"
-              >
-                Support
-              </a>
-              . The desk can amend your enrolment record.
-            </p>
           </div>
         ) : (
           <form
-            className="relative grid max-w-md gap-4"
+            ref={passwordFormRef}
+            className="relative grid gap-5 lg:grid-cols-2 lg:gap-x-10 lg:gap-y-5"
             onSubmit={(event) => {
               event.preventDefault();
-              const form = event.currentTarget;
-              run(() => changeStudentPassword(new FormData(form)), form);
+              setConfirmPasswordOpen(true);
             }}
           >
-            <DeskLoaderOverlay active={pending} label="Securing your key…" />
-            <p className="text-sm leading-relaxed text-ink/60">
-              Choose a strong password you have not used elsewhere.
-            </p>
-            <div>
+            <div className="lg:col-span-2">
+              <p className="text-[0.65rem] font-medium uppercase tracking-[0.14em] text-celadon">
+                Security
+              </p>
+              <h2 className="mt-1 font-display text-xl text-pine sm:text-2xl">
+                Change your password
+              </h2>
+              <p className="mt-2 max-w-xl text-sm leading-relaxed text-ink/60">
+                Choose a strong password you have not used elsewhere. You will
+                stay signed in on this device after updating.
+              </p>
+            </div>
+
+            <div className="lg:col-span-2">
               <div className="mb-2 flex items-center justify-between gap-3">
                 <label
                   className="block text-sm font-medium text-ink"
@@ -163,6 +217,7 @@ export function StudentAccountManager({
                 className={fieldClass}
               />
             </div>
+
             <div>
               <label
                 className="mb-2 block text-sm font-medium text-ink"
@@ -181,6 +236,7 @@ export function StudentAccountManager({
                 className={fieldClass}
               />
             </div>
+
             <div>
               <label
                 className="mb-2 block text-sm font-medium text-ink"
@@ -199,20 +255,75 @@ export function StudentAccountManager({
                 className={fieldClass}
               />
             </div>
-            <button
-              type="submit"
-              disabled={pending}
-              className="inline-flex min-h-11 items-center justify-center bg-pine px-5 py-2.5 text-sm font-medium text-mist transition-colors hover:bg-pine/90 disabled:opacity-60"
-            >
-              {pending ? (
-                <DeskLoader label="Updating…" tone="mist" />
-              ) : (
-                "Update password"
-              )}
-            </button>
+
+            <div className="lg:col-span-2">
+              <button
+                type="submit"
+                disabled={pending}
+                className="inline-flex min-h-11 w-full items-center justify-center bg-pine px-5 py-2.5 text-sm font-medium text-mist transition-colors hover:bg-pine/90 disabled:opacity-60 sm:w-auto"
+              >
+                {pending ? (
+                  <DeskLoader label="Updating…" tone="mist" />
+                ) : (
+                  "Update password"
+                )}
+              </button>
+            </div>
           </form>
         )}
       </div>
+
+      <DeskConfirmModal
+        open={confirmPasswordOpen}
+        onClose={() => !pending && setConfirmPasswordOpen(false)}
+        onConfirm={() => {
+          const form = passwordFormRef.current;
+          if (!form) return;
+          run(() => changeStudentPassword(new FormData(form)), form);
+        }}
+        eyebrow="Security"
+        title="Update your password?"
+        body={
+          <>
+            You will need this new password the next time you sign in on another
+            device. Make sure you have saved it somewhere safe.
+          </>
+        }
+        confirmLabel="Update password"
+        busy={pending}
+        busyLabel="Securing your key…"
+      />
+    </div>
+  );
+}
+
+function AccountStat({
+  label,
+  value,
+  text,
+  mono,
+}: {
+  label: string;
+  value: string;
+  text?: boolean;
+  mono?: boolean;
+}) {
+  return (
+    <div className="bg-mist px-3 py-3.5 sm:px-5 sm:py-5">
+      <p className="text-[0.6rem] font-medium uppercase tracking-[0.14em] text-ink/45 sm:text-[0.65rem]">
+        {label}
+      </p>
+      <p
+        className={`mt-2 font-display leading-tight text-pine sm:mt-3 ${
+          text
+            ? "truncate text-base sm:text-xl"
+            : mono
+              ? "truncate font-mono text-sm sm:text-base"
+              : "text-xl tabular-nums sm:text-2xl"
+        }`}
+      >
+        {value}
+      </p>
     </div>
   );
 }

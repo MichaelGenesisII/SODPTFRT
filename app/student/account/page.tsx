@@ -14,15 +14,15 @@ export default async function StudentAccountPage() {
   const enrolment = await getStudentEnrolment(profile.id).catch(() => null);
 
   return (
-    <div className="mx-auto w-full max-w-3xl">
+    <div className="mx-auto w-full max-w-5xl">
       <section className="animate-fade-rise mb-4 sm:mb-6">
-        <p className="text-[0.65rem] font-medium uppercase tracking-[0.18em] text-celadon">
+        <p className="text-[0.65rem] font-medium uppercase tracking-[0.18em] text-celadon sm:text-[0.7rem]">
           Account
         </p>
-        <h1 className="mt-1.5 font-display text-[clamp(1.6rem,5vw,2.4rem)] tracking-[-0.02em] text-pine">
+        <h1 className="mt-2 font-display text-[clamp(1.65rem,4vw,2.7rem)] tracking-[-0.02em] text-pine">
           Settings
         </h1>
-        <p className="mt-1.5 max-w-lg text-sm leading-relaxed text-ink/70">
+        <p className="mt-1.5 max-w-2xl text-sm leading-relaxed text-ink/65 sm:mt-2 sm:text-base">
           Your sign-in details and password. Enrolment changes go through
           Support.
         </p>

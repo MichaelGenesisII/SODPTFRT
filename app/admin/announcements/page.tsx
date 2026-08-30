@@ -123,15 +123,15 @@ export default async function AdminAnnouncementsPage() {
   const national = isNationalAdmin(profile);
 
   return (
-    <div className="mx-auto max-w-2xl">
-      <section className="animate-fade-rise mb-6">
-        <p className="text-[0.7rem] font-medium uppercase tracking-[0.18em] text-celadon">
-          Notices
+    <div className="mx-auto max-w-6xl">
+      <section className="animate-fade-rise mb-4 sm:mb-6">
+        <p className="text-[0.65rem] font-medium uppercase tracking-[0.18em] text-celadon">
+          Communications
         </p>
-        <h1 className="mt-2 font-display text-[clamp(1.85rem,4vw,2.4rem)] tracking-[-0.02em] text-pine">
+        <h1 className="mt-1.5 font-display text-[clamp(1.6rem,5vw,2.4rem)] tracking-[-0.02em] text-pine">
           Notices
         </h1>
-        <p className="mt-2 text-sm leading-relaxed text-ink/65 sm:text-base">
+        <p className="mt-1.5 max-w-2xl text-sm leading-relaxed text-ink/70">
           {national ? (
             <>
               Two places: the <span className="text-ink/80">home page</span>{" "}

@@ -29,6 +29,11 @@ export function zoomConfigured(): boolean {
   );
 }
 
+/** Meeting SDK / REST expect digits-only meeting numbers (no spaces or dashes). */
+export function normalizeZoomMeetingNumber(value: string | null | undefined): string {
+  return String(value ?? "").replace(/\D/g, "");
+}
+
 let cachedToken: { value: string; expiresAt: number } | null = null;
 
 export function clearZoomAccessTokenCache() {
@@ -116,8 +121,8 @@ async function zoomFetch<T>(
       const missing = zoomScopeHint(text);
       throw new Error(
         missing
-          ? `Zoom App A is missing scopes: ${missing}. Add them on the Server-to-Server app, Activate again, then retry.`
-          : "Zoom App A is missing required meeting scopes. Add them on the Server-to-Server app, Activate again, then retry.",
+          ? `Zoom is missing scopes (${missing}). Add them on App A, Activate, then retry.`
+          : "Zoom App A is missing meeting scopes. Add them, Activate, then retry.",
       );
     }
     throw new Error(`Zoom API ${path} failed (${res.status}): ${text.slice(0, 280)}`);
@@ -137,6 +142,14 @@ export async function createZoomMeeting(input: {
     throw new Error("ZOOM_HOST_USER_ID is not set.");
   }
 
+  const start = new Date(input.startTime);
+  if (Number.isNaN(start.getTime())) {
+    throw new Error("Invalid Zoom meeting start time.");
+  }
+
+  // Zoom expects local wall time (no Z) when timezone is set.
+  const startLocal = formatZoomLondonLocal(start);
+
   const encodedHost = encodeURIComponent(host);
   const data = await zoomFetch<{
     id: number | string;
@@ -149,7 +162,7 @@ export async function createZoomMeeting(input: {
     body: JSON.stringify({
       topic: input.topic.slice(0, 200),
       type: 2, // scheduled
-      start_time: input.startTime,
+      start_time: startLocal,
       duration: input.durationMinutes,
       timezone: "Europe/London",
       agenda: input.agenda?.slice(0, 2000) || undefined,
@@ -169,6 +182,55 @@ export async function createZoomMeeting(input: {
     start_url: data.start_url,
     password: data.password ?? null,
   };
+}
+
+/**
+ * Fetch a scheduled meeting by numeric id.
+ * Returns null when Zoom reports not found (deleted / never existed).
+ */
+export async function getZoomMeeting(
+  meetingId: string,
+): Promise<ZoomMeetingCreated | null> {
+  const id = normalizeZoomMeetingNumber(meetingId);
+  if (!id) return null;
+
+  try {
+    const data = await zoomFetch<{
+      id: number | string;
+      uuid: string;
+      join_url: string;
+      start_url: string;
+      password?: string;
+    }>(`/meetings/${encodeURIComponent(id)}`);
+    return {
+      id: String(data.id),
+      uuid: data.uuid,
+      join_url: data.join_url,
+      start_url: data.start_url,
+      password: data.password ?? null,
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (/\(404\)/.test(message)) return null;
+    throw error;
+  }
+}
+
+/** `yyyy-MM-ddTHH:mm:ss` in Europe/London (no offset) — Zoom scheduled meeting format. */
+function formatZoomLondonLocal(date: Date): string {
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Europe/London",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(date);
+  const get = (type: Intl.DateTimeFormatPartTypes) =>
+    parts.find((p) => p.type === type)?.value ?? "00";
+  return `${get("year")}-${get("month")}-${get("day")}T${get("hour")}:${get("minute")}:${get("second")}`;
 }
 
 /** Double-encode UUID when required by Zoom report endpoints. */

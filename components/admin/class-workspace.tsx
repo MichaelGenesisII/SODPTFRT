@@ -1,17 +1,26 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import {
   endActiveZoomMeetings,
+  getClassZoomLiveStatus,
   getInPortalHostSession,
   type ClassStudentOption,
 } from "@/app/admin/classes/actions";
 import { InPortalZoom } from "@/components/classes/in-portal-zoom";
 import { DeskLoader, DeskLoaderOverlay } from "@/components/ui/desk-loader";
 import { useToast } from "@/components/ui/toast";
+import type { ClassAttendanceRollup } from "@/lib/admin/class-roll";
+import { ClassAttendancePanel } from "@/components/admin/class-attendance-panel";
 import {
   audienceLabel,
+  classSessionPhase,
+  classSessionPhaseLabel,
+  formatClassDateTime,
+  formatClassScheduleRange,
   formatDuration,
+  formatDurationMinutes,
   type ZoomClass,
   type ZoomClassAttendance,
 } from "@/lib/classes/types";
@@ -23,13 +32,18 @@ const fieldClass =
 export function ClassWorkspace({
   item,
   roster,
+  rollup,
   pending,
   busyLabel,
+  refreshing = false,
   zoomReady,
   meetingSdkReady,
+  backHref,
   onBack,
+  onRefresh,
   onSync,
   onRegenCode,
+  onSetCheckinCodeVisible,
   onManual,
   onSearchStudents,
   onStatus,
@@ -37,13 +51,18 @@ export function ClassWorkspace({
 }: {
   item: ZoomClass;
   roster: ZoomClassAttendance[];
+  rollup?: ClassAttendanceRollup | null;
   pending: boolean;
   busyLabel: string | null;
+  refreshing?: boolean;
   zoomReady: boolean;
   meetingSdkReady: boolean;
-  onBack: () => void;
+  backHref?: string;
+  onBack?: () => void;
+  onRefresh?: () => void;
   onSync: () => void;
   onRegenCode: () => void;
+  onSetCheckinCodeVisible?: (show: boolean) => void;
   onManual: (userId: string, present: boolean) => void;
   onSearchStudents: (query: string) => Promise<ClassStudentOption[]>;
   onStatus: (status: ZoomClass["status"]) => void;
@@ -57,6 +76,53 @@ export function ClassWorkspace({
     useState<InPortalZoomSession | null>(null);
   const [hosting, setHosting] = useState(false);
   const [endingLive, setEndingLive] = useState(false);
+  const [confirmEndLive, setConfirmEndLive] = useState(false);
+  const [zoomLive, setZoomLive] = useState(false);
+  const [clock, setClock] = useState(() => Date.now());
+
+  const sessionPhase = classSessionPhase(item, new Date(clock));
+  const inSessionWindow = sessionPhase === "in_window";
+  const hostingInPortal = Boolean(portalSession);
+  const modalBusy = hosting || endingLive;
+
+  useEffect(() => {
+    const tick = window.setInterval(() => setClock(Date.now()), 60_000);
+    return () => window.clearInterval(tick);
+  }, []);
+
+  useEffect(() => {
+    if (!confirmEndLive) return;
+    function onKey(event: KeyboardEvent) {
+      if (event.key === "Escape" && !modalBusy) setConfirmEndLive(false);
+    }
+    document.addEventListener("keydown", onKey);
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.body.style.overflow = "";
+    };
+  }, [confirmEndLive, modalBusy]);
+
+  useEffect(() => {
+    if (!item.zoom_meeting_id || !zoomReady) {
+      setZoomLive(false);
+      return;
+    }
+
+    let cancelled = false;
+
+    async function refreshLive() {
+      const next = await getClassZoomLiveStatus(item.id);
+      if (!cancelled && next.ok) setZoomLive(next.live);
+    }
+
+    void refreshLive();
+    const poll = window.setInterval(() => void refreshLive(), 30_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(poll);
+    };
+  }, [item.id, item.zoom_meeting_id, zoomReady, hostingInPortal, endingLive]);
 
   useEffect(() => {
     const q = studentQuery.trim();
@@ -90,15 +156,20 @@ export function ClassWorkspace({
       toastError(next.message, "In-portal Zoom");
       return;
     }
+    if (next.meetingRefreshed) {
+      success(
+        "The Zoom meeting was refreshed so you can host in the portal.",
+        "In-portal Zoom",
+      );
+    }
     setPortalSession(next.session);
+    if (item.zoom_meeting_id && zoomReady) {
+      const live = await getClassZoomLiveStatus(item.id);
+      if (live.ok) setZoomLive(live.live);
+    }
   }
 
   async function endLiveMeetings() {
-    const confirmed = window.confirm(
-      "End all live Zoom meetings on the school host account? Everyone still in those meetings will be disconnected.",
-    );
-    if (!confirmed) return;
-
     setEndingLive(true);
     setPortalSession(null);
     try {
@@ -108,6 +179,8 @@ export function ClassWorkspace({
         return;
       }
       success(result.message, "End Zoom");
+      setZoomLive(false);
+      setConfirmEndLive(false);
     } finally {
       setEndingLive(false);
     }
@@ -119,19 +192,28 @@ export function ClassWorkspace({
       aria-busy={pending || hosting || endingLive}
     >
       <DeskLoaderOverlay
-        active={hosting || endingLive}
+        active={(hosting || endingLive) && !confirmEndLive}
         label={
           endingLive ? "Ending live Zoom meetings…" : "Opening host session…"
         }
       />
       <header className="border-b border-stone px-3 py-4 sm:px-6">
-        <button
-          type="button"
-          onClick={onBack}
-          className="mb-2 inline-flex items-center gap-1.5 text-sm font-medium text-pine lg:hidden"
-        >
-          <span aria-hidden>←</span> Directory
-        </button>
+        {backHref ? (
+          <Link
+            href={backHref}
+            className="mb-2 inline-flex items-center gap-1.5 text-sm font-medium text-pine lg:hidden"
+          >
+            <span aria-hidden>←</span> Classes
+          </Link>
+        ) : onBack ? (
+          <button
+            type="button"
+            onClick={onBack}
+            className="mb-2 inline-flex items-center gap-1.5 text-sm font-medium text-pine lg:hidden"
+          >
+            <span aria-hidden>←</span> Directory
+          </button>
+        ) : null}
         <p className="text-[0.65rem] font-medium uppercase tracking-[0.14em] text-celadon">
           {item.status} ·{" "}
           {audienceLabel(
@@ -145,16 +227,58 @@ export function ClassWorkspace({
         <h2 className="mt-1 font-display text-[clamp(1.3rem,4vw,2rem)] text-pine">
           {item.title}
         </h2>
-        <p className="mt-1 text-sm text-ink/55">
-          {new Date(item.scheduled_start).toLocaleString("en-GB", {
-            weekday: "short",
-            day: "numeric",
-            month: "short",
-            hour: "2-digit",
-            minute: "2-digit",
-          })}{" "}
-          · {item.duration_minutes} min
-        </p>
+
+        <div className="mt-3 border border-stone bg-white/70 px-3 py-2.5">
+          <div className="flex flex-wrap items-start justify-between gap-2">
+            <div>
+              <p className="text-[0.6rem] font-medium uppercase tracking-[0.14em] text-ink/45">
+                Schedule
+              </p>
+              <p className="mt-1 text-sm text-ink/80">
+                {formatClassScheduleRange(
+                  item.scheduled_start,
+                  item.scheduled_end,
+                )}
+              </p>
+              <p className="mt-1 text-xs text-ink/50">
+                Starts {formatClassDateTime(item.scheduled_start)} · Ends{" "}
+                {formatClassDateTime(item.scheduled_end)} ·{" "}
+                {formatDurationMinutes(item.duration_minutes)} planned
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              {zoomLive ? (
+                <span className="inline-flex items-center gap-1.5 border border-celadon/50 bg-celadon/10 px-2 py-1 text-[0.65rem] font-medium uppercase tracking-[0.12em] text-pine">
+                  <span
+                    className="h-1.5 w-1.5 animate-pulse rounded-full bg-celadon"
+                    aria-hidden
+                  />
+                  Zoom live
+                </span>
+              ) : null}
+              {hostingInPortal ? (
+                <span className="border border-pine/30 bg-pine/5 px-2 py-1 text-[0.65rem] font-medium uppercase tracking-[0.12em] text-pine">
+                  Hosting in portal
+                </span>
+              ) : null}
+              {inSessionWindow && item.status === "live" && !zoomLive ? (
+                <span className="border border-stone px-2 py-1 text-[0.65rem] font-medium uppercase tracking-[0.12em] text-ink/60">
+                  Class marked live
+                </span>
+              ) : null}
+              {inSessionWindow && !zoomLive && item.status !== "live" ? (
+                <span className="border border-stone px-2 py-1 text-[0.65rem] font-medium uppercase tracking-[0.12em] text-ink/60">
+                  In session window
+                </span>
+              ) : null}
+              {!zoomLive && !inSessionWindow ? (
+                <span className="border border-stone px-2 py-1 text-[0.65rem] font-medium uppercase tracking-[0.12em] text-ink/50">
+                  {classSessionPhaseLabel(sessionPhase)}
+                </span>
+              ) : null}
+            </div>
+          </div>
+        </div>
 
         <div className="mt-3 border border-pine/20 bg-white/70 px-3 py-2.5">
           <p className="text-[0.6rem] font-medium uppercase tracking-[0.14em] text-ink/45">
@@ -185,12 +309,47 @@ export function ClassWorkspace({
             </button>
           )}
           <p className="mt-1 text-xs text-ink/50">
-            Share with students on site — they enter it under Classes to mark
-            present on their Records.
+            Share with students in the room. They enter it under Classes →
+            Check-in unless you allow portal visibility below.
           </p>
+          {item.attendance_code && onSetCheckinCodeVisible ? (
+            <label className="mt-3 flex items-start gap-2 border-t border-stone/60 pt-3 text-xs text-ink/70">
+              <input
+                type="checkbox"
+                className="mt-0.5"
+                checked={Boolean(item.show_checkin_code_to_students)}
+                disabled={pending}
+                onChange={(event) =>
+                  onSetCheckinCodeVisible(event.target.checked)
+                }
+              />
+              <span>
+                Show check-in code on student portal
+                <span className="mt-0.5 block text-[0.65rem] leading-relaxed text-ink/50">
+                  {item.show_checkin_code_to_students
+                    ? "Students can read this code online — they may check in without being in the room."
+                    : "Recommended. Students must get the code from you in person."}
+                </span>
+              </span>
+            </label>
+          ) : null}
         </div>
 
         <div className="mt-3 flex flex-wrap gap-2">
+          {onRefresh ? (
+            <button
+              type="button"
+              disabled={pending || refreshing}
+              onClick={onRefresh}
+              className="inline-flex min-h-[1.85rem] items-center justify-center border border-stone px-3 py-1.5 text-xs font-medium text-ink/70 transition hover:border-pine hover:text-pine disabled:opacity-40"
+            >
+              {refreshing ? (
+                <DeskLoader label="Refreshing…" />
+              ) : (
+                "Refresh"
+              )}
+            </button>
+          ) : null}
           {item.zoom_meeting_id ? (
             <button
               type="button"
@@ -248,7 +407,7 @@ export function ClassWorkspace({
             <button
               type="button"
               disabled={pending || hosting || endingLive}
-              onClick={() => void endLiveMeetings()}
+              onClick={() => setConfirmEndLive(true)}
               className="inline-flex min-h-[1.85rem] items-center justify-center border border-[#c4a574]/50 px-3 py-1.5 text-xs font-medium text-[#6b4f2a] disabled:opacity-40"
               title="End live meetings on the Zoom host account so Host in portal can start cleanly"
             >
@@ -353,6 +512,13 @@ export function ClassWorkspace({
         ) : null}
       </div>
 
+      {rollup ? (
+        <ClassAttendancePanel
+          rollup={rollup}
+          classTitle={item.title}
+          lastSyncedAt={item.last_synced_at}
+        />
+      ) : (
       <div className="px-3 py-4 sm:px-6">
         <div className="mb-3 flex flex-wrap items-end justify-between gap-2">
           <div>
@@ -407,6 +573,62 @@ export function ClassWorkspace({
           </ul>
         )}
       </div>
+      )}
+      {confirmEndLive ? (
+        <div
+          className="fixed inset-0 z-[90] flex items-end justify-center bg-ink/45 p-4 sm:items-center"
+          role="presentation"
+          onClick={() => !modalBusy && setConfirmEndLive(false)}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="end-zoom-confirm-title"
+            className="relative w-full max-w-md border border-stone bg-mist p-6 text-ink shadow-[0_16px_48px_rgba(20,53,44,0.2)] sm:p-7"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <DeskLoaderOverlay
+              active={endingLive}
+              label="Ending live Zoom meetings…"
+            />
+            <p className="text-[0.65rem] font-medium uppercase tracking-[0.16em] text-red-800/80">
+              End live Zoom
+            </p>
+            <h3
+              id="end-zoom-confirm-title"
+              className="mt-3 font-display text-2xl tracking-[-0.02em] text-pine"
+            >
+              End live Zoom meetings?
+            </h3>
+            <p className="mt-3 text-sm leading-relaxed text-ink/70">
+              This ends live meetings on the school Zoom host account. Everyone
+              still in those meetings will be disconnected.
+            </p>
+            <div className="mt-7 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
+              <button
+                type="button"
+                disabled={endingLive}
+                onClick={() => setConfirmEndLive(false)}
+                className="border border-pine/25 px-4 py-2.5 text-sm font-medium text-pine transition-colors hover:border-pine disabled:opacity-60"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={endingLive}
+                onClick={() => void endLiveMeetings()}
+                className="inline-flex min-h-[2.5rem] min-w-[9rem] items-center justify-center bg-[#5c2a2a] px-4 py-2.5 text-sm font-medium text-mist transition-colors hover:bg-red-900 disabled:opacity-60"
+              >
+                {endingLive ? (
+                  <DeskLoader label="Ending…" tone="mist" />
+                ) : (
+                  "End meetings"
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

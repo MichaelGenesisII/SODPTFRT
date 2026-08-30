@@ -80,7 +80,7 @@ export function StudentGallery({
         onClose={() => setLightbox(null)}
       />
       <div className="mx-auto w-full max-w-5xl space-y-4 sm:space-y-6">
-        <section className="animate-fade-rise relative overflow-hidden border border-stone bg-mist">
+        <section className="animate-fade-rise relative overflow-hidden border border-stone bg-mist" data-tour="student-gallery-header">
           <div
             className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_top_right,_rgba(95,143,122,0.16),_transparent_50%),linear-gradient(135deg,_rgba(20,53,44,0.04),_transparent_60%)]"
             aria-hidden
@@ -118,7 +118,7 @@ export function StudentGallery({
           </div>
         </section>
 
-        <section className="border border-stone bg-mist px-4 py-4 sm:px-5 sm:py-5">
+        <section className="border border-stone bg-mist px-4 py-4 sm:px-5 sm:py-5" data-tour="student-gallery-selfie">
           <p className="text-[0.65rem] font-medium uppercase tracking-[0.14em] text-celadon">
             Your portrait
           </p>

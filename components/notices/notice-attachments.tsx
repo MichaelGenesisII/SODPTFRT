@@ -97,10 +97,17 @@ export function NoticeAttachmentList({
   files,
   tone = "pine",
   className = "",
+  onExternalNavigate,
 }: {
   files?: AnnouncementAttachmentView[];
   tone?: Tone;
   className?: string;
+  /** When set, external view/download links ask the host before opening. */
+  onExternalNavigate?: (payload: {
+    href: string;
+    action: "view" | "download";
+    fileName: string;
+  }) => void;
 }) {
   if (!files?.length) return null;
 
@@ -137,14 +144,30 @@ export function NoticeAttachmentList({
             </div>
             <p className="shrink-0 text-right text-xs">
               {canView ? (
-                <a
-                  href={file.url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className={link}
-                >
-                  View
-                </a>
+                onExternalNavigate ? (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      onExternalNavigate({
+                        href: file.url!,
+                        action: "view",
+                        fileName: file.name,
+                      })
+                    }
+                    className={link}
+                  >
+                    View
+                  </button>
+                ) : (
+                  <a
+                    href={file.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className={link}
+                  >
+                    View
+                  </a>
+                )
               ) : null}
               {canView && canDownload ? (
                 <span className={`mx-1.5 ${meta}`} aria-hidden>
@@ -152,13 +175,29 @@ export function NoticeAttachmentList({
                 </span>
               ) : null}
               {canDownload ? (
-                <a
-                  href={file.downloadUrl}
-                  className={link}
-                  download={file.name}
-                >
-                  Download
-                </a>
+                onExternalNavigate ? (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      onExternalNavigate({
+                        href: file.downloadUrl!,
+                        action: "download",
+                        fileName: file.name,
+                      })
+                    }
+                    className={link}
+                  >
+                    Download
+                  </button>
+                ) : (
+                  <a
+                    href={file.downloadUrl}
+                    className={link}
+                    download={file.name}
+                  >
+                    Download
+                  </a>
+                )
               ) : null}
             </p>
           </li>

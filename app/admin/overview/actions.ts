@@ -2,6 +2,12 @@
 
 import { isNationalAdmin, requireSessionAdmin } from "@/lib/admin/auth";
 import { adminDeskScopeLabel } from "@/lib/admin/profile";
+import {
+  ENROLMENT_STATUS_META,
+  isEnrolmentStatus,
+  isPaymentStatus,
+  PAYMENT_STATUS_META,
+} from "@/lib/admin/students";
 import type {
   OverviewStats,
   StatementReportBundle,
@@ -26,6 +32,20 @@ function formatDateLabel(iso: string | null | undefined): string | null {
     month: "short",
     year: "numeric",
   }).format(d);
+}
+
+function enrolmentStatusLabel(value: string): string {
+  if (isEnrolmentStatus(value)) {
+    return ENROLMENT_STATUS_META[value].label;
+  }
+  return value || "—";
+}
+
+function paymentStatusLabel(value: string): string {
+  if (isPaymentStatus(value)) {
+    return PAYMENT_STATUS_META[value].label;
+  }
+  return value || "—";
 }
 
 function emptyEnrolmentByStatus(): OverviewStats["enrolmentByStatus"] {
@@ -365,15 +385,24 @@ export async function getOverviewStats(): Promise<OverviewStats> {
 /**
  * Statement of Report rows — Proof of Application/Enrolment + Attendance.
  * Subject to tuition payment when paidOnly is true (default).
+ * Optional cohort, batch, and enrolment-status narrow the desk further.
  */
 export async function getStatementOfReport(input?: {
   parishId?: string;
+  cohortId?: string;
+  batchId?: string;
+  enrolmentStatus?: string;
   paidOnly?: boolean;
 }): Promise<StatementReportBundle> {
   const actor = await requireSessionAdmin();
   const supabase = await createServerSupabaseClient();
   const national = isNationalAdmin(actor);
   const paidOnly = input?.paidOnly !== false;
+  const cohortFilter = (input?.cohortId ?? "").trim();
+  const batchFilter = (input?.batchId ?? "").trim();
+  const statusRaw = (input?.enrolmentStatus ?? "").trim();
+  const statusFilter =
+    statusRaw && isEnrolmentStatus(statusRaw) ? statusRaw : "";
 
   let parishFilter = input?.parishId ?? "";
   if (!national) {
@@ -400,15 +429,58 @@ export async function getStatementOfReport(input?: {
     parishName = parish?.name ?? null;
   }
 
+  let cohortLabel: string | null = null;
+  if (cohortFilter) {
+    const { data: cohort } = await supabase
+      .from("cohorts")
+      .select("name, year_start, year_end")
+      .eq("id", cohortFilter)
+      .maybeSingle();
+    if (cohort) {
+      const years =
+        cohort.year_start === cohort.year_end
+          ? String(cohort.year_start)
+          : `${cohort.year_start}/${String(cohort.year_end).slice(-2)}`;
+      cohortLabel = `${cohort.name} (${years})`;
+    } else {
+      cohortLabel = "Selected cohort";
+    }
+  }
+
+  let batchLabel: string | null = null;
+  if (batchFilter) {
+    const { data: batch } = await supabase
+      .from("batches")
+      .select("name, year, parish_id, cohort_id")
+      .eq("id", batchFilter)
+      .maybeSingle();
+    if (!batch) {
+      throw new Error("That batch could not be found.");
+    }
+    if (!national && actor.parish_id && batch.parish_id !== actor.parish_id) {
+      throw new Error("That batch is outside your desk.");
+    }
+    if (parishFilter && batch.parish_id !== parishFilter) {
+      throw new Error("That batch is outside the selected parish.");
+    }
+    if (cohortFilter && batch.cohort_id && batch.cohort_id !== cohortFilter) {
+      throw new Error("That batch is outside the selected cohort.");
+    }
+    batchLabel = `${batch.name} (${batch.year})`;
+  }
+
   let enrolQ = supabase
     .from("enrolments")
     .select(
-      "id, user_id, reference, first_name, middle_name, last_name, email, parish_id, batch_id, status, payment_status, created_at, parishes(name), batches(name, year)",
+      "id, user_id, reference, first_name, middle_name, last_name, email, parish_id, batch_id, cohort_id, status, payment_status, created_at, parishes(name), batches(name, year)",
     )
     .order("created_at", { ascending: false })
     .limit(1500);
 
   if (parishFilter) enrolQ = enrolQ.eq("parish_id", parishFilter);
+  if (cohortFilter) enrolQ = enrolQ.eq("cohort_id", cohortFilter);
+  if (batchFilter) enrolQ = enrolQ.eq("batch_id", batchFilter);
+  if (statusFilter) enrolQ = enrolQ.eq("status", statusFilter);
   if (paidOnly) enrolQ = enrolQ.eq("payment_status", "paid");
 
   const { data: enrolments, error } = await enrolQ;
@@ -481,22 +553,25 @@ export async function getStatementOfReport(input?: {
     const name = [enrol.first_name, enrol.middle_name, enrol.last_name]
       .filter(Boolean)
       .join(" ");
+    const reference = (enrol.reference as string | null)?.trim() || null;
+    const paymentRaw = String(enrol.payment_status ?? "");
+    const enrolmentRaw = String(enrol.status ?? "");
 
     rows.push({
       student_name: name || "Student",
       email: (enrol.email as string) || "",
-      reference: (enrol.reference as string | null) ?? null,
+      reference,
       parish_name: parish?.name ?? null,
       batch_label: batch
         ? `${batch.name}${batch.year != null ? ` (${batch.year})` : ""}`
         : null,
       enrolled_on: formatDateLabel(enrol.created_at as string),
-      enrolment_status: String(enrol.status ?? ""),
-      payment_status: String(enrol.payment_status ?? ""),
-      tuition_paid: enrol.payment_status === "paid",
-      application_proof: enrol.id ? "Recorded" : "Missing",
+      enrolment_status: enrolmentStatusLabel(enrolmentRaw),
+      payment_status: paymentStatusLabel(paymentRaw),
+      tuition_paid: paymentRaw === "paid",
+      application_proof: reference ? "On file" : "No reference",
       attendance_proof:
-        tally && tally.total > 0 ? "Recorded" : "Pending",
+        tally && tally.total > 0 ? "On file" : "Not marked",
       attendance_percent: attendancePercent,
       sessions_present: tally?.present ?? 0,
       sessions_total: tally?.total ?? 0,
@@ -509,25 +584,69 @@ export async function getStatementOfReport(input?: {
     day: "numeric",
     month: "long",
     year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
   }).format(new Date());
 
-  const scopeLabel = parishFilter
-    ? parishName
-      ? `Parish — ${parishName}`
-      : "Parish desk"
-    : "National — all UK parishes";
+  const scopeParts: string[] = [
+    parishFilter
+      ? parishName
+        ? `Parish — ${parishName}`
+        : "Parish desk"
+      : "National — all UK parishes",
+  ];
+  if (cohortLabel) scopeParts.push(`Cohort — ${cohortLabel}`);
+  if (batchLabel) scopeParts.push(`Batch — ${batchLabel}`);
+  const scopeLabel = scopeParts.join(" · ");
+
+  const filterParts: string[] = [
+    paidOnly ? "Tuition paid seats only" : "All payment states",
+  ];
+  if (statusFilter) {
+    filterParts.push(`Status — ${enrolmentStatusLabel(statusFilter)}`);
+  } else {
+    filterParts.push("All enrolment statuses");
+  }
+  const filterLabel = filterParts.join(" · ");
+
+  const applicationOnFile = rows.filter(
+    (r) => r.application_proof === "On file",
+  ).length;
+  const attendanceOnFile = rows.filter(
+    (r) => r.attendance_proof === "On file",
+  ).length;
+  const attendancePercents = rows
+    .map((r) => r.attendance_percent)
+    .filter((n): n is number => n != null);
+  const averageAttendancePercent =
+    attendancePercents.length > 0
+      ? Math.round(
+          (attendancePercents.reduce((sum, n) => sum + n, 0) /
+            attendancePercents.length) *
+            10,
+        ) / 10
+      : null;
 
   return {
     title: "Statement of Report",
-    subtitle: paidOnly
-      ? "Proof of Application / Enrolment and Proof of Attendance (tuition paid)"
-      : "Proof of Application / Enrolment and Proof of Attendance",
+    subtitle: "Proof of application, enrolment, and attendance",
+    purpose: paidOnly
+      ? "Official list of students with tuition marked paid on the enrolment desk, together with application references and Records attendance where marked."
+      : "Official list of students on the enrolment desk, together with application references and Records attendance where marked.",
     issuedAtLabel,
     issuedBy:
       actor.full_name?.trim() ||
       actor.email ||
       "School of Disciples admin",
     scopeLabel,
+    filterLabel,
+    summary: {
+      total: rows.length,
+      applicationOnFile,
+      attendanceOnFile,
+      attendanceNotMarked: rows.length - attendanceOnFile,
+      averageAttendancePercent,
+    },
     rows,
   };
 }

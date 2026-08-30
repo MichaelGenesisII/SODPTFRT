@@ -29,6 +29,7 @@ import { SOD_SITE } from "@/lib/site-nav";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { createServiceSupabaseClient } from "@/lib/supabase/service";
 import { formatBatchLabel } from "@/lib/parishes";
+import { formatCohortLabel } from "@/lib/cohorts";
 
 export type PaymentActionResult = {
   ok: boolean;
@@ -44,6 +45,7 @@ export type AdminPaymentQueueItem = FeeTransaction & {
   parish_id: string | null;
   parish_name: string | null;
   batch_label: string | null;
+  cohort_label: string | null;
 };
 
 type Supabase = Awaited<ReturnType<typeof createServerSupabaseClient>>;
@@ -143,7 +145,7 @@ async function hydrateQueueItems(
     supabase
       .from("enrolments")
       .select(
-        "user_id, reference, reference_compact, parish_id, batch_id, created_at, parishes(name), batches(name, year)",
+        "user_id, reference, reference_compact, parish_id, batch_id, cohort_id, created_at, parishes(name), batches(name, year), cohorts(name, year_start, year_end)",
       )
       .in("user_id", userIds)
       .order("created_at", { ascending: false }),
@@ -169,6 +171,10 @@ async function hydrateQueueItems(
       | { name: string; year: number }
       | { name: string; year: number }[]
       | null;
+    cohorts:
+      | { name: string; year_start: number; year_end: number }
+      | { name: string; year_start: number; year_end: number }[]
+      | null;
   };
 
   function one<T>(value: T | T[] | null | undefined): T | null {
@@ -186,6 +192,7 @@ async function hydrateQueueItems(
     const enrol = enrolMap.get(payment.user_id);
     const parish = one(enrol?.parishes);
     const batch = one(enrol?.batches);
+    const cohort = one(enrol?.cohorts);
     return {
       ...payment,
       fee_type: normalizeFeeType(String(payment.fee_type)) ?? "tuition",
@@ -197,6 +204,13 @@ async function hydrateQueueItems(
       parish_name: parish?.name ?? null,
       batch_label: batch
         ? formatBatchLabel({ name: batch.name, year: batch.year })
+        : null,
+      cohort_label: cohort
+        ? formatCohortLabel({
+            name: cohort.name,
+            year_start: cohort.year_start,
+            year_end: cohort.year_end,
+          })
         : null,
     };
   });

@@ -933,7 +933,7 @@ export async function listStudentExams(): Promise<StudentExamListItem[]> {
   const { data: exams } = await supabase
     .from("exams")
     .select(
-      "id, title, description, status, audience, duration_minutes, pass_percent, opens_at, closes_at, year_index, updated_at",
+      "id, slug, title, description, status, audience, duration_minutes, pass_percent, opens_at, closes_at, year_index, instructions, counts_toward_record, updated_at",
     )
     .eq("audience", "student")
     .in("status", ["published", "closed"])

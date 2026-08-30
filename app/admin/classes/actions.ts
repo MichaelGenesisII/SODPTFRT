@@ -14,9 +14,16 @@ import {
   writeAttendanceToStudentRecord,
 } from "@/lib/classes/attendance";
 import { listClassAudienceRecipients } from "@/lib/classes/recipients";
+import type {
+  ClassAttendanceRollup,
+  ClassRollRow,
+  ClassUnmatchedRow,
+} from "@/lib/admin/class-roll";
+import { feesLabel } from "@/lib/admin/class-roll";
 import {
   audienceLabel,
   DEFAULT_ATTENDANCE_THRESHOLD,
+  DEFAULT_CLASS_DURATION_MINUTES,
   isPresentByDuration,
   requiredSecondsForClass,
   type ClassAudience,
@@ -24,6 +31,7 @@ import {
   type ZoomClassAttendance,
   type ZoomClassStatus,
 } from "@/lib/classes/types";
+import { isFeeFullyPaid, type FeeType } from "@/lib/payments/fees";
 import {
   classPortalUrl,
   formatClassWhenLabel,
@@ -38,6 +46,9 @@ import {
   createZoomMeeting,
   endAllLiveHostMeetings,
   fetchMeetingParticipants,
+  getZoomMeeting,
+  listLiveHostMeetings,
+  normalizeZoomMeetingNumber,
   zoomConfigured,
 } from "@/lib/zoom/client";
 import {
@@ -312,6 +323,10 @@ function mapClass(row: Record<string, unknown>): ZoomClass {
     duration_minutes: Number(row.duration_minutes),
     attendance_threshold_percent: Number(row.attendance_threshold_percent),
     attendance_code: (row.attendance_code as string | null) ?? null,
+    show_checkin_code_to_students: Boolean(
+      (row as { show_checkin_code_to_students?: boolean })
+        .show_checkin_code_to_students,
+    ),
     zoom_meeting_id: (row.zoom_meeting_id as string | null) ?? null,
     zoom_meeting_uuid: (row.zoom_meeting_uuid as string | null) ?? null,
     zoom_join_url: (row.zoom_join_url as string | null) ?? null,
@@ -329,9 +344,11 @@ function mapClass(row: Record<string, unknown>): ZoomClass {
   };
 }
 
-function revalidateClassPaths() {
+function revalidateClassPaths(classId?: string, recordUserId?: string) {
   revalidatePath("/admin/classes");
+  if (classId) revalidatePath(`/admin/classes/${classId}`);
   revalidatePath("/admin/records");
+  if (recordUserId) revalidatePath(`/admin/records/${recordUserId}`);
   revalidatePath("/student/classes");
   revalidatePath("/student/records");
 }
@@ -424,7 +441,8 @@ export async function previewClassInvite(input: {
 export async function getInPortalHostSession(
   classId: string,
 ): Promise<
-  { ok: true; session: InPortalZoomSession } | { ok: false; message: string }
+  | { ok: true; session: InPortalZoomSession; meetingRefreshed?: boolean }
+  | { ok: false; message: string }
 > {
   const access = await requireAccessibleClass(classId);
   if (!access.ok) return { ok: false, message: access.message };
@@ -437,9 +455,21 @@ export async function getInPortalHostSession(
     };
   }
 
-  const { actor, klass } = access;
+  if (!zoomConfigured()) {
+    return {
+      ok: false,
+      message:
+        "Zoom host setup is incomplete. Use Host in Zoom app instead.",
+    };
+  }
 
-  if (!klass.zoom_meeting_id) {
+  const { actor, klass, supabase } = access;
+
+  let meetingNumber = normalizeZoomMeetingNumber(klass.zoom_meeting_id);
+  let password = klass.zoom_passcode ?? "";
+  let meetingRefreshed = false;
+
+  if (!meetingNumber && !klass.zoom_meeting_id) {
     return {
       ok: false,
       message: "This class has no Zoom meeting number.",
@@ -447,18 +477,80 @@ export async function getInPortalHostSession(
   }
 
   try {
+    // Meeting SDK always calls join(); hosting is role 1 + host ZAK.
+    // 3610 "Meeting does not exist" means the stored id is gone on Zoom —
+    // recreate so Host in portal can start as host.
+    let meetingOk = meetingNumber
+      ? await getZoomMeeting(meetingNumber)
+      : null;
+
+    if (!meetingOk) {
+      console.warn(
+        "[classes host session] Zoom meeting missing; recreating",
+        {
+          classId: klass.id,
+          priorMeetingId: klass.zoom_meeting_id,
+        },
+      );
+      const created = await createZoomMeeting({
+        topic: klass.title,
+        startTime: klass.scheduled_start,
+        durationMinutes: Math.max(
+          15,
+          klass.duration_minutes || DEFAULT_CLASS_DURATION_MINUTES,
+        ),
+        agenda: klass.description ?? undefined,
+      });
+      const { error: updateError } = await supabase
+        .from("zoom_classes")
+        .update({
+          zoom_meeting_id: created.id,
+          zoom_meeting_uuid: created.uuid,
+          zoom_join_url: created.join_url,
+          zoom_start_url: created.start_url,
+          zoom_passcode: created.password,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", klass.id);
+      if (updateError) {
+        console.error("classes host session recreate save:", updateError);
+        return fail(
+          updateError,
+          "Could not refresh the Zoom meeting for hosting.",
+        );
+      }
+      meetingNumber = normalizeZoomMeetingNumber(created.id);
+      password = created.password ?? "";
+      meetingRefreshed = true;
+      revalidatePath("/admin/classes");
+    } else {
+      meetingNumber = normalizeZoomMeetingNumber(meetingOk.id) || meetingNumber;
+      if (meetingOk.password != null && meetingOk.password !== "") {
+        password = meetingOk.password;
+      }
+    }
+
+    if (!meetingNumber) {
+      return {
+        ok: false,
+        message: "This class has no Zoom meeting number.",
+      };
+    }
+
+    const zak = await fetchHostZakToken();
     const signature = createMeetingSdkSignature({
-      meetingNumber: String(klass.zoom_meeting_id),
+      meetingNumber,
       role: 1,
     });
-    const zak = await fetchHostZakToken();
+
     return {
       ok: true,
+      meetingRefreshed,
       session: {
         signature,
         sdkKey: process.env.ZOOM_MEETING_SDK_KEY!,
-        meetingNumber: String(klass.zoom_meeting_id),
-        password: klass.zoom_passcode ?? "",
+        meetingNumber,
+        password,
         userName: actor.full_name || actor.email || "Host",
         userEmail: actor.email || "",
         zak,
@@ -471,6 +563,32 @@ export async function getInPortalHostSession(
       ok: false,
       message: publicActionMessage(err, "Could not start host session."),
     };
+  }
+}
+
+/** Whether this class's Zoom meeting is currently live on the host account. */
+export async function getClassZoomLiveStatus(
+  classId: string,
+): Promise<{ ok: true; live: boolean } | { ok: false; message: string }> {
+  const access = await requireAccessibleClass(classId);
+  if (!access.ok) return { ok: false, message: access.message };
+
+  if (!zoomConfigured() || !access.klass.zoom_meeting_id) {
+    return { ok: true, live: false };
+  }
+
+  try {
+    const meetingId = normalizeZoomMeetingNumber(access.klass.zoom_meeting_id);
+    if (!meetingId) return { ok: true, live: false };
+
+    const liveMeetings = await listLiveHostMeetings();
+    const live = liveMeetings.some(
+      (row) => normalizeZoomMeetingNumber(row.id) === meetingId,
+    );
+    return { ok: true, live };
+  } catch (err) {
+    console.error("classes zoom live status:", err);
+    return { ok: true, live: false };
   }
 }
 
@@ -660,6 +778,178 @@ export async function getClassAttendance(
   });
 }
 
+function attachClassStats(
+  klass: ZoomClass,
+  attendance: { present: boolean; user_id: string | null }[],
+): ZoomClass {
+  let rows = 0;
+  let present = 0;
+  let matched = 0;
+  for (const row of attendance) {
+    rows += 1;
+    if (row.present) present += 1;
+    if (row.user_id) matched += 1;
+  }
+  return {
+    ...klass,
+    attendance_rows: rows,
+    present_count: present,
+    matched_count: matched,
+  };
+}
+
+export async function getAdminClassById(
+  classId: string,
+): Promise<ZoomClass | null> {
+  const access = await requireAccessibleClass(classId);
+  if (!access.ok) return null;
+
+  const { supabase } = access;
+  const { data, error } = await supabase
+    .from("zoom_classes")
+    .select(
+      "*, parishes(name), batches(name, year), cohorts(name, year_start, year_end)",
+    )
+    .eq("id", classId)
+    .maybeSingle();
+
+  if (error || !data) {
+    if (error) console.error("[classes/get]", error.message);
+    return null;
+  }
+
+  const klass = mapClass(data as Record<string, unknown>);
+  const { data: attendance } = await supabase
+    .from("zoom_class_attendance")
+    .select("present, user_id")
+    .eq("class_id", classId);
+
+  return attachClassStats(klass, attendance ?? []);
+}
+
+export async function getClassAttendanceRollup(
+  classId: string,
+): Promise<ClassAttendanceRollup | null> {
+  const access = await requireAccessibleClass(classId);
+  if (!access.ok) return null;
+
+  const { klass } = access;
+  const attendance = await getClassAttendance(classId);
+
+  const recipients = await listClassAudienceRecipients({
+    audience: klass.audience,
+    parishId: klass.parish_id,
+    batchId: klass.batch_id,
+    cohortId: klass.cohort_id,
+    year: klass.year,
+  });
+
+  const attendanceByUser = new Map<string, ZoomClassAttendance>();
+  const unmatched: ClassUnmatchedRow[] = [];
+
+  for (const row of attendance) {
+    if (row.user_id) {
+      attendanceByUser.set(row.user_id, row);
+    } else {
+      unmatched.push({
+        id: row.id,
+        name: row.zoom_display_name || row.matched_email || "Unknown",
+        email: row.matched_email,
+        present: row.present,
+        source: row.source,
+        duration_seconds: row.duration_seconds,
+        required_seconds: row.required_seconds,
+      });
+    }
+  }
+
+  const userIds = recipients.map((r) => r.id);
+  const feePaid = new Map<string, { tuition: boolean; graduation: boolean }>();
+
+  if (userIds.length) {
+    const service = createServiceSupabaseClient();
+    const { data: fees } = await service
+      .from("student_fee_payments")
+      .select("user_id, fee_type, status, amount_paid_gbp, amount_due_gbp")
+      .in("user_id", userIds);
+
+    for (const userId of userIds) {
+      feePaid.set(userId, { tuition: false, graduation: false });
+    }
+
+    for (const fee of fees ?? []) {
+      const uid = fee.user_id as string;
+      const type = fee.fee_type as FeeType;
+      const paid =
+        fee.status === "paid" ||
+        isFeeFullyPaid({
+          amount_paid_gbp: Number(fee.amount_paid_gbp ?? 0),
+          amount_due_gbp: Number(fee.amount_due_gbp ?? 0),
+        });
+      const current = feePaid.get(uid) ?? {
+        tuition: false,
+        graduation: false,
+      };
+      if (type === "tuition" && paid) current.tuition = true;
+      if (type === "graduation" && paid) current.graduation = true;
+      feePaid.set(uid, current);
+    }
+  }
+
+  function toRollRow(
+    userId: string,
+    name: string,
+    email: string,
+    att: ZoomClassAttendance | undefined,
+    present: boolean,
+  ): ClassRollRow {
+    const fees = feePaid.get(userId) ?? {
+      tuition: false,
+      graduation: false,
+    };
+    return {
+      user_id: userId,
+      name,
+      email,
+      present,
+      source: att?.source ?? null,
+      duration_seconds: att?.duration_seconds ?? null,
+      required_seconds: att?.required_seconds ?? null,
+      tuition_paid: fees.tuition,
+      graduation_paid: fees.graduation,
+      fees_label: feesLabel(fees.tuition, fees.graduation),
+    };
+  }
+
+  const attended: ClassRollRow[] = [];
+  const absent: ClassRollRow[] = [];
+
+  for (const recipient of recipients) {
+    const att = attendanceByUser.get(recipient.id);
+    const name =
+      att?.student_name ||
+      [recipient.firstName].filter(Boolean).join(" ") ||
+      recipient.email;
+    const present = Boolean(att?.present);
+    const row = toRollRow(recipient.id, name, recipient.email, att, present);
+    if (present) attended.push(row);
+    else absent.push(row);
+  }
+
+  const sortByName = (a: ClassRollRow, b: ClassRollRow) =>
+    a.name.localeCompare(b.name, undefined, { sensitivity: "base" });
+
+  attended.sort(sortByName);
+  absent.sort(sortByName);
+
+  return {
+    attended,
+    absent,
+    unmatched,
+    expected_total: recipients.length,
+  };
+}
+
 export async function searchClassStudents(
   classId: string,
   query: string,
@@ -767,6 +1057,7 @@ export async function createZoomClass(input: {
   zoom_join_url?: string;
   zoom_passcode?: string;
   generate_code?: boolean;
+  show_checkin_code_to_students?: boolean;
   send_email?: boolean;
   email_notes?: string;
 }): Promise<ClassActionResult> {
@@ -882,6 +1173,10 @@ export async function createZoomClass(input: {
       duration_minutes: duration,
       attendance_threshold_percent: DEFAULT_ATTENDANCE_THRESHOLD,
       attendance_code: attendanceCode,
+      show_checkin_code_to_students: Boolean(
+        attendanceCode &&
+          input.show_checkin_code_to_students === true,
+      ),
       zoom_meeting_id: zoomMeetingId,
       zoom_meeting_uuid: zoomMeetingUuid,
       zoom_join_url: zoomJoinUrl,
@@ -893,7 +1188,13 @@ export async function createZoomClass(input: {
     .select("id, attendance_code")
     .single();
 
-  if (error) return fail(error);
+  if (error) {
+    console.error("[classes/create] insert", error.message, error.code, error.details);
+    return fail(
+      error,
+      "Could not save the class. Check the schedule and audience, then try again.",
+    );
+  }
 
   let emailed = 0;
   let emailFailed = 0;
@@ -968,9 +1269,10 @@ export async function createZoomClass(input: {
     }
   }
 
-  revalidateClassPaths();
+  revalidateClassPaths(data.id);
 
   const parts = [
+    zoomMeetingId ? "Zoom meeting created" : null,
     attendanceCode ? `check-in code ${attendanceCode}` : null,
     input.send_email
       ? `emailed ${emailed}${emailFailed ? ` (${emailFailed} failed)` : ""}`
@@ -1005,12 +1307,51 @@ export async function regenerateClassAttendanceCode(
     .eq("id", classId);
 
   if (error) return fail(error);
-  revalidateClassPaths();
+  revalidateClassPaths(classId);
   return {
     ok: true,
     message: `New check-in code: ${code}`,
     classId,
     code,
+  };
+}
+
+export async function setClassCheckinCodeVisibility(
+  classId: string,
+  showOnStudentPortal: boolean,
+): Promise<ClassActionResult> {
+  const access = await requireAccessibleClass(classId);
+  if (!access.ok) return { ok: false, message: access.message };
+
+  const { data: existing } = await access.supabase
+    .from("zoom_classes")
+    .select("attendance_code")
+    .eq("id", classId)
+    .maybeSingle();
+
+  if (showOnStudentPortal && !existing?.attendance_code?.trim()) {
+    return {
+      ok: false,
+      message: "Generate a check-in code before showing it on the student portal.",
+    };
+  }
+
+  const { error } = await access.supabase
+    .from("zoom_classes")
+    .update({
+      show_checkin_code_to_students: showOnStudentPortal,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", classId);
+
+  if (error) return fail(error);
+  revalidateClassPaths(classId);
+  return {
+    ok: true,
+    message: showOnStudentPortal
+      ? "Check-in code is visible on the student portal for this class."
+      : "Check-in code hidden from the student portal — share it in the room only.",
+    classId,
   };
 }
 
@@ -1114,7 +1455,7 @@ export async function markManualAttendance(input: {
     };
   }
 
-  revalidateClassPaths();
+  revalidateClassPaths(input.classId, input.userId);
   return {
     ok: true,
     message: input.present
@@ -1137,7 +1478,7 @@ export async function setZoomClassStatus(
     .eq("id", classId);
 
   if (error) return fail(error);
-  revalidateClassPaths();
+  revalidateClassPaths(classId);
   return { ok: true, message: `Marked ${status}.`, classId };
 }
 
@@ -1152,7 +1493,7 @@ export async function deleteZoomClass(
     .delete()
     .eq("id", classId);
   if (error) return fail(error);
-  revalidateClassPaths();
+  revalidateClassPaths(classId);
   return { ok: true, message: "Class removed." };
 }
 
@@ -1337,7 +1678,7 @@ export async function syncZoomClassAttendance(
     })
     .eq("id", classId);
 
-  revalidateClassPaths();
+  revalidateClassPaths(classId);
 
   const audienceNote =
     outOfAudience > 0

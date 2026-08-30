@@ -69,10 +69,9 @@ export default async function AdminExamsPage({ searchParams }: Props) {
           Exams
         </h1>
         <p className="mt-1.5 max-w-2xl text-sm leading-relaxed text-ink/70">
-          Build papers in Compose, import finished files on Upload, or download
-          ready-made tests from Samples. Grade in Queue, then review student and
-          visitor scores on Results. Parish desks only manage exams for their
-          parish; national desks can publish UK-wide.
+          Browse exams on Compose, import finished files on Upload, or download
+          ready-made tests from Samples. Open any row for the exam file — questions,
+          publish, and share link. Grade in Queue, then review scores on Results.
         </p>
       </section>
 

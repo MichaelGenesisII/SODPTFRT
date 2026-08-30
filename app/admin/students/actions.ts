@@ -21,6 +21,7 @@ import { sendManualsSentEmail } from "@/lib/email/payment-mail";
 import { portalBaseUrl } from "@/lib/email/backend";
 import { SOD_SITE } from "@/lib/site-nav";
 import { removeStudentStorageFolder } from "@/lib/student/storage-wipe";
+import { signStudentPhotoUrls } from "@/lib/student/photos";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { createServiceSupabaseClient } from "@/lib/supabase/service";
 
@@ -146,7 +147,7 @@ const ENROLMENT_SELECT = `
   born_again, born_again_date, born_again_where, baptised_holy_spirit,
   holy_spirit_date, holy_spirit_where, baptised_water, water_baptism_date,
   water_baptism_where, schools_attended, occupations, occupation_other,
-  parish_id, batch_id, cohort_id, legacy_app_com_no, local_church, church_leader, church_activities,
+  parish_id, batch_id, cohort_id, saturday_cohort_id, legacy_app_com_no, local_church, church_leader, church_activities,
   declaration_accepted, declared_at, created_at, updated_at
 `;
 
@@ -169,6 +170,7 @@ export async function listAdminStudents(): Promise<AdminStudentRecord[]> {
     { data: parishes },
     { data: batches },
     { data: cohorts },
+    { data: saturdayCohorts },
   ] = await Promise.all([
     enrolQ,
     supabase.from("parishes").select("id, name, region"),
@@ -176,6 +178,10 @@ export async function listAdminStudents(): Promise<AdminStudentRecord[]> {
     supabase.from("cohorts").select("id, name, year_start, year_end").then((r) =>
       r.error ? { data: [] as never[] } : r,
     ),
+    supabase
+      .from("saturday_cohorts")
+      .select("id, saturday_slot, label")
+      .then((r) => (r.error ? { data: [] as never[] } : r)),
   ]);
 
   if (enrolError) {
@@ -208,12 +214,24 @@ export async function listAdminStudents(): Promise<AdminStudentRecord[]> {
       },
     ]),
   );
+  const saturdayMeta = new Map(
+    (saturdayCohorts ?? []).map((c) => [
+      c.id as string,
+      {
+        saturday_slot: c.saturday_slot as 1 | 2 | 3 | 4,
+        label: c.label as string,
+      },
+    ]),
+  );
 
   for (const row of (enrolments ?? []) as AdminEnrolmentRecord[]) {
     if (!latestByUser.has(row.user_id)) {
       const parish = row.parish_id ? parishMeta.get(row.parish_id) : null;
       const meta = row.batch_id ? batchMeta.get(row.batch_id) : null;
       const cohort = row.cohort_id ? cohortMeta.get(row.cohort_id) : null;
+      const saturday = row.saturday_cohort_id
+        ? saturdayMeta.get(row.saturday_cohort_id)
+        : null;
       latestByUser.set(row.user_id, {
         ...row,
         parish_name: parish?.name ?? null,
@@ -223,6 +241,8 @@ export async function listAdminStudents(): Promise<AdminStudentRecord[]> {
         cohort_name: cohort?.name ?? null,
         cohort_year_start: cohort?.year_start ?? null,
         cohort_year_end: cohort?.year_end ?? null,
+        saturday_slot: saturday?.saturday_slot ?? null,
+        saturday_label: saturday?.label ?? null,
       });
     }
   }
@@ -391,8 +411,11 @@ export async function listAdminStudents(): Promise<AdminStudentRecord[]> {
     exam_entries: 0,
   });
 
-  // List view uses initials — signing hundreds of passports blocked first paint.
-  // Dossier can live without a signed URL until the row is refreshed later.
+  // Batch-sign passport photos for list + detail (one storage call, not N sequential).
+  const passportSigned = await signStudentPhotoUrls(
+    (profiles ?? []).map((row) => row.passport_path as string | null | undefined),
+  );
+
   return ((profiles ?? []) as (Omit<
     AdminStudentRecord,
     "enrolment" | "fees" | "path" | "passport_url"
@@ -415,15 +438,34 @@ export async function listAdminStudents(): Promise<AdminStudentRecord[]> {
           ? Math.round((ents.includedSum / ents.includedN) * 100) / 100
           : null;
     }
+    const passportPath = profile.passport_path ?? null;
     const { passport_path: _drop, ...rest } = profile;
     return {
       ...rest,
-      passport_url: null,
+      passport_url: passportPath
+        ? (passportSigned.get(passportPath) ?? null)
+        : null,
       enrolment: latestByUser.get(profile.id) ?? null,
       fees: feesByUser.get(profile.id) ?? [],
       path,
     };
   });
+}
+
+export async function getAdminStudentById(
+  userId: string,
+): Promise<
+  { ok: true; student: AdminStudentRecord } | { ok: false; message: string }
+> {
+  if (!userId?.trim()) {
+    return { ok: false, message: "Student not found." };
+  }
+  const students = await listAdminStudents();
+  const student = students.find((row) => row.id === userId);
+  if (!student) {
+    return { ok: false, message: "Student not found." };
+  }
+  return { ok: true, student };
 }
 
 export async function updateEnrolmentStatus(
@@ -1108,6 +1150,11 @@ export async function listStudentPlacements(
 
 export type ManualsSendPart = 1 | 2 | 3;
 
+function revalidateStudentDesk(studentId: string) {
+  revalidatePath("/admin/students");
+  revalidatePath(`/admin/students/${studentId}`);
+}
+
 const MANUALS_PART_COLUMN: Record<
   ManualsSendPart,
   "manuals_1_sent_at" | "manuals_2_sent_at" | "manuals_3_sent_at"
@@ -1169,22 +1216,37 @@ export async function sendManualsPart(
       return { ok: false, message: publicActionMessage(error.message) };
     }
 
-    if (current.email) {
-      void sendManualsSentEmail({
-        to: current.email,
-        firstName: current.first_name || "friend",
-        portalLoginUrl: `${portalBaseUrl()}/login/student`,
-        portalSupportUrl: `${portalBaseUrl()}/student/support`,
-        siteUrl: SOD_SITE,
-      }).catch((mailError) => {
-        console.error("[admin/students] manuals email", mailError);
-      });
+    revalidateStudentDesk(studentId);
+
+    if (!current.email) {
+      return {
+        ok: true,
+        message: `Manuals send ${part} of 3 marked.`,
+      };
     }
 
-    revalidatePath("/admin/students");
+    const mailed = await sendManualsSentEmail({
+      to: current.email,
+      firstName: current.first_name || "friend",
+      portalLoginUrl: `${portalBaseUrl()}/login/student`,
+      portalSupportUrl: `${portalBaseUrl()}/student/support`,
+      siteUrl: SOD_SITE,
+    });
+
+    if (!mailed.ok) {
+      console.error("[admin/students] manuals email", mailed.message);
+      return {
+        ok: true,
+        message: publicEmailFailureMessage(
+          `Manuals send ${part} of 3 marked.`,
+          mailed.message,
+        ),
+      };
+    }
+
     return {
       ok: true,
-      message: `Manuals send ${part} of 3 marked. A notification email was queued.`,
+      message: `Manuals send ${part} of 3 marked. The student was notified by email.`,
     };
   } catch (error) {
     if (error instanceof Error && error.message === "Unauthorized") {
@@ -1224,7 +1286,7 @@ export async function setManualsSent(
       return { ok: false, message: publicActionMessage(error.message) };
     }
 
-    revalidatePath("/admin/students");
+    revalidateStudentDesk(studentId);
     return { ok: true, message: "All manuals sends cleared." };
   } catch (error) {
     if (error instanceof Error && error.message === "Unauthorized") {

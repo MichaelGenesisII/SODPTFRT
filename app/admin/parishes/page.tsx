@@ -29,12 +29,12 @@ export default async function AdminParishesPage() {
           {isNationalAdmin(profile) ? "UK network" : "Your parish"}
         </p>
         <h1 className="mt-1.5 font-display text-[clamp(1.6rem,5vw,2.4rem)] tracking-[-0.02em] text-pine">
-          Parishes & batches
+          Parishes
         </h1>
         <p className="mt-1.5 max-w-2xl text-sm leading-relaxed text-ink/70">
           {isNationalAdmin(profile)
-            ? "Add churches, open course runs, and control what appears on the enrol form."
-            : "Manage batches for your parish — open or close enrolment on the form."}
+            ? "Browse churches and batches on the Desk. Import, edit, and create under Manage."
+            : "Open or close enrolment on the Desk. Add and retire batches under Manage."}
         </p>
       </section>
 

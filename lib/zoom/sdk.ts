@@ -30,12 +30,18 @@ export function createMeetingSdkSignature(input: {
     );
   }
 
-  const meetingNumber = String(input.meetingNumber).replace(/\s+/g, "");
+  // Digits only — spaces/dashes in stored ids break Meeting SDK join (3610).
+  const meetingNumber = String(input.meetingNumber).replace(/\D/g, "");
+  if (!meetingNumber) {
+    throw new Error("Missing Zoom meeting number for Meeting SDK signature.");
+  }
   const iat = Math.round(Date.now() / 1000) - 30;
   const exp = iat + 60 * 60 * 2;
   const header = base64UrlJson({ alg: "HS256", typ: "JWT" });
+  // Include both appKey and sdkKey (same value) for web + cross-platform JWT docs.
   const payload = base64UrlJson({
     appKey: sdkKey,
+    sdkKey,
     mn: meetingNumber,
     role: input.role,
     iat,

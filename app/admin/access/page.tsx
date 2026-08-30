@@ -31,16 +31,17 @@ export default async function AdminAccessPage() {
   })) as AdminProfile[];
 
   return (
-    <div className="mx-auto max-w-3xl">
+    <div className="mx-auto max-w-6xl">
       <section className="animate-fade-rise mb-4 sm:mb-6">
         <p className="text-[0.65rem] font-medium uppercase tracking-[0.18em] text-celadon">
-          Access
+          Administration
         </p>
         <h1 className="mt-1.5 font-display text-[clamp(1.6rem,5vw,2.4rem)] tracking-[-0.02em] text-pine">
-          Credentials
+          Access
         </h1>
-        <p className="mt-1.5 max-w-lg text-sm leading-relaxed text-ink/70">
-          Your password and team. Open Insight for a short guide to desks.
+        <p className="mt-1.5 max-w-2xl text-sm leading-relaxed text-ink/70">
+          Staff credentials, invites, and your password. Open Insight for a
+          short guide to desks.
         </p>
       </section>
       <AccessManager

@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 import { StudentPaymentsBoard } from "@/components/student/student-payments";
-import { ensureStudentFeeRows } from "@/lib/payments/service";
+import { ensureStudentFeeRows, listFeeTransactions } from "@/lib/payments/service";
 import { stripeConfigured } from "@/lib/payments/stripe";
 import {
   publicActionMessage,
@@ -25,17 +25,20 @@ export default async function AlumniPaymentsPage({ searchParams }: PageProps) {
 
   const cardReady = stripeConfigured();
   let payments: Awaited<ReturnType<typeof ensureStudentFeeRows>> = [];
+  let transactions: Awaited<ReturnType<typeof listFeeTransactions>> = [];
   let reference = "—";
   let referenceCompact = "—";
   let loadError: string | null = null;
 
   try {
     const supabase = await createServerSupabaseClient();
-    const [enrolment, feeRows] = await Promise.all([
+    const [enrolment, feeRows, feeTransactions] = await Promise.all([
       getStudentEnrolment(profile.id),
       ensureStudentFeeRows(supabase, profile.id),
+      listFeeTransactions(supabase, profile.id),
     ]);
     payments = feeRows;
+    transactions = feeTransactions;
     reference = enrolment?.reference ?? "—";
     referenceCompact = enrolment?.reference_compact ?? "—";
   } catch (error) {
@@ -77,6 +80,7 @@ export default async function AlumniPaymentsPage({ searchParams }: PageProps) {
   return (
     <StudentPaymentsBoard
       payments={payments}
+      transactions={transactions}
       reference={reference}
       referenceCompact={referenceCompact}
       flash={flash}

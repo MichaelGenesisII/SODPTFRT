@@ -1,12 +1,23 @@
 "use client";
 
 import Link from "next/link";
-import { useState, type ReactNode } from "react";
+import { useState, useEffect, type ReactNode } from "react";
 import { GraduationChecklist } from "@/components/student/graduation-checklist";
+import { useRefreshOnVisible } from "@/components/student/use-refresh-on-visible";
 import type { RecordBundle } from "@/lib/exams/records";
 import type { GraduationEligibility } from "@/lib/graduation/eligibility";
+import {
+  SOD_STUDENT_TOUR_TAB_EVENT,
+  type StudentTourTabPayload,
+} from "@/lib/student/portal-tour-steps";
 
 type RecordsTab = "overview" | "attendance" | "exams";
+
+/** Refreshes scorecard data when the tab is visible again after a long absence. */
+export function StudentRecordsRefresh({ children }: { children: ReactNode }) {
+  useRefreshOnVisible();
+  return <>{children}</>;
+}
 
 export function StudentRecordsClient({
   bundle,
@@ -17,6 +28,17 @@ export function StudentRecordsClient({
 }) {
   const [tab, setTab] = useState<RecordsTab>("overview");
   const [openEntryId, setOpenEntryId] = useState<string | null>(null);
+
+  useEffect(() => {
+    function onTourTab(event: Event) {
+      const detail = (event as CustomEvent<StudentTourTabPayload>).detail;
+      if (detail?.page !== "records") return;
+      setTab(detail.tab);
+    }
+    window.addEventListener(SOD_STUDENT_TOUR_TAB_EVENT, onTourTab);
+    return () =>
+      window.removeEventListener(SOD_STUDENT_TOUR_TAB_EVENT, onTourTab);
+  }, []);
 
   const presentCount = bundle.sessions.filter((s) => s.present).length;
   const passCount = bundle.entries.filter((e) => e.passed).length;
@@ -40,7 +62,19 @@ export function StudentRecordsClient({
 
   return (
     <div className="space-y-4 sm:space-y-5">
-      <div className="grid grid-cols-2 gap-px border border-stone bg-stone sm:grid-cols-4 sm:gap-0 sm:bg-mist/50">
+      {record.updated_at ? (
+        <p className="text-xs text-ink/45">
+          Last updated{" "}
+          <time dateTime={record.updated_at}>
+            {formatDateTime(record.updated_at)}
+          </time>
+          . Leave this tab and come back to pick up desk updates.
+        </p>
+      ) : null}
+      <div
+        className="grid grid-cols-2 gap-px border border-stone bg-stone sm:grid-cols-4 sm:gap-0 sm:bg-mist/50"
+        data-tour="student-records-stats"
+      >
         <MiniStat
           label="Exam avg"
           value={bundle.average != null ? `${bundle.average}%` : "—"}
@@ -62,6 +96,7 @@ export function StudentRecordsClient({
       <nav
         className="grid grid-cols-3 border border-stone bg-mist/40 sm:flex sm:gap-1 sm:overflow-x-auto sm:border-0 sm:border-b sm:bg-transparent sm:pb-px [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
         aria-label="Records sections"
+        data-tour="student-records-tabs"
       >
         {tabs.map((item) => {
           const active = tab === item.id;
@@ -334,6 +369,19 @@ function formatDate(iso: string | null | undefined): string {
     day: "numeric",
     month: "short",
     year: "numeric",
+  });
+}
+
+function formatDateTime(iso: string | null | undefined): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleString("en-GB", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
   });
 }
 

@@ -148,9 +148,22 @@ function formatScorecardDate(isoDate: string | null | undefined): string {
   });
 }
 
-function revalidateRecords() {
+function revalidateRecords(userId?: string) {
   revalidatePath("/admin/records");
+  if (userId) revalidatePath(`/admin/records/${userId}`);
   revalidatePath("/student/records");
+}
+
+async function revalidateRecordsForRecord(
+  supabase: Supabase,
+  recordId: string,
+) {
+  const { data } = await supabase
+    .from("student_records")
+    .select("user_id")
+    .eq("id", recordId)
+    .maybeSingle();
+  revalidateRecords(data?.user_id ?? undefined);
 }
 
 export async function listRecordStudents(filters?: {
@@ -311,7 +324,7 @@ export async function ensureStudentRecord(
       console.error("records:", error.message);
       return fail(error);
     }
-    revalidateRecords();
+    revalidateRecords(userId);
     return { ok: true, message: "Record created.", recordId: data.id };
   } catch (error) {
     if (error instanceof Error && error.message === "Unauthorized") {
@@ -418,6 +431,23 @@ export async function getRecordBundle(
   };
 }
 
+export async function getRecordBundleForUser(
+  userId: string,
+): Promise<{ bundle: RecordBundle; recordId: string } | null> {
+  if (!userId) return null;
+
+  const access = await requireAccessibleEnrolmentUser(userId);
+  if (!access.ok) return null;
+
+  const ensured = await ensureStudentRecord(userId);
+  if (!ensured.ok || !ensured.recordId) return null;
+
+  const bundle = await getRecordBundle(ensured.recordId);
+  if (!bundle) return null;
+
+  return { bundle, recordId: ensured.recordId };
+}
+
 export async function updateScorecardDates(input: {
   recordId: string;
   enrolled_at: string | null;
@@ -457,7 +487,7 @@ export async function updateScorecardDates(input: {
       return fail(error);
     }
 
-    revalidateRecords();
+    await revalidateRecordsForRecord(access.supabase, input.recordId);
     return { ok: true, message: "Scorecard dates saved.", recordId: input.recordId };
   } catch (error) {
     if (error instanceof Error && error.message === "Unauthorized") {
@@ -491,7 +521,7 @@ export async function upsertAttendanceSession(input: {
       console.error("records:", error.message);
       return fail(error);
     }
-    revalidateRecords();
+    await revalidateRecordsForRecord(access.supabase, input.recordId);
     return { ok: true, message: "Attendance saved." };
   } catch (error) {
     if (error instanceof Error && error.message === "Unauthorized") {
@@ -537,7 +567,7 @@ export async function deleteAttendanceSession(
       console.error("records:", error.message);
       return fail(error);
     }
-    revalidateRecords();
+    await revalidateRecordsForRecord(access.supabase, session.record_id);
     return { ok: true, message: "Session removed." };
   } catch (error) {
     if (error instanceof Error && error.message === "Unauthorized") {
@@ -577,7 +607,7 @@ export async function addManualEntry(input: {
       console.error("records:", error.message);
       return fail(error);
     }
-    revalidateRecords();
+    await revalidateRecordsForRecord(access.supabase, input.recordId);
     return { ok: true, message: "Score added." };
   } catch (error) {
     if (error instanceof Error && error.message === "Unauthorized") {
@@ -627,7 +657,7 @@ export async function setEntryInclude(
       console.error("records:", error.message);
       return fail(error);
     }
-    revalidateRecords();
+    await revalidateRecordsForRecord(access.supabase, entry.record_id);
     return {
       ok: true,
       message: include ? "Included in total." : "Excluded from total.",
@@ -683,7 +713,7 @@ export async function deleteRecordEntry(
       console.error("records:", error.message);
       return fail(error);
     }
-    revalidateRecords();
+    await revalidateRecordsForRecord(access.supabase, entry.record_id);
     return { ok: true, message: "Entry removed." };
   } catch (error) {
     if (error instanceof Error && error.message === "Unauthorized") {
@@ -808,7 +838,7 @@ export async function emailStudentScorecard(
       };
     }
 
-    revalidateRecords();
+    revalidateRecords(bundle.record.user_id);
     return {
       ok: true,
       message: `Scorecard emailed to ${to}.`,
@@ -854,7 +884,7 @@ export async function setGraduationGateOverride(input: {
       return fail(error, "Could not save the graduation override.");
     }
 
-    revalidateRecords();
+    revalidateRecords(input.userId);
     revalidatePath("/student/gallery");
     revalidatePath("/student/records");
     return { ok: true, message: "Graduation override saved." };
@@ -891,7 +921,7 @@ export async function clearGraduationGateOverride(
       return fail(error, "Could not clear the graduation override.");
     }
 
-    revalidateRecords();
+    revalidateRecords(userId);
     revalidatePath("/student/gallery");
     revalidatePath("/student/records");
     return { ok: true, message: "Graduation override cleared." };

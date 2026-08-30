@@ -444,3 +444,30 @@ body {
 .date-field-input::-webkit-datetime-edit-year-field {
   color: transparent;
 }
+
+/* Overview walk-through (driver.js) — hide stock popover; David HUD is custom */
+.sod-david-tour-popover {
+  display: none !important;
+}
+
+/*
+ * driver.js sets `.driver-active * { pointer-events: none }`, which would
+ * disable our custom HUD. Re-enable the guide bubble and controls.
+ */
+.driver-active .sod-david-tour-hud,
+.driver-active .sod-david-tour-hud * {
+  pointer-events: auto !important;
+}
+
+.driver-active .driver-overlay {
+  pointer-events: auto;
+  z-index: 9999;
+}
+
+.driver-active .driver-highlighted-element-stage,
+.driver-active .driver-active-element {
+  z-index: 10000;
+  box-shadow:
+    0 0 0 3px rgb(95 143 122 / 0.55),
+    0 0 0 10px rgb(95 143 122 / 0.12);
+}

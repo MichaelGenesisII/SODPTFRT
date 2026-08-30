@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition, type FormEvent, type ReactNode } from "react";
+import { useState, useTransition, useEffect, type FormEvent, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import {
   getInPortalJoinSession,
@@ -8,6 +8,8 @@ import {
   updateStudentZoomEmail,
 } from "@/app/student/classes/actions";
 import { InPortalZoom } from "@/components/classes/in-portal-zoom";
+import { useRefreshOnVisible } from "@/components/student/use-refresh-on-visible";
+import { DeskConfirmModal } from "@/components/ui/desk-confirm-modal";
 import { DeskLoaderOverlay } from "@/components/ui/desk-loader";
 import { useToast } from "@/components/ui/toast";
 import {
@@ -18,6 +20,10 @@ import {
 } from "@/lib/classes/types";
 import type { StudentProfile } from "@/lib/student/types";
 import type { InPortalZoomSession } from "@/lib/zoom/types";
+import {
+  SOD_STUDENT_TOUR_TAB_EVENT,
+  type StudentTourTabPayload,
+} from "@/lib/student/portal-tour-steps";
 
 type AttendanceSnap = Pick<
   ZoomClassAttendance,
@@ -25,6 +31,11 @@ type AttendanceSnap = Pick<
 >;
 
 type ClassesTab = "upcoming" | "checkin" | "seat" | "past";
+
+export function StudentClassesRefresh({ children }: { children: ReactNode }) {
+  useRefreshOnVisible();
+  return <>{children}</>;
+}
 
 export function StudentClassesClient({
   profile,
@@ -49,6 +60,18 @@ export function StudentClassesClient({
     useState<InPortalZoomSession | null>(null);
   const [joiningId, setJoiningId] = useState<string | null>(null);
   const [openClassId, setOpenClassId] = useState<string | null>(null);
+  const [confirmCheckInOpen, setConfirmCheckInOpen] = useState(false);
+
+  useEffect(() => {
+    function onTourTab(event: Event) {
+      const detail = (event as CustomEvent<StudentTourTabPayload>).detail;
+      if (detail?.page !== "classes") return;
+      setTab(detail.tab);
+    }
+    window.addEventListener(SOD_STUDENT_TOUR_TAB_EVENT, onTourTab);
+    return () =>
+      window.removeEventListener(SOD_STUDENT_TOUR_TAB_EVENT, onTourTab);
+  }, []);
 
   const attendanceMap = new Map(attendance.map((a) => [a.class_id, a]));
   const upcoming = classes.filter((c) => c.status !== "ended");
@@ -88,8 +111,7 @@ export function StudentClassesClient({
     });
   }
 
-  function submitCode(event: FormEvent) {
-    event.preventDefault();
+  function runCheckIn() {
     setBusyLabel("Checking you in…");
     startTransition(async () => {
       try {
@@ -97,6 +119,7 @@ export function StudentClassesClient({
         if (next.ok) {
           success(next.message, "Check-in");
           setCheckInCode("");
+          setConfirmCheckInOpen(false);
           setTab("upcoming");
           router.refresh();
         } else {
@@ -106,6 +129,12 @@ export function StudentClassesClient({
         setBusyLabel(null);
       }
     });
+  }
+
+  function submitCode(event: FormEvent) {
+    event.preventDefault();
+    if (checkInCode.trim().length < 4) return;
+    setConfirmCheckInOpen(true);
   }
 
   async function joinInPortal(classId: string) {
@@ -164,6 +193,7 @@ export function StudentClassesClient({
       <nav
         className="grid grid-cols-2 border border-stone bg-mist/40 sm:flex sm:gap-1 sm:overflow-x-auto sm:border-0 sm:border-b sm:bg-transparent sm:pb-px [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
         aria-label="Classes sections"
+        data-tour="student-classes-tabs"
       >
         {tabs.map((item) => {
           const active = tab === item.id;
@@ -230,7 +260,7 @@ export function StudentClassesClient({
         <Panel
           eyebrow="Physical or hybrid"
           title="Check in with a code"
-          body="Your facilitator shares a code in the room. Enter it here to mark present on Records."
+          body="Your facilitator shares a code in the room. Enter it here to mark present on Records — the code is not shown online unless the desk allows it on the class."
         >
           <form
             onSubmit={submitCode}
@@ -317,6 +347,27 @@ export function StudentClassesClient({
           )}
         </Panel>
       ) : null}
+
+      <DeskConfirmModal
+        open={confirmCheckInOpen}
+        onClose={() => !busy && setConfirmCheckInOpen(false)}
+        onConfirm={runCheckIn}
+        eyebrow="Physical check-in"
+        title="Mark present with this code?"
+        body={
+          <>
+            This records you as present for the matching class and updates your
+            Records attendance. Make sure the code came from your facilitator in
+            the room.
+            <span className="mt-3 block font-mono text-sm tracking-[0.18em] text-ink">
+              {checkInCode.trim().toUpperCase()}
+            </span>
+          </>
+        }
+        confirmLabel="Mark present"
+        busy={busy}
+        busyLabel={busyLabel ?? "Checking you in…"}
+      />
     </div>
   );
 }
@@ -396,7 +447,9 @@ function ClassRow({
     minute: "2-digit",
   });
   const canJoin = item.status !== "ended" && Boolean(item.zoom_meeting_id);
-  const hasExtra = Boolean(item.description || item.zoom_passcode);
+  const hasExtra = Boolean(
+    item.description || item.zoom_passcode || item.student_checkin_code,
+  );
   const showActions = item.status !== "ended" && (canJoin || item.zoom_join_url);
 
   let statusLine = "Join when the session opens";
@@ -490,6 +543,11 @@ function ClassRow({
           {item.zoom_passcode ? (
             <p className="mt-2 break-all font-mono text-xs text-ink/50">
               Passcode {item.zoom_passcode}
+            </p>
+          ) : null}
+          {item.student_checkin_code ? (
+            <p className="mt-2 font-mono text-sm tracking-[0.18em] text-pine">
+              Check-in code {item.student_checkin_code}
             </p>
           ) : null}
         </div>

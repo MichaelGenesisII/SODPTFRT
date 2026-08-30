@@ -130,7 +130,7 @@ export function EvaluationManager({
   }
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-3" data-tour="exams-queue">
       <nav className="flex gap-1 overflow-x-auto border-b border-stone pb-px [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
         {(
           [

@@ -148,11 +148,75 @@ function fingerprint(parts: (string | number | null | undefined)[]): string {
     .join("|");
 }
 
+function parseDob(value: unknown): string | null {
+  if (value == null || value === "") return null;
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    return value.toISOString().slice(0, 10);
+  }
+  const raw = String(value).trim();
+  if (!raw) return null;
+  const serial = Number(raw);
+  if (Number.isFinite(serial) && serial > 1000 && serial < 200000) {
+    const parsed = XLSX.SSF.parse_date_code(serial);
+    if (parsed) {
+      return `${parsed.y}-${String(parsed.m).padStart(2, "0")}-${String(parsed.d).padStart(2, "0")}`;
+    }
+  }
+  return raw;
+}
+
+function parseAppComRef(value: string): string | null {
+  const raw = value.trim();
+  if (!raw || !/app\s*com/i.test(raw)) return null;
+  return raw;
+}
+
+function sessionDateFromLabel(label: string): string | null {
+  const match = label.match(/^(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})/);
+  return match ? match[1] : null;
+}
+
+function buildDisplayName(
+  firstName: string,
+  middleName: string | null,
+  lastName: string,
+): string {
+  return cleanPart([firstName, middleName, lastName].filter(Boolean).join(" "));
+}
+
 function batchMetaFromFileName(fileName: string | null | undefined): {
   batchYear: number;
   batchLabel: string;
 } {
   const raw = fileName ?? "";
+  const low = raw.toLowerCase();
+
+  const sessionShort = low.match(/(\d{2})[/_-](\d{2})\s*session/);
+  if (sessionShort) {
+    const y1 = 2000 + Number(sessionShort[1]);
+    const y2 = 2000 + Number(sessionShort[2]);
+    return {
+      batchYear: y1,
+      batchLabel: `${y1}/${String(y2).slice(-2)} session`,
+    };
+  }
+
+  const fullRange = raw.match(/\b(20\d{2})[/_-](\d{2,4})\b/);
+  if (fullRange) {
+    const start = Number(fullRange[1]);
+    const endPart = fullRange[2];
+    const end =
+      endPart.length === 4
+        ? Number(endPart)
+        : start >= 2000
+          ? Math.floor(start / 100) * 100 + Number(endPart)
+          : Number(endPart);
+    return {
+      batchYear: start,
+      batchLabel: `${start}/${String(end).slice(-2)}`,
+    };
+  }
+
   const yearMatch = raw.match(/\b(20\d{2})\b/);
   const year = yearMatch ? Number(yearMatch[1]) : new Date().getFullYear();
   return {
@@ -173,6 +237,7 @@ function skip(
 type ColMap = {
   email: number | null;
   first: number | null;
+  middle: number | null;
   last: number | null;
   fullName: number | null;
   phone: number | null;
@@ -181,6 +246,11 @@ type ColMap = {
   graduation: number | null;
   studentId: number | null;
   centre: number | null;
+  region: number | null;
+  parish: number | null;
+  dob: number | null;
+  screenshot: number | null;
+  bankStatement: number | null;
   certificate: number | null;
   comments: number | null;
   manuals: number | null;
@@ -191,18 +261,20 @@ type ColMap = {
 
 function findHeaderRow(rows: unknown[][]): number {
   const scored: { index: number; score: number }[] = [];
-  for (let i = 0; i < Math.min(rows.length, 8); i += 1) {
+  for (let i = 0; i < Math.min(rows.length, 12); i += 1) {
     const labels = (rows[i] ?? []).map(normHeader);
     let score = 0;
     for (const label of labels) {
       if (!label) continue;
       if (
-        /^(name|names|surname|first name|last name|email|email address|centre|center|s\/n|s\/no|phone|student id|payments?)$/.test(
+        /^(name|names|surname|first name|second name|last name|email|email address|centre|center|parish|region|s\/n|s\/no|phone|student id|payments?|dob)$/.test(
           label,
         ) ||
         label.includes("email") ||
         label.includes("surname") ||
-        label.includes("phone")
+        label.includes("phone") ||
+        label.includes("parish") ||
+        label.includes("region")
       ) {
         score += 1;
       }
@@ -218,6 +290,7 @@ function mapColumns(headerRow: unknown[]): ColMap {
   const map: ColMap = {
     email: null,
     first: null,
+    middle: null,
     last: null,
     fullName: null,
     phone: null,
@@ -226,6 +299,11 @@ function mapColumns(headerRow: unknown[]): ColMap {
     graduation: null,
     studentId: null,
     centre: null,
+    region: null,
+    parish: null,
+    dob: null,
+    screenshot: null,
+    bankStatement: null,
     certificate: null,
     comments: null,
     manuals: null,
@@ -253,6 +331,11 @@ function mapColumns(headerRow: unknown[]): ColMap {
 
     if (label.includes("email")) map.email = idx;
     else if (
+      label.includes("student") &&
+      label.includes("id")
+    ) {
+      map.studentId = idx;
+    } else if (
       label === "student id" ||
       label === "studentid" ||
       (label === "id" && idx === 0)
@@ -265,6 +348,12 @@ function mapColumns(headerRow: unknown[]): ColMap {
       map.legacyRef = idx;
     } else if (label === "surname" || label === "last name" || label === "family name") {
       map.last = idx;
+    } else if (
+      label === "second name" ||
+      label === "middle name" ||
+      label === "other names"
+    ) {
+      map.middle = idx;
     } else if (
       label === "first name" ||
       label === "firstname" ||
@@ -280,13 +369,21 @@ function mapColumns(headerRow: unknown[]): ColMap {
     ) {
       map.fullName = idx;
       if (map.first == null && map.last == null) {
-        // Prefer as given-name column when a surname column also exists.
         map.first = idx;
       }
     } else if (label.includes("phone") || label.includes("mobile")) {
       map.phone = idx;
     } else if (label.includes("address")) {
       map.address = idx;
+    } else if (label === "dob" || label.includes("date of birth")) {
+      map.dob = idx;
+    } else if (label.includes("screenshot")) {
+      map.screenshot = idx;
+    } else if (
+      label.includes("bank stat") ||
+      label.includes("bank statement")
+    ) {
+      map.bankStatement = idx;
     } else if (
       label.includes("payment") ||
       label.includes("tuition") ||
@@ -295,8 +392,12 @@ function mapColumns(headerRow: unknown[]): ColMap {
       map.payments = idx;
     } else if (label.includes("graduation") || label.includes("grad fee")) {
       map.graduation = idx;
-    } else if (label === "centre" || label === "center" || label.includes("parish")) {
+    } else if (label === "centre" || label === "center") {
       map.centre = idx;
+    } else if (label.includes("parish")) {
+      map.parish = idx;
+    } else if (label.includes("region")) {
+      map.region = idx;
     } else if (label.includes("certificate")) {
       map.certificate = idx;
     } else if (label.includes("comment")) {
@@ -397,6 +498,8 @@ function parseSheetRows(
     }
 
     let centre = cellAt(row, map.centre) || null;
+    const parish = cellAt(row, map.parish) || null;
+    const region = cellAt(row, map.region) || null;
     const surnameCol = cellAt(row, map.last);
     let givenOrFull = "";
     if (map.first != null && map.last != null) {
@@ -415,13 +518,30 @@ function parseSheetRows(
 
     const stripped = stripCentreFromName(givenOrFull || surnameCol);
     if (stripped.centre && !centre) centre = stripped.centre;
+    if (parish && !centre) centre = parish;
 
-    const names = splitPersonName(
-      map.first != null && map.last != null
-        ? stripped.name
-        : stripped.name || surnameCol,
-      map.first != null && map.last != null ? surnameCol : null,
-    );
+    let names: ReturnType<typeof splitPersonName>;
+    if (map.first != null && map.last != null) {
+      const firstName = cleanPart(stripped.name || givenOrFull);
+      const lastName = cleanPart(surnameCol);
+      const middleName =
+        map.middle != null ? cleanPart(cellAt(row, map.middle)) || null : null;
+      names = {
+        firstName: firstName || lastName,
+        middleName,
+        lastName: lastName || firstName,
+        displayName: buildDisplayName(
+          firstName || lastName,
+          middleName,
+          lastName || firstName,
+        ),
+      };
+    } else {
+      names = splitPersonName(
+        stripped.name || surnameCol,
+        map.first != null && map.last != null ? surnameCol : null,
+      );
+    }
 
     if (!names.firstName || !names.lastName) {
       skipped.push(
@@ -431,15 +551,36 @@ function parseSheetRows(
     }
 
     const payment = parseMoney(cellAt(row, map.payments));
+    const screenshot = parseMoney(cellAt(row, map.screenshot));
+    const bank = parseMoney(cellAt(row, map.bankStatement));
     const grad = parseMoney(cellAt(row, map.graduation));
     const mobile = cellAt(row, map.phone) || null;
-    const studentId = cellAt(row, map.studentId) || null;
-    const legacyRef = cellAt(row, map.legacyRef) || studentId || null;
+    let studentId = cellAt(row, map.studentId) || null;
+    let legacyRef =
+      parseAppComRef(cellAt(row, map.legacyRef)) ||
+      parseAppComRef(cellAt(row, 0)) ||
+      null;
+    if (studentId && parseAppComRef(studentId)) {
+      legacyRef = legacyRef ?? parseAppComRef(studentId);
+      studentId = null;
+    }
     const addressText = cellAt(row, map.address) || null;
+    const dateOfBirth =
+      map.dob != null ? parseDob(row[map.dob]) : null;
     const certificateNote = cellAt(row, map.certificate) || null;
     const comments = cellAt(row, map.comments) || null;
     const manualsRaw = cellAt(row, map.manuals);
     const manualsSent = /sent|yes|y|all/i.test(manualsRaw);
+
+    const tuitionPaidGbp =
+      payment.amount ||
+      Math.max(screenshot.amount, bank.amount, 0);
+    const tuitionCovered = payment.covered;
+    const tuitionNote =
+      payment.note ||
+      (payment.amount > 0
+        ? null
+        : [screenshot.note, bank.note].filter(Boolean).join(" · ") || null);
 
     const exams: AlumniExamEntry[] = map.exams.map(({ label, idx }) => ({
       label,
@@ -448,7 +589,7 @@ function parseSheetRows(
     const sessions: AlumniSessionEntry[] = map.sessions.map(
       ({ label, idx }) => ({
         label,
-        date: null,
+        date: sessionDateFromLabel(label),
         present: parsePresent(row[idx]),
       }),
     );
@@ -481,11 +622,18 @@ function parseSheetRows(
           mobile: mobile || prev.mobile,
           addressText: addressText || prev.addressText,
           centre: centre || prev.centre,
+          region: region || prev.region,
+          parish: parish || prev.parish,
+          dateOfBirth: dateOfBirth || prev.dateOfBirth,
           studentId: studentId || prev.studentId,
           legacyAppComNo: legacyRef || prev.legacyAppComNo,
-          tuitionPaidGbp: Math.max(prev.tuitionPaidGbp, payment.amount),
-          tuitionCovered: prev.tuitionCovered || payment.covered,
-          tuitionNote: payment.note || prev.tuitionNote,
+          screenshotGbp: Math.max(prev.screenshotGbp, screenshot.amount),
+          bankStatementGbp: Math.max(prev.bankStatementGbp, bank.amount),
+          tuitionPaidGbp: Math.max(prev.tuitionPaidGbp, tuitionPaidGbp),
+          tuitionCovered: prev.tuitionCovered || tuitionCovered,
+          tuitionNote: tuitionNote || prev.tuitionNote,
+          middleName: names.middleName || prev.middleName,
+          displayName: names.displayName || prev.displayName,
           graduationPaidGbp: Math.max(prev.graduationPaidGbp, grad.amount),
           certificateNote: certificateNote || prev.certificateNote,
           comments: comments || prev.comments,
@@ -527,11 +675,16 @@ function parseSheetRows(
       mobile,
       addressText,
       centre,
+      region: region || null,
+      parish: parish || null,
+      dateOfBirth,
       studentId,
       legacyAppComNo: legacyRef,
-      tuitionPaidGbp: payment.amount,
-      tuitionCovered: payment.covered,
-      tuitionNote: payment.note,
+      screenshotGbp: screenshot.amount,
+      bankStatementGbp: bank.amount,
+      tuitionPaidGbp,
+      tuitionCovered,
+      tuitionNote,
       graduationPaidGbp: grad.amount,
       certificateNote,
       comments,

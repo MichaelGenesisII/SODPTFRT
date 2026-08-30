@@ -24,8 +24,13 @@ export type ParsedAlumniRow = {
   mobile: string | null;
   addressText: string | null;
   centre: string | null;
+  region: string | null;
+  parish: string | null;
+  dateOfBirth: string | null;
   studentId: string | null;
   legacyAppComNo: string | null;
+  screenshotGbp: number;
+  bankStatementGbp: number;
   tuitionPaidGbp: number;
   tuitionCovered: boolean;
   tuitionNote: string | null;
@@ -80,8 +85,13 @@ export type AlumniLegacyPerson = {
   mobile: string | null;
   address_text: string | null;
   centre: string | null;
+  region: string | null;
+  parish: string | null;
+  date_of_birth: string | null;
   student_id: string | null;
   legacy_ref: string | null;
+  screenshot_gbp: number;
+  bank_statement_gbp: number;
   tuition_paid_gbp: number;
   tuition_covered: boolean;
   tuition_note: string | null;
@@ -92,6 +102,7 @@ export type AlumniLegacyPerson = {
   exams: AlumniExamEntry[];
   sessions: AlumniSessionEntry[];
   cohort_id: string | null;
+  cohort_label?: string | null;
   activated_user_id: string | null;
   email_assigned_at: string | null;
   created_at: string;

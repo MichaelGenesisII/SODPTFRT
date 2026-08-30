@@ -5,14 +5,25 @@ import {
   catalogEntryForSlug,
   type EmailTemplateSlug,
 } from "@/lib/email/template-catalog";
-import { isNationalAdmin, requireSessionAdmin } from "@/lib/admin/auth";
+import { getSessionAdmin, isNationalAdmin, requireSessionAdmin } from "@/lib/admin/auth";
 import { publicActionMessage } from "@/lib/safe-action-message";
+import {
+  getEmailTemplateOverride,
+  type EmailTemplateOverride,
+} from "@/lib/email/template-overrides";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 
 export type EmailTemplateActionResult = {
   ok: boolean;
   message: string;
 };
+
+function revalidateEmailTemplates(slug?: EmailTemplateSlug) {
+  revalidatePath("/admin/email-templates");
+  if (slug) {
+    revalidatePath(`/admin/email-templates/${slug}`);
+  }
+}
 
 function unauthorized(): EmailTemplateActionResult {
   return { ok: false, message: "Unauthorized." };
@@ -28,6 +39,15 @@ async function requireNational(): Promise<EmailTemplateActionResult | null> {
 
 function isSlug(value: string): value is EmailTemplateSlug {
   return Boolean(catalogEntryForSlug(value));
+}
+
+export async function getAdminEmailTemplate(
+  slugRaw: string,
+): Promise<EmailTemplateOverride | null> {
+  const profile = await getSessionAdmin();
+  if (!profile || !isNationalAdmin(profile)) return null;
+  if (!isSlug(slugRaw)) return null;
+  return getEmailTemplateOverride(slugRaw);
 }
 
 export async function saveEmailTemplateOverride(input: {
@@ -95,7 +115,7 @@ export async function saveEmailTemplateOverride(input: {
       };
     }
 
-    revalidatePath("/admin/email-templates");
+    revalidateEmailTemplates(input.slug);
     return { ok: true, message: `Template saved as v${version}.` };
   } catch (error) {
     console.error("[email-templates save]", error);
@@ -131,7 +151,7 @@ export async function restoreEmailTemplateOverride(
       };
     }
 
-    revalidatePath("/admin/email-templates");
+    revalidateEmailTemplates(slugRaw);
     return { ok: true, message: "Restored to code default." };
   } catch (error) {
     console.error("[email-templates restore]", error);

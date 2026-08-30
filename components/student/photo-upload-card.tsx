@@ -8,6 +8,7 @@ import {
   uploadPassportPhoto,
 } from "@/app/student/photos/actions";
 import { ImageFileField } from "@/components/student/image-file-field";
+import { DeskConfirmModal } from "@/components/ui/desk-confirm-modal";
 import { DeskLoaderOverlay } from "@/components/ui/desk-loader";
 import { useToast } from "@/components/ui/toast";
 
@@ -35,6 +36,9 @@ export function PhotoUploadCard({
   const busy = pending || Boolean(busyLabel);
   const [preview, setPreview] = useState<string | null>(null);
   const [replacing, setReplacing] = useState(false);
+  const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
+  const [confirmUploadOpen, setConfirmUploadOpen] = useState(false);
+  const [pendingForm, setPendingForm] = useState<HTMLFormElement | null>(null);
   const [fileKey, setFileKey] = useState(0);
 
   const isPassport = kind === "passport";
@@ -54,7 +58,15 @@ export function PhotoUploadCard({
 
   function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const form = event.currentTarget;
+    if (isPassport && !alreadyUploaded) {
+      setPendingForm(event.currentTarget);
+      setConfirmUploadOpen(true);
+      return;
+    }
+    runUpload(event.currentTarget);
+  }
+
+  function runUpload(form: HTMLFormElement) {
     const formData = new FormData(form);
     setBusyLabel(
       isPassport ? "Uploading passport photo…" : "Uploading selfie…",
@@ -72,6 +84,8 @@ export function PhotoUploadCard({
         form.reset();
         setPreview(null);
         setReplacing(false);
+        setConfirmUploadOpen(false);
+        setPendingForm(null);
         setFileKey((k) => k + 1);
         router.refresh();
       } finally {
@@ -91,6 +105,7 @@ export function PhotoUploadCard({
           return;
         }
         success(result.message);
+        setConfirmDeleteOpen(false);
         router.refresh();
       } finally {
         setBusyLabel(null);
@@ -158,16 +173,33 @@ export function PhotoUploadCard({
               <button
                 type="button"
                 disabled={busy}
-                onClick={onDelete}
+                onClick={() => setConfirmDeleteOpen(true)}
                 className="border border-stone px-3 py-2 text-sm font-medium text-ink/60 hover:border-red-800/40 hover:text-red-900 disabled:opacity-60"
               >
-                {busy && busyLabel?.startsWith("Removing")
-                  ? "Removing…"
-                  : "Delete"}
+                Delete
               </button>
             ) : null}
           </div>
         </div>
+
+        <DeskConfirmModal
+          open={confirmDeleteOpen}
+          onClose={() => !busy && setConfirmDeleteOpen(false)}
+          onConfirm={onDelete}
+          eyebrow="Your portrait"
+          title="Remove graduation selfie?"
+          body={
+            <>
+              Your photo will disappear from the student gallery until you upload
+              a new one. You can upload again anytime after graduation fees are
+              settled.
+            </>
+          }
+          confirmLabel="Remove selfie"
+          destructive
+          busy={busy}
+          busyLabel={busyLabel ?? "Removing selfie…"}
+        />
       </div>
     );
   }
@@ -239,6 +271,26 @@ export function PhotoUploadCard({
           ) : null}
         </div>
       </form>
+
+      {isPassport && !alreadyUploaded ? (
+        <DeskConfirmModal
+          open={confirmUploadOpen}
+          onClose={() => !busy && setConfirmUploadOpen(false)}
+          onConfirm={() => pendingForm && runUpload(pendingForm)}
+          eyebrow="Passport photograph"
+          title="Upload this passport photo?"
+          body={
+            <>
+              This becomes your student account image and cannot be changed
+              later. Contact the Listening Desk only if there is a serious
+              problem.
+            </>
+          }
+          confirmLabel="Upload passport photo"
+          busy={busy}
+          busyLabel={busyLabel ?? "Uploading passport photo…"}
+        />
+      ) : null}
     </div>
   );
 }

@@ -173,9 +173,23 @@ export function TicketsManager({
   const [emailMessage, setEmailMessage] = useState("");
   const [inboxOpen, setInboxOpen] = useState(true);
   const [chatOpen, setChatOpen] = useState(false);
-  const [pendingDelete, setPendingDelete] = useState<TicketWithMeta | null>(
-    null,
-  );
+  const [pendingConfirm, setPendingConfirm] = useState<
+    | { kind: "delete"; ticket: TicketWithMeta }
+    | {
+        kind: "sendEmail";
+        ticket: TicketWithMeta;
+        subject: string;
+        message: string;
+      }
+    | { kind: "sendReply"; ticket: TicketWithMeta; body: string }
+    | { kind: "status"; ticket: TicketWithMeta; status: TicketStatus }
+    | {
+        kind: "discardDrafts";
+        nextId: string | null;
+        closeSheet?: boolean;
+      }
+    | null
+  >(null);
   const [page, setPage] = useState(1);
 
   useEffect(() => {
@@ -333,20 +347,43 @@ export function TicketsManager({
 
   const closeSheet = useCallback(() => setSheetOpen(false), []);
 
+  const hasDrafts =
+    noteDraft.trim().length > 0 ||
+    emailMessage.trim().length > 0 ||
+    (emailSubject.trim().length > 0 &&
+      selected != null &&
+      emailSubject.trim() !==
+        defaultTicketEmailSubject(selected.topic, selected.reference));
+
+  function clearDrafts() {
+    setNoteDraft("");
+    setEmailMessage("");
+    if (selected) {
+      setEmailSubject(
+        defaultTicketEmailSubject(selected.topic, selected.reference),
+      );
+    } else {
+      setEmailSubject("");
+    }
+  }
+
   useEffect(() => {
-    const locked = (sheetOpen && !isDesktop) || Boolean(pendingDelete);
+    const locked = (sheetOpen && !isDesktop) || Boolean(pendingConfirm);
     if (!locked) return;
     document.body.style.overflow = "hidden";
     return () => {
       document.body.style.overflow = "";
     };
-  }, [sheetOpen, isDesktop, pendingDelete]);
+  }, [sheetOpen, isDesktop, pendingConfirm]);
 
   useEffect(() => {
     function onKey(event: KeyboardEvent) {
       if (event.key === "Escape") {
-        if (pendingDelete) setPendingDelete(null);
-        else if (sheetOpen) closeSheet();
+        if (pendingConfirm) {
+          if (!busy) setPendingConfirm(null);
+          return;
+        }
+        if (sheetOpen) closeSheet();
         return;
       }
 
@@ -357,7 +394,7 @@ export function TicketsManager({
       ) {
         return;
       }
-      if (pendingDelete || filtered.length === 0) return;
+      if (pendingConfirm || filtered.length === 0) return;
 
       const isDown = event.key === "ArrowDown" || event.key === "j";
       const isUp = event.key === "ArrowUp" || event.key === "k";
@@ -368,12 +405,21 @@ export function TicketsManager({
       const nextIndex = isDown
         ? Math.min(filtered.length - 1, index + 1)
         : Math.max(0, index === -1 ? 0 : index - 1);
-      setSelectedId(filtered[nextIndex]?.id ?? null);
+      const nextId = filtered[nextIndex]?.id;
+      if (nextId) openTicket(nextId);
     }
 
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [filtered, selected, pendingDelete, sheetOpen, closeSheet]);
+  }, [
+    filtered,
+    selected,
+    pendingConfirm,
+    sheetOpen,
+    closeSheet,
+    busy,
+    hasDrafts,
+  ]);
 
   function run(
     action: () => Promise<TicketActionResult>,
@@ -386,6 +432,7 @@ export function TicketsManager({
         const next = await action();
         if (next.ok) {
           if (!options?.quiet) success(next.message, "Desk");
+          setPendingConfirm(null);
           router.refresh();
         } else {
           error(next.message, "Desk");
@@ -397,6 +444,14 @@ export function TicketsManager({
   }
 
   function openTicket(id: string) {
+    if (
+      hasDrafts &&
+      selected?.id &&
+      selected.id !== id
+    ) {
+      setPendingConfirm({ kind: "discardDrafts", nextId: id });
+      return;
+    }
     setSelectedId(id);
     if (!isDesktop) setSheetOpen(true);
     else {
@@ -415,12 +470,18 @@ export function TicketsManager({
     const body = noteDraft.trim();
     if (!body) return;
     const isInternal = tab === "margin";
-    run(async () => {
-      const result = await addTicketNote(selected.id, body, isInternal);
-      if (result.ok) setNoteDraft("");
-      return result;
-    }, {
-      label: isInternal ? "Saving margin note…" : "Sending reply…",
+    if (isInternal) {
+      run(async () => {
+        const result = await addTicketNote(selected.id, body, true);
+        if (result.ok) setNoteDraft("");
+        return result;
+      }, { label: "Saving margin note…" });
+      return;
+    }
+    setPendingConfirm({
+      kind: "sendReply",
+      ticket: selected,
+      body,
     });
   }
 
@@ -430,16 +491,93 @@ export function TicketsManager({
     const subject = emailSubject.trim();
     const message = emailMessage.trim();
     if (!subject || !message) return;
-    run(async () => {
-      const result = await sendTicketEmailReply(selected.id, subject, message);
-      if (result.ok) {
-        setEmailMessage("");
-        setEmailSubject(
-          defaultTicketEmailSubject(selected.topic, selected.reference),
-        );
+    setPendingConfirm({
+      kind: "sendEmail",
+      ticket: selected,
+      subject,
+      message,
+    });
+  }
+
+  function requestStatus(status: TicketStatus) {
+    if (!selected) return;
+    if (status === "resolved" || status === "closed") {
+      setPendingConfirm({ kind: "status", ticket: selected, status });
+      return;
+    }
+    run(() => updateTicketStatus(selected.id, status), {
+      label: `Moving to ${STATUS_META[status].label}…`,
+    });
+  }
+
+  function confirmPendingAction() {
+    if (!pendingConfirm || busy) return;
+
+    switch (pendingConfirm.kind) {
+      case "delete": {
+        const id = pendingConfirm.ticket.id;
+        run(async () => {
+          const result = await deleteTicket(id);
+          if (result.ok) {
+            setSheetOpen(false);
+            if (selectedId === id) setSelectedId(null);
+          }
+          return result;
+        }, { label: "Removing from desk…" });
+        return;
       }
-      return result;
-    }, { label: "Sending NoReply email…" });
+      case "sendEmail": {
+        const { ticket, subject, message } = pendingConfirm;
+        run(async () => {
+          const result = await sendTicketEmailReply(
+            ticket.id,
+            subject,
+            message,
+          );
+          if (result.ok) {
+            setEmailMessage("");
+            setEmailSubject(
+              defaultTicketEmailSubject(ticket.topic, ticket.reference),
+            );
+          }
+          return result;
+        }, { label: "Sending NoReply email…" });
+        return;
+      }
+      case "sendReply": {
+        const { ticket, body } = pendingConfirm;
+        run(async () => {
+          const result = await addTicketNote(ticket.id, body, false);
+          if (result.ok) setNoteDraft("");
+          return result;
+        }, { label: "Sending reply…" });
+        return;
+      }
+      case "status": {
+        const { ticket, status } = pendingConfirm;
+        run(() => updateTicketStatus(ticket.id, status), {
+          label: `Moving to ${STATUS_META[status].label}…`,
+        });
+        return;
+      }
+      case "discardDrafts": {
+        const { nextId, closeSheet: shouldClose } = pendingConfirm;
+        clearDrafts();
+        setPendingConfirm(null);
+        if (shouldClose) {
+          setSheetOpen(false);
+          return;
+        }
+        if (nextId) {
+          setSelectedId(nextId);
+          if (!isDesktop) setSheetOpen(true);
+          else {
+            setChatOpen(true);
+            window.localStorage.setItem(DESK_CHAT_KEY, "1");
+          }
+        }
+      }
+    }
   }
 
   async function copyValue(value: string, label: string) {
@@ -490,11 +628,7 @@ export function TicketsManager({
       emailMessage={emailMessage}
       onEmailMessage={setEmailMessage}
       onSubmitEmail={onSubmitEmail}
-      onStatus={(status) =>
-        run(() => updateTicketStatus(selected.id, status), {
-          label: `Moving to ${STATUS_META[status].label}…`,
-        })
-      }
+      onStatus={requestStatus}
       onPriority={() =>
         run(
           () =>
@@ -516,7 +650,9 @@ export function TicketsManager({
       onRelease={() =>
         run(() => releaseTicket(selected.id), { label: "Releasing note…" })
       }
-      onDelete={() => setPendingDelete(selected)}
+      onDelete={() =>
+        setPendingConfirm({ kind: "delete", ticket: selected })
+      }
       onCopy={copyValue}
       variant={isDesktop ? "desktop" : "sheet"}
     />
@@ -609,7 +745,10 @@ export function TicketsManager({
 
   return (
     <div className="space-y-3 sm:space-y-4">
-      <section className="grid grid-cols-2 gap-2 sm:gap-3.5">
+      <section
+        data-tour="tickets-stats"
+        className="grid grid-cols-2 gap-2 sm:gap-3.5"
+      >
         <DeskStatTile
           label="Inbox"
           value={counts.open}
@@ -623,6 +762,7 @@ export function TicketsManager({
       </section>
 
       <nav
+        data-tour="tickets-tabs"
         className="flex gap-1 overflow-x-auto border-b border-stone pb-px"
         aria-label="Listening Desk views"
       >
@@ -660,7 +800,10 @@ export function TicketsManager({
         <>
       {/* Command rail */}
       <div className="sticky top-[4.3rem] z-30 -mx-4 border-b border-stone bg-mist/95 px-4 py-2 backdrop-blur supports-[backdrop-filter]:bg-mist/80 sm:-mx-6 sm:px-6 lg:static lg:mx-0 lg:border-0 lg:bg-transparent lg:p-0 lg:backdrop-blur-none">
-        <div className="flex items-center gap-2">
+        <div
+          data-tour="tickets-lanes"
+          className="flex items-center gap-2"
+        >
           <div className="-mx-1 flex flex-1 gap-1 overflow-x-auto px-1 pb-0.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
             {LANES.map((item) => {
               const active = lane === item.id;
@@ -923,7 +1066,17 @@ export function TicketsManager({
           <div className="flex shrink-0 items-center gap-2.5 border-b border-stone px-3 py-2.5">
             <button
               type="button"
-              onClick={closeSheet}
+              onClick={() => {
+                if (hasDrafts) {
+                  setPendingConfirm({
+                    kind: "discardDrafts",
+                    nextId: null,
+                    closeSheet: true,
+                  });
+                  return;
+                }
+                closeSheet();
+              }}
               className="inline-flex h-9 w-9 shrink-0 items-center justify-center border border-stone text-pine"
               aria-label="Back to inbox"
             >
@@ -952,60 +1105,153 @@ export function TicketsManager({
         </div>
       ) : null}
 
-      {pendingDelete ? (
-        <div className="fixed inset-0 z-[80] flex items-end justify-center bg-ink/45 p-4 backdrop-blur-[2px] sm:items-center">
+      {pendingConfirm ? (
+        <div
+          className="fixed inset-0 z-[90] flex items-end justify-center bg-ink/45 p-4 sm:items-center"
+          role="presentation"
+          onClick={() => !busy && setPendingConfirm(null)}
+        >
           <div
             role="dialog"
             aria-modal="true"
-            aria-labelledby="delete-ticket-title"
-            className="animate-sheet-up w-full max-w-md border border-stone bg-mist p-5 shadow-xl sm:p-6"
+            aria-labelledby="desk-confirm-title"
+            className="relative w-full max-w-md border border-stone bg-mist p-6 text-ink shadow-[0_16px_48px_rgba(20,53,44,0.2)] sm:p-7"
+            onClick={(event) => event.stopPropagation()}
           >
-            <p className="text-[0.6rem] font-medium uppercase tracking-[0.16em] text-celadon">
-              Remove from desk
-            </p>
-            <h3
-              id="delete-ticket-title"
-              className="mt-1.5 font-display text-xl text-pine sm:text-2xl"
-            >
-              Delete {pendingDelete.reference}?
-            </h3>
-            <p className="mt-1.5 text-sm leading-relaxed text-ink/65">
-              This permanently removes the note from {pendingDelete.name} and
-              any staff margin notes.
-            </p>
-            <div className="mt-5 flex flex-wrap justify-end gap-2">
-              <button
-                type="button"
-                onClick={() => setPendingDelete(null)}
-                disabled={busy}
-                className="border border-stone px-3.5 py-2 text-sm text-ink/70 disabled:opacity-50"
-              >
-                Keep
-              </button>
-              <button
-                type="button"
-                disabled={busy}
-                onClick={() => {
-                  const id = pendingDelete.id;
-                  run(async () => {
-                    const result = await deleteTicket(id);
-                    if (result.ok) {
-                      setPendingDelete(null);
-                      setSheetOpen(false);
-                      if (selectedId === id) setSelectedId(null);
+            <DeskLoaderOverlay
+              active={busy}
+              label={busyLabel ?? "Working…"}
+            />
+            {(() => {
+              const copy =
+                pendingConfirm.kind === "delete"
+                  ? {
+                      eyebrow: "Remove from desk",
+                      title: `Delete ${pendingConfirm.ticket.reference}?`,
+                      body: (
+                        <>
+                          This permanently removes the note from{" "}
+                          <span className="font-medium text-ink">
+                            {pendingConfirm.ticket.name}
+                          </span>{" "}
+                          and any staff margin notes.
+                        </>
+                      ),
+                      confirmLabel: "Delete forever",
+                      destructive: true,
                     }
-                    return result;
-                  }, { label: "Removing from desk…" });
-                }}
-                className="inline-flex min-h-[2.5rem] min-w-[8.5rem] items-center justify-center bg-[#3a1f1f] px-3.5 py-2 text-sm font-medium text-red-50 disabled:opacity-60"
-              >
-                {busy ? (
-                  <DeskLoader label="Deleting…" tone="mist" />
-                ) : (
-                  "Delete forever"
-                )}
-              </button>
-            </div>
+                  : pendingConfirm.kind === "sendEmail"
+                    ? {
+                        eyebrow: "Send email",
+                        title: "Send this NoReply email?",
+                        body: (
+                          <>
+                            Emails{" "}
+                            <span className="font-medium text-ink">
+                              {pendingConfirm.ticket.email}
+                            </span>
+                            . Subject:{" "}
+                            <span className="font-medium text-ink">
+                              {pendingConfirm.subject}
+                            </span>
+                          </>
+                        ),
+                        confirmLabel: "Send email",
+                        destructive: false,
+                      }
+                    : pendingConfirm.kind === "sendReply"
+                      ? {
+                          eyebrow: "Portal reply",
+                          title: "Send this reply?",
+                          body: (
+                            <>
+                              Posts to the student portal thread for{" "}
+                              <span className="font-medium text-ink">
+                                {pendingConfirm.ticket.name}
+                              </span>
+                              . They will see it in Support.
+                            </>
+                          ),
+                          confirmLabel: "Send reply",
+                          destructive: false,
+                        }
+                      : pendingConfirm.kind === "status"
+                        ? {
+                            eyebrow: "Move on the path",
+                            title: `Move to ${STATUS_META[pendingConfirm.status].label}?`,
+                            body: (
+                              <>
+                                {STATUS_META[pendingConfirm.status].hint}. This
+                                settles the note for{" "}
+                                <span className="font-medium text-ink">
+                                  {pendingConfirm.ticket.name}
+                                </span>
+                                .
+                              </>
+                            ),
+                            confirmLabel: `Move to ${STATUS_META[pendingConfirm.status].label}`,
+                            destructive: false,
+                          }
+                        : {
+                            eyebrow: "Unsaved drafts",
+                            title: "Leave without sending?",
+                            body: (
+                              <>
+                                You have an unsaved reply or email draft. Leaving
+                                now discards it.
+                              </>
+                            ),
+                            confirmLabel: "Discard drafts",
+                            destructive: false,
+                          };
+
+              return (
+                <>
+                  <p
+                    className={`text-[0.65rem] font-medium uppercase tracking-[0.16em] ${
+                      copy.destructive ? "text-red-800/80" : "text-celadon"
+                    }`}
+                  >
+                    {copy.eyebrow}
+                  </p>
+                  <h3
+                    id="desk-confirm-title"
+                    className="mt-3 font-display text-2xl tracking-[-0.02em] text-pine"
+                  >
+                    {copy.title}
+                  </h3>
+                  <p className="mt-3 text-sm leading-relaxed text-ink/70">
+                    {copy.body}
+                  </p>
+                  <div className="mt-7 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() => setPendingConfirm(null)}
+                      className="border border-pine/25 px-4 py-2.5 text-sm font-medium text-pine transition-colors hover:border-pine disabled:opacity-60"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={confirmPendingAction}
+                      className={`inline-flex min-h-[2.5rem] min-w-[9rem] items-center justify-center px-4 py-2.5 text-sm font-medium text-mist transition-colors disabled:opacity-60 ${
+                        copy.destructive
+                          ? "bg-[#5c2a2a] hover:bg-red-900"
+                          : "bg-pine hover:bg-celadon"
+                      }`}
+                    >
+                      {busy ? (
+                        <DeskLoader label="Working…" tone="mist" />
+                      ) : (
+                        copy.confirmLabel
+                      )}
+                    </button>
+                  </div>
+                </>
+              );
+            })()}
           </div>
         </div>
       ) : null}

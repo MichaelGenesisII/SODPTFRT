@@ -1,12 +1,16 @@
 "use client";
 
 import Link from "next/link";
-import { useState, type ReactNode } from "react";
+import { useState, useEffect, type ReactNode } from "react";
 import {
   ATTEMPT_STATUS_META,
   type Exam,
   type ExamAttemptStatus,
 } from "@/lib/exams/types";
+import {
+  SOD_STUDENT_TOUR_TAB_EVENT,
+  type StudentTourTabPayload,
+} from "@/lib/student/portal-tour-steps";
 
 type StudentExamRow = Exam & {
   attempt_status?: string | null;
@@ -60,6 +64,17 @@ export function StudentExamsClient({ exams }: { exams: StudentExamRow[] }) {
   const [tab, setTab] = useState<ExamsTab>(defaultTab);
   const [openId, setOpenId] = useState<string | null>(null);
 
+  useEffect(() => {
+    function onTourTab(event: Event) {
+      const detail = (event as CustomEvent<StudentTourTabPayload>).detail;
+      if (detail?.page !== "exams") return;
+      setTab(detail.tab);
+    }
+    window.addEventListener(SOD_STUDENT_TOUR_TAB_EVENT, onTourTab);
+    return () =>
+      window.removeEventListener(SOD_STUDENT_TOUR_TAB_EVENT, onTourTab);
+  }, []);
+
   const tabs: {
     id: ExamsTab;
     label: string;
@@ -90,7 +105,10 @@ export function StudentExamsClient({ exams }: { exams: StudentExamRow[] }) {
 
   return (
     <div className="space-y-4 sm:space-y-5">
-      <div className="grid grid-cols-3 gap-px border border-stone bg-stone sm:gap-0 sm:bg-mist/50">
+      <div
+        className="grid grid-cols-3 gap-px border border-stone bg-stone sm:gap-0 sm:bg-mist/50"
+        data-tour="student-exams-stats"
+      >
         <MiniStat label="Available" value={String(available.length)} />
         <MiniStat label="In progress" value={String(inProgress.length)} />
         <MiniStat label="Done" value={String(done.length)} />
@@ -99,6 +117,7 @@ export function StudentExamsClient({ exams }: { exams: StudentExamRow[] }) {
       <nav
         className="grid grid-cols-3 border border-stone bg-mist/40 sm:flex sm:gap-1 sm:overflow-x-auto sm:border-0 sm:border-b sm:bg-transparent sm:pb-px [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
         aria-label="Exams sections"
+        data-tour="student-exams-tabs"
       >
         {tabs.map((item) => {
           const isActive = tab === item.id;

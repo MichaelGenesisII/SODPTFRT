@@ -1,10 +1,11 @@
 import type { Metadata } from "next";
 import { redirect } from "next/navigation";
-import { StudentDashboard } from "@/components/student/student-dashboard";
+import { StudentDashboard, StudentDashboardRefresh } from "@/components/student/student-dashboard";
 import { MAX_STUDENT_LIVE_ANNOUNCEMENTS } from "@/lib/announcements";
 import { fetchStudentAnnouncements } from "@/lib/announcements-server";
 import {
   hasTuitionInstallmentPaid,
+  TUITION_FEE,
   type FeePaymentStatus,
 } from "@/lib/payments/fees";
 import { getFeePayment } from "@/lib/payments/service";
@@ -35,6 +36,7 @@ export default async function StudentPortalPage() {
   let enrolment: Awaited<ReturnType<typeof getStudentEnrolment>> = null;
   let tuitionFeeStatus: FeePaymentStatus | null = null;
   let tuitionPaidGbp = 0;
+  let tuitionDueGbp = TUITION_FEE.amountGbp;
   let passportUnlocked = false;
   let loadError: string | null = null;
   let notices: Awaited<ReturnType<typeof fetchStudentAnnouncements>> = [];
@@ -68,6 +70,7 @@ export default async function StudentPortalPage() {
       passportUnlocked = hasTuitionInstallmentPaid(fee);
       tuitionFeeStatus = fee.status;
       tuitionPaidGbp = fee.amount_paid_gbp ?? 0;
+      tuitionDueGbp = fee.amount_due_gbp ?? TUITION_FEE.amountGbp;
     } else if (enrolment?.payment_status === "paid") {
       // Fee rows may not exist yet — fall back to enrolment payment flag.
       passportUnlocked = true;
@@ -84,15 +87,18 @@ export default async function StudentPortalPage() {
   }
 
   return (
-    <StudentDashboard
-      profile={profile}
-      enrolment={enrolment}
-      tuitionFeeStatus={tuitionFeeStatus}
-      tuitionPaidGbp={tuitionPaidGbp}
-      passportUnlocked={passportUnlocked}
-      notices={notices}
-      noticesError={noticesError}
-      loadError={loadError}
-    />
+    <StudentDashboardRefresh>
+      <StudentDashboard
+        profile={profile}
+        enrolment={enrolment}
+        tuitionFeeStatus={tuitionFeeStatus}
+        tuitionPaidGbp={tuitionPaidGbp}
+        tuitionDueGbp={tuitionDueGbp}
+        passportUnlocked={passportUnlocked}
+        notices={notices}
+        noticesError={noticesError}
+        loadError={loadError}
+      />
+    </StudentDashboardRefresh>
   );
 }

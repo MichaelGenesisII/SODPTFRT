@@ -160,12 +160,19 @@ async function safeLeave(client: ZoomEmbeddedClient | null) {
  * Embeds Zoom Meeting SDK (component view) via Zoom's CDN + vendor scripts.
  * npm `@zoom/meetingsdk` peers React 18 and conflicts with this app's React 19,
  * so CDN remains the supported path. External Zoom app links stay the fallback.
+ *
+ * Note: Zoom's API is always `client.join(...)`. Hosting is JWT role 1 + host ZAK,
+ * not a separate "create host" call.
  */
 export function InPortalZoom({ session, onLeave }: Props) {
   const rootRef = useRef<HTMLDivElement>(null);
   const clientRef = useRef<ZoomEmbeddedClient | null>(null);
   const [status, setStatus] = useState<"loading" | "live" | "error">("loading");
-  const [message, setMessage] = useState("Opening Zoom in the portal…");
+  const [message, setMessage] = useState(
+    session.role === 1
+      ? "Starting meeting as host…"
+      : "Joining the meeting…",
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -180,7 +187,14 @@ export function InPortalZoom({ session, onLeave }: Props) {
         patchJsMedia: true,
       });
 
+      if (session.role === 1 && !session.zak) {
+        throw new Error(
+          "Host credentials are missing. Use Host in Zoom app instead.",
+        );
+      }
+
       // sdkKey removed from joinOptions since Meeting SDK v4 — key lives in the JWT.
+      // Hosting still uses join(); role 1 + zak starts the meeting as host.
       await client.join({
         signature: session.signature,
         meetingNumber: session.meetingNumber,
@@ -193,6 +207,13 @@ export function InPortalZoom({ session, onLeave }: Props) {
 
     async function start() {
       try {
+        setStatus("loading");
+        setMessage(
+          session.role === 1
+            ? "Starting meeting as host…"
+            : "Joining the meeting…",
+        );
+
         const ZoomEmbed = await loadZoomEmbeddedScript();
         if (cancelled || !rootRef.current) return;
 
@@ -228,10 +249,14 @@ export function InPortalZoom({ session, onLeave }: Props) {
         const detail = formatZoomEmbedError(error);
         console.error("[in-portal-zoom]", detail, error);
         setStatus("error");
+        const missingMeeting =
+          /meeting does not exist|3610|3001/i.test(detail);
         setMessage(
           /already has other meetings/i.test(detail)
             ? "Another Zoom session is still open in this browser. Leave it or close other portal Zoom tabs, then try again — or use Host / Join in the Zoom app."
-            : `${detail} You can use the Zoom app link instead.`,
+            : missingMeeting
+              ? "This Zoom meeting is no longer available. Try Host in portal again (it can refresh the meeting), or use Host in Zoom app."
+              : `${detail} You can use the Zoom app link instead.`,
         );
       }
     }

@@ -7,6 +7,7 @@ import { useEffect, useState, type MouseEvent, type ReactNode } from "react";
 import { signOutStudent } from "@/app/student/actions";
 import { useStudentSupportLive } from "@/components/student/support-live";
 import { NavProgress } from "@/components/ui/nav-progress";
+import { SOD_STUDENT_TOUR_EXPAND_EVENT } from "@/lib/student/portal-tour-steps";
 import {
   studentDisplayName,
   type StudentProfile,
@@ -341,6 +342,19 @@ export function StudentShell({ profile, children }: StudentShellProps) {
   }, [desktopOpen]);
 
   useEffect(() => {
+    function onTourExpand(event: Event) {
+      const detail = (event as CustomEvent<{ groupId?: string }>).detail;
+      setDesktopOpen(true);
+      setMobileOpen(true);
+      const groupId = detail?.groupId;
+      if (groupId) setOpenGroupId(groupId);
+    }
+    window.addEventListener(SOD_STUDENT_TOUR_EXPAND_EVENT, onTourExpand);
+    return () =>
+      window.removeEventListener(SOD_STUDENT_TOUR_EXPAND_EVENT, onTourExpand);
+  }, []);
+
+  useEffect(() => {
     const match = nav.find(
       (entry) =>
         entry.kind === "group" &&
@@ -572,6 +586,7 @@ export function StudentShell({ profile, children }: StudentShellProps) {
                   key={entry.id}
                   href={entry.href}
                   prefetch={false}
+                  data-tour={`student-nav-${entry.id}`}
                   onClick={(event) => onNavClick(event, entry)}
                   tabIndex={desktopOpen ? undefined : -1}
                   className={`group relative flex animate-slide-in-left items-start gap-3 px-3 py-3.5 transition-colors duration-300 ${
@@ -632,6 +647,7 @@ export function StudentShell({ profile, children }: StudentShellProps) {
               >
                 <button
                   type="button"
+                  data-tour={`student-nav-${entry.id}`}
                   onClick={() => toggleGroup(entry.id)}
                   tabIndex={desktopOpen ? undefined : -1}
                   aria-expanded={open}

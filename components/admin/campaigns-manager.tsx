@@ -1,183 +1,137 @@
 "use client";
 
-import { useMemo, useState, useTransition, useEffect } from "react";
-import { sendStudentCampaign } from "@/app/admin/campaigns/actions";
-import { DeskAttachmentPicker } from "@/components/admin/desk-attachment-picker";
+import { useEffect, useMemo, useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
+import {
+  createCampaign,
+  deleteCampaign,
+  type AdminCampaignListItem,
+} from "@/app/admin/campaigns/actions";
 import { DeskLoader, DeskLoaderOverlay } from "@/components/ui/desk-loader";
 import { useToast } from "@/components/ui/toast";
-import { buildCampaignPreview } from "@/lib/email/campaign-preview";
 import {
-  CAMPAIGN_MAX_ATTACHMENTS,
-  type CampaignRecipient,
-} from "@/lib/email/campaigns";
-import { isNationalAdmin, type AdminProfile } from "@/lib/admin/profile";
-import { formatBatchLabel, type Batch, type Parish } from "@/lib/parishes";
-import { formatAttachmentSize } from "@/lib/desk-attachments";
+  campaignListLabel,
+  campaignStatusLabel,
+  formatCampaignUpdated,
+} from "@/lib/admin/campaign-records";
 import { DeskPagination } from "@/lib/ui/desk-pagination";
 
-const CAMPAIGN_PAGE_SIZE = 8;
+const PAGE_SIZE = 10;
 
-const fieldClass =
-  "mt-1 w-full border border-stone bg-white/70 px-3 py-2 text-sm text-ink outline-none focus:border-pine";
-
-type CampaignsManagerProps = {
-  recipients: CampaignRecipient[];
-  profile: AdminProfile;
-  parishes: Pick<Parish, "id" | "name">[];
-  batches: Pick<Batch, "id" | "parish_id" | "name" | "year">[];
-};
+function TrashIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      className={className}
+      aria-hidden
+    >
+      <path d="M2.5 4.5h11M6 4.5V3a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1v1.5M6.5 7v5M9.5 7v5M4 4.5l.75 8a1 1 0 0 0 1 .9h4.5a1 1 0 0 0 1-.9l.75-8" />
+    </svg>
+  );
+}
 
 export function CampaignsManager({
-  recipients,
-  profile,
-  parishes,
-  batches,
-}: CampaignsManagerProps) {
-  const { success, error, info } = useToast();
+  campaigns,
+}: {
+  campaigns: AdminCampaignListItem[];
+}) {
+  const router = useRouter();
+  const { success, error } = useToast();
   const [pending, startTransition] = useTransition();
   const [busyLabel, setBusyLabel] = useState<string | null>(null);
   const busy = pending || Boolean(busyLabel);
-  const national = isNationalAdmin(profile);
-
-  const [parishFilter, setParishFilter] = useState(
-    national ? "" : profile.parish_id ?? "",
-  );
-  const [batchFilter, setBatchFilter] = useState("");
-  const [unpaidOnly, setUnpaidOnly] = useState(false);
   const [query, setQuery] = useState("");
-  const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [personalNote, setPersonalNote] = useState("");
-  const [customSubject, setCustomSubject] = useState("");
-  const [customHeadline, setCustomHeadline] = useState("");
-  const [customBody, setCustomBody] = useState("");
-  const [confirmOpen, setConfirmOpen] = useState(false);
-  const [previewOpen, setPreviewOpen] = useState(true);
-  const [recipientPage, setRecipientPage] = useState(1);
-  const [campaignAttachments, setCampaignAttachments] = useState<
-    { id: string; original_name: string; byte_size: number; mime: string }[]
-  >([]);
-
-  const preview = useMemo(
-    () =>
-      buildCampaignPreview({
-        personalNote,
-        customSubject,
-        customHeadline,
-        customBody,
-        sampleFirstName: "Alex",
-      }),
-    [personalNote, customSubject, customHeadline, customBody],
-  );
-
-  const filterBatches = useMemo(
-    () =>
-      batches.filter((b) =>
-        parishFilter ? b.parish_id === parishFilter : true,
-      ),
-    [batches, parishFilter],
-  );
+  const [page, setPage] = useState(1);
+  const [pendingDelete, setPendingDelete] =
+    useState<AdminCampaignListItem | null>(null);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    return recipients.filter((r) => {
-      if (parishFilter && r.parish_id !== parishFilter) return false;
-      if (batchFilter && r.batch_id !== batchFilter) return false;
-      if (
-        unpaidOnly &&
-        r.payment_status !== "unpaid" &&
-        r.payment_status !== "pending_review"
-      ) {
-        return false;
-      }
-      if (!q) return true;
+    if (!q) return campaigns;
+    return campaigns.filter((item) => {
       const hay = [
-        r.first_name,
-        r.last_name,
-        r.email,
-        r.parish_name,
-        r.batch_name,
+        item.title,
+        item.subject,
+        campaignStatusLabel(item.status),
       ]
         .filter(Boolean)
         .join(" ")
         .toLowerCase();
       return hay.includes(q);
     });
-  }, [recipients, parishFilter, batchFilter, unpaidOnly, query]);
+  }, [campaigns, query]);
 
-  const recipientTotalPages = Math.max(
-    1,
-    Math.ceil(filtered.length / CAMPAIGN_PAGE_SIZE),
-  );
-  const currentRecipientPage = Math.min(recipientPage, recipientTotalPages);
-  const recipientStart = (currentRecipientPage - 1) * CAMPAIGN_PAGE_SIZE;
-  const pageRecipients = filtered.slice(
-    recipientStart,
-    recipientStart + CAMPAIGN_PAGE_SIZE,
-  );
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const currentPage = Math.min(page, totalPages);
+  const pageStart = (currentPage - 1) * PAGE_SIZE;
+  const pageItems = filtered.slice(pageStart, pageStart + PAGE_SIZE);
+  const draftCount = campaigns.filter((c) => c.status === "draft").length;
+  const sentCount = campaigns.filter((c) => c.status === "sent").length;
 
   useEffect(() => {
-    setRecipientPage(1);
-  }, [parishFilter, batchFilter, unpaidOnly, query]);
+    setPage(1);
+  }, [query]);
 
   useEffect(() => {
-    if (recipientPage > recipientTotalPages) {
-      setRecipientPage(recipientTotalPages);
+    if (page > totalPages) setPage(totalPages);
+  }, [page, totalPages]);
+
+  useEffect(() => {
+    if (!pendingDelete) return;
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape" && !busy) setPendingDelete(null);
     }
-  }, [recipientPage, recipientTotalPages]);
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [pendingDelete, busy]);
 
-  const selectedInView = filtered.filter((r) => selected.has(r.id));
-  const allFilteredSelected =
-    filtered.length > 0 && filtered.every((r) => selected.has(r.id));
-
-  function toggleOne(id: string) {
-    setSelected((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  }
-
-  function toggleAllFiltered() {
-    setSelected((prev) => {
-      const next = new Set(prev);
-      if (allFilteredSelected) {
-        for (const r of filtered) next.delete(r.id);
-      } else {
-        for (const r of filtered) next.add(r.id);
-      }
-      return next;
-    });
-  }
-
-  function runSend() {
+  function openCampaign(id: string) {
     if (busy) return;
-    const ids = [...selected];
-    setBusyLabel("Sending campaign…");
+    router.push(campaignDetailHref(id));
+  }
+
+  function handleDelete() {
+    if (!pendingDelete || busy) return;
+    setBusyLabel("Deleting campaign…");
     startTransition(async () => {
       try {
-        const result = await sendStudentCampaign({
-          studentIds: ids,
-          personalNote,
-          customSubject,
-          customHeadline,
-          customBody,
-          parishId: parishFilter || undefined,
-          batchId: batchFilter || undefined,
-          unpaidOnly: unpaidOnly || undefined,
-          attachmentIds: campaignAttachments.map((item) => item.id),
-        });
+        const result = await deleteCampaign(pendingDelete.id);
         if (result.ok) {
           success(result.message, "Campaigns");
-          if (typeof result.remaining === "number") {
-            info(
-              `${result.remaining} emails left in this rate window.`,
-              "Quota",
-            );
-          }
-          setConfirmOpen(false);
-          setSelected(new Set());
-          setCampaignAttachments([]);
+          setPendingDelete(null);
+          router.refresh();
+        } else {
+          error(result.message, "Campaigns");
+        }
+      } finally {
+        setBusyLabel(null);
+      }
+    });
+  }
+
+  function campaignDetailHref(id: string) {
+    const params = new URLSearchParams();
+    if (query.trim()) params.set("q", query.trim());
+    if (page > 1) params.set("page", String(page));
+    const from = params.toString();
+    return from
+      ? `/admin/campaigns/${id}?from=${encodeURIComponent(from)}`
+      : `/admin/campaigns/${id}`;
+  }
+
+  function handleCreate() {
+    if (busy) return;
+    setBusyLabel("Creating draft…");
+    startTransition(async () => {
+      try {
+        const result = await createCampaign();
+        if (result.ok && result.campaignId) {
+          success(result.message, "Campaigns");
+          router.push(campaignDetailHref(result.campaignId));
+          router.refresh();
         } else {
           error(result.message, "Campaigns");
         }
@@ -188,306 +142,236 @@ export function CampaignsManager({
   }
 
   return (
-    <div className="relative space-y-5" aria-busy={busy}>
+    <div className="relative space-y-4" aria-busy={busy}>
       <DeskLoaderOverlay
-        active={busy && !confirmOpen}
-        label={busyLabel ?? "Sending campaign…"}
+        active={busy && !pendingDelete}
+        label={busyLabel ?? "Working…"}
       />
-      <section className="border border-stone bg-mist/40 p-4 sm:p-5">
-        <p className="text-[0.65rem] font-medium uppercase tracking-[0.14em] text-celadon">
-          Compose
-        </p>
-        <p className="mt-1 text-sm text-ink/60">
-          Write the subject and body. Each student is addressed by first name.
-        </p>
 
-        <div className="mt-4 grid gap-3">
-          <label className="block text-xs text-ink/50">
-            Subject
-            <input
-              value={customSubject}
-              onChange={(e) => setCustomSubject(e.target.value)}
-              className={fieldClass}
-              maxLength={180}
-              disabled={busy}
-              placeholder="Subject line students will see"
-            />
-          </label>
-          <label className="block text-xs text-ink/50">
-            Headline
-            <input
-              value={customHeadline}
-              onChange={(e) => setCustomHeadline(e.target.value)}
-              className={fieldClass}
-              maxLength={160}
-              disabled={busy}
-              placeholder="Optional short headline in the email header"
-            />
-          </label>
-          <label className="block text-xs text-ink/50">
-            Body
-            <textarea
-              value={customBody}
-              onChange={(e) => setCustomBody(e.target.value)}
-              className={`${fieldClass} min-h-28`}
-              maxLength={5000}
-              disabled={busy}
-              placeholder="Write the message."
-            />
-          </label>
-          <label className="block text-xs text-ink/50">
-            Optional note (appended)
-            <textarea
-              value={personalNote}
-              onChange={(e) => setPersonalNote(e.target.value)}
-              className={`${fieldClass} min-h-20`}
-              maxLength={1200}
-              disabled={busy}
-              placeholder="e.g. Payment due Friday, or Zoom opens at 7:25pm"
-            />
-          </label>
-          <div>
-            <p className="text-xs text-ink/50">Email attachments</p>
-            <div className="mt-1">
-              <DeskAttachmentPicker
-                value={campaignAttachments}
-                onChange={setCampaignAttachments}
-                disabled={busy}
-                maxFiles={CAMPAIGN_MAX_ATTACHMENTS}
-              />
-            </div>
-          </div>
-        </div>
-
-        <div className="mt-5 border border-stone bg-white/70">
-          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-stone px-3 py-2">
-            <div className="min-w-0">
-              <p className="text-[0.65rem] font-medium uppercase tracking-[0.14em] text-celadon">
-                Preview
-              </p>
-              <p className="mt-0.5 truncate text-xs text-ink/55">
-                Sample only · “Alex” · no real student data
-              </p>
-            </div>
-            <button
-              type="button"
-              onClick={() => setPreviewOpen((v) => !v)}
-              className="border border-pine/25 px-2.5 py-1 text-xs text-pine"
-            >
-              {previewOpen ? "Hide" : "Show"}
-            </button>
-          </div>
-          {previewOpen ? (
-            <div className="p-3 sm:p-4">
-              <p className="text-xs text-ink/45">Subject</p>
-              <p className="mt-1 text-sm font-medium text-ink">
-                {preview.subject}
-              </p>
-              <div className="mt-3 overflow-hidden border border-stone bg-[#e8efe9]">
-                <iframe
-                  title="Campaign email preview"
-                  sandbox=""
-                  srcDoc={preview.html}
-                  className="h-[28rem] w-full bg-[#e8efe9]"
-                />
-              </div>
-            </div>
-          ) : null}
-        </div>
-      </section>
-
-      <section className="border border-stone bg-mist/40 p-4 sm:p-5">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-          <div>
+      <div
+        data-tour="campaigns-stats"
+        className="grid gap-px border border-stone bg-stone sm:grid-cols-3"
+      >
+        {[
+          { label: "Campaigns", value: campaigns.length, hint: "Drafts and sent" },
+          { label: "Drafts", value: draftCount, hint: "Ready to edit" },
+          { label: "Sent", value: sentCount, hint: "Completed sends" },
+        ].map((tile) => (
+          <div
+            key={tile.label}
+            className="bg-mist/90 px-4 py-3 sm:px-5 sm:py-4"
+          >
             <p className="text-[0.65rem] font-medium uppercase tracking-[0.14em] text-celadon">
-              Audience
+              {tile.label}
             </p>
-            <p className="mt-1 text-sm text-ink/60">
-              {selected.size} selected · {filtered.length} matching filter
+            <p className="mt-1 font-display text-2xl tabular-nums text-pine">
+              {tile.value}
             </p>
+            <p className="mt-1 text-xs text-ink/50">{tile.hint}</p>
           </div>
-          <div className="flex flex-wrap gap-2">
-            <button
-              type="button"
-              onClick={toggleAllFiltered}
-              className="border border-pine/25 px-3 py-1.5 text-sm text-pine"
-            >
-              {allFilteredSelected ? "Clear filtered" : "Select filtered"}
-            </button>
-            <button
-              type="button"
-              disabled={
-                busy ||
-                selected.size === 0 ||
-                !customSubject.trim() ||
-                !customBody.trim()
-              }
-              onClick={() => setConfirmOpen(true)}
-              className="bg-pine px-3 py-1.5 text-sm font-medium text-mist disabled:opacity-50"
-            >
-              Send campaign
-            </button>
-          </div>
-        </div>
+        ))}
+      </div>
 
-        <div className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-          <label className="block text-xs text-ink/50">
-            Search
-            <input
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              className={fieldClass}
-              placeholder="Name or email"
-            />
-          </label>
-          {national ? (
-            <label className="block text-xs text-ink/50">
-              Parish
-              <select
-                value={parishFilter}
-                onChange={(e) => {
-                  setParishFilter(e.target.value);
-                  setBatchFilter("");
-                }}
-                className={fieldClass}
-              >
-                <option value="">All parishes</option>
-                {parishes.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.name}
-                  </option>
-                ))}
-              </select>
+      <section
+        data-tour="campaigns-desk"
+        className="border border-stone bg-mist/40 p-4 sm:p-5"
+      >
+        <div
+          data-tour="campaigns-toolbar"
+          className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between"
+        >
+          <div className="min-w-0 flex-1">
+            <label className="block">
+              <span className="text-[0.65rem] font-medium uppercase tracking-[0.14em] text-ink/45">
+                Search campaigns
+              </span>
+              <input
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Title or subject…"
+                disabled={busy}
+                className="mt-2 w-full max-w-md border border-stone bg-white/80 px-3 py-2 text-sm outline-none focus:border-pine disabled:opacity-50"
+              />
             </label>
-          ) : null}
-          <label className="block text-xs text-ink/50">
-            Batch
-            <select
-              value={batchFilter}
-              onChange={(e) => setBatchFilter(e.target.value)}
-              className={fieldClass}
-            >
-              <option value="">All batches</option>
-              {filterBatches.map((b) => (
-                <option key={b.id} value={b.id}>
-                  {formatBatchLabel(b)}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="flex items-end gap-2 pb-2 text-sm text-ink/70">
-            <input
-              type="checkbox"
-              checked={unpaidOnly}
-              onChange={(e) => setUnpaidOnly(e.target.checked)}
-              className="accent-pine"
-            />
-            Unpaid / proof in review only
-          </label>
+          </div>
+          <button
+            type="button"
+            disabled={busy}
+            onClick={handleCreate}
+            className="inline-flex min-h-[2.5rem] items-center justify-center bg-pine px-4 py-2 text-sm font-medium text-mist disabled:opacity-50"
+          >
+            {busy && busyLabel?.startsWith("Creating") ? (
+              <DeskLoader label="Creating…" tone="mist" />
+            ) : (
+              "New campaign"
+            )}
+          </button>
         </div>
 
-        <ul className="mt-4 max-h-[28rem] divide-y divide-stone overflow-y-auto border border-stone bg-white/50">
-          {filtered.length === 0 ? (
-            <li className="px-4 py-8 text-center text-sm text-ink/50">
-              No students match these filters.
-            </li>
-          ) : (
-            pageRecipients.map((r) => {
-              const checked = selected.has(r.id);
-              return (
-                <li key={r.id}>
-                  <label className="flex cursor-pointer items-start gap-3 px-3 py-2.5 hover:bg-pine/[0.03]">
-                    <input
-                      type="checkbox"
-                      checked={checked}
-                      onChange={() => toggleOne(r.id)}
-                      className="mt-1 accent-pine"
-                    />
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate text-sm font-medium text-ink">
-                        {r.first_name} {r.last_name}
+        <div
+          data-tour="campaigns-list"
+          className="mt-4 overflow-x-auto border border-stone bg-white/50"
+        >
+          <table className="w-full min-w-[640px] text-left text-sm">
+            <thead className="border-b border-stone bg-mist/60 text-[0.65rem] font-medium uppercase tracking-[0.12em] text-ink/45">
+              <tr>
+                <th className="px-3 py-2.5 font-medium">Campaign</th>
+                <th className="px-3 py-2.5 font-medium">Status</th>
+                <th className="px-3 py-2.5 font-medium">Recipients</th>
+                <th className="px-3 py-2.5 font-medium">Updated</th>
+                <th className="px-3 py-2.5 font-medium">
+                  <span className="sr-only">Actions</span>
+                </th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-stone">
+              {pageItems.length === 0 ? (
+                <tr>
+                  <td
+                    colSpan={5}
+                    className="px-4 py-10 text-center text-sm text-ink/50"
+                  >
+                    {campaigns.length === 0
+                      ? "No campaigns yet. Create a draft to compose and send."
+                      : "No campaigns match your search."}
+                  </td>
+                </tr>
+              ) : (
+                pageItems.map((item) => (
+                  <tr
+                    key={item.id}
+                    role="link"
+                    tabIndex={busy ? -1 : 0}
+                    onClick={() => openCampaign(item.id)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" || event.key === " ") {
+                        event.preventDefault();
+                        openCampaign(item.id);
+                      }
+                    }}
+                    className="cursor-pointer transition-colors hover:bg-pine/[0.03] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-pine"
+                    aria-label={`Open ${campaignListLabel(item)}`}
+                  >
+                    <td className="px-3 py-3">
+                      <span className="block min-w-0 font-medium text-pine">
+                        {campaignListLabel(item)}
                       </span>
-                      <span className="block truncate text-xs text-ink/50">
-                        {r.email}
-                        {r.parish_name ? ` · ${r.parish_name}` : ""}
-                        {r.batch_name ? ` · ${r.batch_name}` : ""}
+                      {item.subject.trim() &&
+                      item.title.trim() &&
+                      item.title !== item.subject.trim() ? (
+                        <p className="mt-0.5 truncate text-xs text-ink/50">
+                          {item.subject.trim()}
+                        </p>
+                      ) : null}
+                    </td>
+                    <td className="px-3 py-3">
+                      <span
+                        className={`text-xs font-medium uppercase tracking-[0.1em] ${
+                          item.status === "sent"
+                            ? "text-celadon"
+                            : "text-ink/55"
+                        }`}
+                      >
+                        {campaignStatusLabel(item.status)}
                       </span>
-                    </span>
-                  </label>
-                </li>
-              );
-            })
-          )}
-        </ul>
+                      {item.status === "sent" && item.sent_at ? (
+                        <p className="mt-0.5 text-xs text-ink/45">
+                          {item.sent_count} sent
+                          {item.failed_count > 0
+                            ? ` · ${item.failed_count} failed`
+                            : ""}
+                        </p>
+                      ) : null}
+                    </td>
+                    <td className="px-3 py-3 tabular-nums text-ink/70">
+                      {item.recipient_ids.length}
+                    </td>
+                    <td className="px-3 py-3 text-xs text-ink/55">
+                      {formatCampaignUpdated(item.updated_at)}
+                    </td>
+                    <td className="px-3 py-3 text-right">
+                      <button
+                        type="button"
+                        disabled={busy}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          setPendingDelete(item);
+                        }}
+                        className="inline-flex h-8 w-8 items-center justify-center border border-red-900/20 text-red-800 transition-colors hover:bg-red-50 disabled:opacity-50"
+                        aria-label={`Delete ${campaignListLabel(item)}`}
+                      >
+                        <TrashIcon className="h-3.5 w-3.5" />
+                      </button>
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+
         <DeskPagination
-          page={currentRecipientPage}
+          page={currentPage}
           totalItems={filtered.length}
-          pageSize={CAMPAIGN_PAGE_SIZE}
-          onPageChange={setRecipientPage}
+          pageSize={PAGE_SIZE}
+          onPageChange={setPage}
           className="mt-3"
-          itemLabel="recipients"
+          itemLabel="campaigns"
         />
       </section>
 
-      {confirmOpen ? (
+      {pendingDelete ? (
         <div
-          className="fixed inset-0 z-50 flex items-end justify-center bg-ink/40 p-4 sm:items-center"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="campaign-confirm-title"
+          className="fixed inset-0 z-[90] flex items-end justify-center bg-ink/45 p-4 sm:items-center"
+          role="presentation"
+          onClick={() => !busy && setPendingDelete(null)}
         >
-          <div className="relative w-full max-w-md border border-stone bg-mist p-5 shadow-lg">
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="delete-campaign-title"
+            className="relative w-full max-w-md border border-stone bg-mist p-6 text-ink shadow-[0_16px_48px_rgba(20,53,44,0.2)] sm:p-7"
+            onClick={(event) => event.stopPropagation()}
+          >
             <DeskLoaderOverlay
               active={busy}
-              label={busyLabel ?? "Sending campaign…"}
+              label={busyLabel ?? "Deleting campaign…"}
             />
-            <p
-              id="campaign-confirm-title"
-              className="font-display text-xl text-pine"
+            <p className="text-[0.65rem] font-medium uppercase tracking-[0.16em] text-red-800/80">
+              Delete campaign
+            </p>
+            <h3
+              id="delete-campaign-title"
+              className="mt-3 font-display text-2xl tracking-[-0.02em] text-pine"
             >
-              Send this campaign?
-            </p>
-            <p className="mt-2 text-sm text-ink/70">
-              This emails <strong>{selected.size}</strong> student
-              {selected.size === 1 ? "" : "s"}
-              {selectedInView.length !== selected.size
-                ? ` (${selectedInView.length} in the current filter view)`
+              Remove this campaign?
+            </h3>
+            <p className="mt-3 text-sm leading-relaxed text-ink/70">
+              “{campaignListLabel(pendingDelete)}” will be permanently deleted
+              {pendingDelete.status === "sent"
+                ? ", including its send record"
                 : ""}
-              . Subject: <strong>{customSubject.trim()}</strong>
+              . This cannot be undone.
             </p>
-            {campaignAttachments.length > 0 ? (
-              <ul className="mt-3 space-y-1 border border-stone bg-white/60 px-3 py-2.5 text-sm text-ink/70">
-                {campaignAttachments.map((file) => (
-                  <li key={file.id} className="flex flex-wrap gap-x-2">
-                    <span className="min-w-0 truncate font-medium text-ink">
-                      {file.original_name}
-                    </span>
-                    <span className="text-[0.65rem] tabular-nums text-ink/45">
-                      {formatAttachmentSize(file.byte_size)}
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            ) : null}
-            <div className="mt-5 flex justify-end gap-2">
+            <div className="mt-7 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
               <button
                 type="button"
                 disabled={busy}
-                onClick={() => setConfirmOpen(false)}
-                className="border border-stone px-3 py-2 text-sm text-ink disabled:opacity-50"
+                onClick={() => setPendingDelete(null)}
+                className="border border-pine/25 px-4 py-2.5 text-sm font-medium text-pine transition-colors hover:border-pine disabled:opacity-60"
               >
                 Cancel
               </button>
               <button
                 type="button"
                 disabled={busy}
-                onClick={runSend}
-                className="inline-flex min-h-[2.5rem] min-w-[8.5rem] items-center justify-center bg-pine px-3 py-2 text-sm font-medium text-mist disabled:opacity-50"
+                onClick={handleDelete}
+                className="inline-flex min-h-[2.5rem] min-w-[9rem] items-center justify-center bg-[#5c2a2a] px-4 py-2.5 text-sm font-medium text-mist transition-colors hover:bg-red-900 disabled:opacity-60"
               >
                 {busy ? (
-                  <DeskLoader label="Sending…" tone="mist" />
+                  <DeskLoader label="Deleting…" tone="mist" />
                 ) : (
-                  "Confirm send"
+                  "Delete permanently"
                 )}
               </button>
             </div>

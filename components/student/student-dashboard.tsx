@@ -1,8 +1,14 @@
 "use client";
 
 import Link from "next/link";
-import { useSyncExternalStore } from "react";
+import { useState, useSyncExternalStore, type ReactNode } from "react";
 import { PhotoUploadCard } from "@/components/student/photo-upload-card";
+import {
+  StudentPortalWalkthroughTrigger,
+} from "@/components/student/student-portal-walkthrough";
+import { useStudentTourOptional } from "@/components/student/student-tour-provider";
+import { useRefreshOnVisible } from "@/components/student/use-refresh-on-visible";
+import { DeskConfirmModal } from "@/components/ui/desk-confirm-modal";
 import { ATTENDANCE_MODES } from "@/lib/enrol/schema";
 import {
   formatGbp,
@@ -32,6 +38,11 @@ import {
 } from "@/components/notices/notice-attachments";
 
 type HomeSection = "overview" | "application";
+
+export function StudentDashboardRefresh({ children }: { children: ReactNode }) {
+  useRefreshOnVisible();
+  return <>{children}</>;
+}
 
 type JourneyStep = {
   id: string;
@@ -92,14 +103,20 @@ function statusCopy(status: EnrolmentStatus): { title: string; body: string } {
 function paymentCopy(
   status: PaymentStatus | FeePaymentStatus,
   paidGbp = 0,
+  dueGbp = TUITION_FEE.amountGbp,
 ): string {
   switch (status) {
     case "paid":
       return "Paid";
     case "pending_review":
       return "Proof under review";
-    default:
+    default: {
+      const remaining = Math.max(0, dueGbp - paidGbp);
+      if (paidGbp > 0 && remaining > 0) {
+        return `Part paid · ${formatGbp(remaining)} left`;
+      }
       return paidGbp > 0 ? "Part paid" : "Unpaid";
+    }
   }
 }
 
@@ -114,6 +131,8 @@ function effectivePaymentStatus(
 function buildJourney(
   enrolment: StudentEnrolment | null,
   payment: PaymentStatus,
+  tuitionPaidGbp = 0,
+  tuitionDueGbp = TUITION_FEE.amountGbp,
 ): JourneyStep[] {
   if (!enrolment) {
     return [
@@ -159,6 +178,7 @@ function buildJourney(
     (status === "accepted" ||
       status === "payment_pending" ||
       payment === "pending_review");
+  const tuitionRemaining = Math.max(0, tuitionDueGbp - tuitionPaidGbp);
 
   return [
     {
@@ -192,9 +212,11 @@ function buildJourney(
         ? "Confirmed"
         : payment === "pending_review"
           ? "Proof in review"
-          : payOpen
-            ? "Fee still due"
-            : "After acceptance",
+          : payOpen && tuitionPaidGbp > 0 && tuitionRemaining > 0
+            ? `${formatGbp(tuitionPaidGbp)} paid · ${formatGbp(tuitionRemaining)} left`
+            : payOpen
+              ? "Fee still due"
+              : "After acceptance",
       state: rejected
         ? "upcoming"
         : paid
@@ -227,6 +249,18 @@ function formatDob(iso: string | null): string {
     day: "numeric",
     month: "short",
     year: "numeric",
+  }).format(date);
+}
+
+function formatEnrolmentDateTime(iso: string): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return iso;
+  return new Intl.DateTimeFormat("en-GB", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
   }).format(date);
 }
 
@@ -264,6 +298,7 @@ type StudentDashboardProps = {
   enrolment: StudentEnrolment | null;
   tuitionFeeStatus?: FeePaymentStatus | null;
   tuitionPaidGbp?: number;
+  tuitionDueGbp?: number;
   passportUnlocked?: boolean;
   notices: Announcement[];
   noticesError?: string | null;
@@ -275,6 +310,7 @@ export function StudentDashboard({
   enrolment,
   tuitionFeeStatus = null,
   tuitionPaidGbp = 0,
+  tuitionDueGbp = TUITION_FEE.amountGbp,
   passportUnlocked = false,
   notices,
   noticesError = null,
@@ -291,7 +327,12 @@ export function StudentDashboard({
   const payment = enrolment
     ? effectivePaymentStatus(enrolment, tuitionFeeStatus)
     : "unpaid";
-  const journey = buildJourney(enrolment, payment);
+  const journey = buildJourney(
+    enrolment,
+    payment,
+    tuitionPaidGbp,
+    tuitionDueGbp,
+  );
   const status = enrolment
     ? statusCopy(enrolment.status)
     : {
@@ -334,6 +375,7 @@ export function StudentDashboard({
           enrolment={enrolment}
           payment={payment}
           tuitionPaidGbp={tuitionPaidGbp}
+          tuitionDueGbp={tuitionDueGbp}
           passportUnlocked={passportUnlocked}
           journey={journey}
           notices={notices}
@@ -347,6 +389,7 @@ export function StudentDashboard({
           payment={payment}
           tuitionPaidGbp={tuitionPaidGbp}
           fee={fee}
+          tuitionDueGbp={tuitionDueGbp}
           needsPayment={needsPayment}
           proofInReview={proofInReview}
           paid={Boolean(paid)}
@@ -412,6 +455,7 @@ function OverviewView({
   enrolment,
   payment,
   tuitionPaidGbp,
+  tuitionDueGbp,
   passportUnlocked,
   journey,
   notices,
@@ -424,11 +468,19 @@ function OverviewView({
   enrolment: StudentEnrolment | null;
   payment: PaymentStatus;
   tuitionPaidGbp: number;
+  tuitionDueGbp: number;
   passportUnlocked: boolean;
   journey: JourneyStep[];
   notices: Announcement[];
   noticesError: string | null;
 }) {
+  const [pendingExternal, setPendingExternal] = useState<
+    | { kind: "link"; href: string; label: string }
+    | { kind: "attachment"; href: string; action: "view" | "download"; fileName: string }
+    | null
+  >(null);
+  const tour = useStudentTourOptional();
+
   const needsPassport = passportUnlocked && !profile.passport_path;
   const continueTo = overviewContinue(enrolment, payment, needsPassport);
   const featured = notices[0] ?? null;
@@ -443,11 +495,52 @@ function OverviewView({
     Boolean(enrolment) &&
     payment !== "paid" &&
     enrolment?.status !== "rejected";
+  const tuitionRemaining = Math.max(0, tuitionDueGbp - tuitionPaidGbp);
+
+  function openExternal(href: string, download?: string) {
+    if (download) {
+      const anchor = document.createElement("a");
+      anchor.href = href;
+      anchor.download = download;
+      anchor.rel = "noopener noreferrer";
+      anchor.target = "_blank";
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      return;
+    }
+    window.open(href, "_blank", "noopener,noreferrer");
+  }
+
+  function confirmExternal() {
+    if (!pendingExternal) return;
+    if (pendingExternal.kind === "attachment") {
+      openExternal(
+        pendingExternal.href,
+        pendingExternal.action === "download"
+          ? pendingExternal.fileName
+          : undefined,
+      );
+    } else {
+      openExternal(pendingExternal.href);
+    }
+    setPendingExternal(null);
+  }
 
   return (
     <div id="overview" className="relative">
+      <div className="relative mb-4 flex flex-col gap-3 sm:mb-5 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
+        <p className="text-[0.65rem] font-medium uppercase tracking-[0.18em] text-celadon sm:text-[0.7rem] sm:tracking-[0.2em]">
+          Overview · My Journey
+        </p>
+        <StudentPortalWalkthroughTrigger onClick={() => tour?.startTour()} />
+      </div>
+
       {/* Hero — one composition: greeting, walk-on line, CTA, square passport */}
-      <section className="relative overflow-hidden border border-pine/20 bg-pine text-mist">
+      <section
+        className="relative overflow-hidden border border-pine/20 bg-pine text-mist"
+        data-tour="student-overview-hero"
+      >
         <div
           className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_85%_20%,_rgba(95,143,122,0.35),_transparent_50%),linear-gradient(135deg,_transparent_40%,_rgba(0,0,0,0.12)_100%)]"
           aria-hidden
@@ -537,7 +630,10 @@ function OverviewView({
       </section>
 
       {/* Identity measure */}
-      <section className="animate-fade-rise-delay-2 border-x border-b border-stone bg-mist">
+      <section
+        className="animate-fade-rise-delay-2 border-x border-b border-stone bg-mist"
+        data-tour="student-overview-identity"
+      >
         <div className="grid grid-cols-2 gap-px bg-stone lg:grid-cols-4">
           <div className="bg-mist px-3.5 py-3.5 sm:px-5 sm:py-4">
             <p className="text-[0.6rem] font-medium uppercase tracking-[0.12em] text-ink/45 sm:text-[0.65rem] sm:tracking-[0.14em]">
@@ -552,8 +648,19 @@ function OverviewView({
               Payment
             </p>
             <p className="mt-1 break-words font-display text-base leading-snug text-pine sm:mt-1.5 sm:text-lg">
-              {enrolment ? paymentCopy(payment, tuitionPaidGbp) : "—"}
+              {enrolment
+                ? paymentCopy(payment, tuitionPaidGbp, tuitionDueGbp)
+                : "—"}
             </p>
+            {enrolment &&
+            payment !== "paid" &&
+            tuitionPaidGbp > 0 &&
+            tuitionRemaining > 0 ? (
+              <p className="mt-1 text-xs text-ink/50">
+                {formatGbp(tuitionPaidGbp)} of {formatGbp(tuitionDueGbp)} tuition
+                paid
+              </p>
+            ) : null}
           </div>
           <div className="bg-mist px-3.5 py-3.5 sm:px-5 sm:py-4">
             <p className="text-[0.6rem] font-medium uppercase tracking-[0.12em] text-ink/45 sm:text-[0.65rem] sm:tracking-[0.14em]">
@@ -589,6 +696,15 @@ function OverviewView({
             </p>
           ) : null}
         </div>
+        {enrolment?.updated_at ? (
+          <p className="border-t border-stone px-3.5 py-2.5 text-xs text-ink/45 sm:px-5">
+            Last updated{" "}
+            <time dateTime={enrolment.updated_at}>
+              {formatEnrolmentDateTime(enrolment.updated_at)}
+            </time>
+            . Leave this tab and come back to pick up desk updates.
+          </p>
+        ) : null}
       </section>
 
       {needsPassport ? (
@@ -616,7 +732,7 @@ function OverviewView({
       ) : null}
 
       {/* Four thresholds — spine path */}
-      <section className="relative px-0.5 py-8 sm:py-14">
+      <section className="relative px-0.5 py-8 sm:py-14" data-tour="student-overview-journey">
         <div className="mb-6 max-w-xl sm:mb-10">
           <p className="text-[0.65rem] font-medium uppercase tracking-[0.16em] text-celadon sm:text-[0.7rem] sm:tracking-[0.18em]">
             Four thresholds
@@ -685,7 +801,10 @@ function OverviewView({
       </section>
 
       {/* Featured notice + listening desk */}
-      <section className="relative grid gap-px overflow-hidden border border-stone bg-stone lg:grid-cols-[1.4fr_1fr]">
+      <section
+        className="relative grid gap-px overflow-hidden border border-stone bg-stone lg:grid-cols-[1.4fr_1fr]"
+        data-tour="student-overview-signal"
+      >
         <div className="bg-stone/30 px-4 py-6 sm:px-7 sm:py-10">
           <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end sm:justify-between">
             <div>
@@ -733,20 +852,28 @@ function OverviewView({
               <NoticeAttachmentList
                 files={featured.attachments}
                 tone="parchment"
+                onExternalNavigate={(payload) =>
+                  setPendingExternal({ kind: "attachment", ...payload })
+                }
               />
               {featured.href &&
               featured.hrefLabel &&
               isSafeAnnouncementHref(featured.href) ? (
                 featured.href.startsWith("http://") ||
                 featured.href.startsWith("https://") ? (
-                  <a
-                    href={featured.href}
-                    target="_blank"
-                    rel="noopener noreferrer"
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setPendingExternal({
+                        kind: "link",
+                        href: featured.href!,
+                        label: featured.hrefLabel!,
+                      })
+                    }
                     className="mt-3 inline-flex min-h-11 items-center text-sm font-medium text-pine underline decoration-pine/30 underline-offset-4 hover:text-celadon sm:min-h-0"
                   >
                     {featured.hrefLabel}
-                  </a>
+                  </button>
                 ) : (
                   <Link
                     href={featured.href}
@@ -787,6 +914,46 @@ function OverviewView({
         </div>
       </section>
 
+      <DeskConfirmModal
+        open={Boolean(pendingExternal)}
+        onClose={() => setPendingExternal(null)}
+        onConfirm={confirmExternal}
+        eyebrow="Leave the portal"
+        title={
+          pendingExternal?.kind === "attachment"
+            ? pendingExternal.action === "download"
+              ? "Download this file?"
+              : "Open this file?"
+            : "Open this link?"
+        }
+        body={
+          pendingExternal?.kind === "attachment" ? (
+            <>
+              You are about to{" "}
+              {pendingExternal.action === "download" ? "download" : "open"}{" "}
+              <span className="font-medium text-ink">
+                {pendingExternal.fileName}
+              </span>{" "}
+              in a new tab. The School hosts this file outside the notice board.
+            </>
+          ) : pendingExternal?.kind === "link" ? (
+            <>
+              <span className="font-medium text-ink">
+                {pendingExternal.label}
+              </span>{" "}
+              opens on an external site. You will leave the student portal.
+            </>
+          ) : null
+        }
+        confirmLabel={
+          pendingExternal?.kind === "attachment"
+            ? pendingExternal.action === "download"
+              ? "Download file"
+              : "Open file"
+            : "Continue"
+        }
+      />
+
       <div className="h-8 sm:h-14" aria-hidden />
     </div>
   );
@@ -798,6 +965,7 @@ function ApplicationView({
   status,
   payment,
   tuitionPaidGbp,
+  tuitionDueGbp,
   fee,
   needsPayment,
   proofInReview,
@@ -808,13 +976,18 @@ function ApplicationView({
   status: { title: string; body: string };
   payment: PaymentStatus;
   tuitionPaidGbp: number;
+  tuitionDueGbp: number;
   fee: { amountGbp: number } | null;
   needsPayment: boolean;
   proofInReview: boolean;
   paid: boolean;
 }) {
   return (
-    <div id="application" className="relative mx-auto w-full max-w-5xl scroll-mt-24 pt-1 sm:pt-4">
+    <div
+      id="application"
+      data-tour="student-application-page"
+      className="relative mx-auto w-full max-w-5xl scroll-mt-24 pt-1 sm:pt-4"
+    >
       <section className="pb-5 sm:pb-6">
         <p className="text-[0.65rem] font-medium uppercase tracking-[0.18em] text-celadon">
           Application
@@ -826,10 +999,22 @@ function ApplicationView({
           Where your enrolment stands, and a read-only copy of what you
           submitted. This page is view-only — no changes here.
         </p>
+        {enrolment?.updated_at ? (
+          <p className="mt-2 text-xs text-ink/45">
+            Last updated{" "}
+            <time dateTime={enrolment.updated_at}>
+              {formatEnrolmentDateTime(enrolment.updated_at)}
+            </time>
+            . Leave this tab and come back to pick up desk updates.
+          </p>
+        ) : null}
       </section>
 
       <section className="pb-8 sm:pb-10">
-        <div className="border border-pine/15 bg-pine text-mist">
+        <div
+          className="border border-pine/15 bg-pine text-mist"
+          data-tour="student-application-status"
+        >
           <div className="grid gap-0 lg:grid-cols-[1.4fr_1fr]">
             <div className="px-4 py-6 sm:px-8 sm:py-10">
               <p className="text-[0.65rem] font-medium uppercase tracking-[0.18em] text-celadon">
@@ -879,8 +1064,8 @@ function ApplicationView({
                       Payment
                     </p>
                     <p className="mt-1 break-words text-mist">
-                      {paymentCopy(payment, tuitionPaidGbp)}
-                      {fee ? ` · ${formatGbp(fee.amountGbp)}` : null}
+                      {paymentCopy(payment, tuitionPaidGbp, tuitionDueGbp)}
+                      {fee ? ` · ${formatGbp(fee.amountGbp)} programme` : null}
                     </p>
                   </div>
                 </div>
@@ -949,7 +1134,7 @@ function ApplicationView({
       </section>
 
       {enrolment ? (
-        <section className="relative pb-10 sm:pb-12">
+        <section className="relative pb-10 sm:pb-12" data-tour="student-application-form">
           <p className="text-[0.65rem] font-medium uppercase tracking-[0.18em] text-celadon">
             Submitted form
           </p>

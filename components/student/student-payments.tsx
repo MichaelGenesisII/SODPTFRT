@@ -4,14 +4,21 @@ import { useRouter } from "next/navigation";
 import {
   useState,
   useTransition,
+  useEffect,
   type FormEvent,
   type ReactNode,
 } from "react";
+import { useRefreshOnVisible } from "@/components/student/use-refresh-on-visible";
+import {
+  SOD_STUDENT_TOUR_TAB_EVENT,
+  type StudentTourTabPayload,
+} from "@/lib/student/portal-tour-steps";
 import {
   startStripeCheckout,
   submitBankProof,
 } from "@/app/student/payments/actions";
 import { PhotoUploadCard } from "@/components/student/photo-upload-card";
+import { DeskConfirmModal } from "@/components/ui/desk-confirm-modal";
 import { ImageFileField } from "@/components/student/image-file-field";
 import { DeskLoader, DeskLoaderOverlay } from "@/components/ui/desk-loader";
 import { useToast } from "@/components/ui/toast";
@@ -25,14 +32,23 @@ import {
   feeRemaining,
   isFeeFullyPaid,
   type FeePaymentStatus,
+  type FeeTransaction,
   type FeeType,
   type StudentFeePayment,
 } from "@/lib/payments/fees";
 
-type PaymentsTab = "due" | "review" | "paid";
+type PaymentsTab = "due" | "review" | "paid" | "history";
+
+type PendingPayConfirm = "card" | "proof";
+
+export function StudentPaymentsRefresh({ children }: { children: ReactNode }) {
+  useRefreshOnVisible();
+  return <>{children}</>;
+}
 
 type PaymentsBoardProps = {
   payments: StudentFeePayment[];
+  transactions: FeeTransaction[];
   reference: string;
   referenceCompact: string;
   flash?: string | null;
@@ -67,11 +83,13 @@ function feeRowsFor(
 function tabLabel(tab: PaymentsTab): string {
   if (tab === "review") return "In review";
   if (tab === "paid") return "Paid";
+  if (tab === "history") return "History";
   return "Due";
 }
 
 export function StudentPaymentsBoard({
   payments,
+  transactions,
   reference,
   referenceCompact,
   flash,
@@ -91,6 +109,12 @@ export function StudentPaymentsBoard({
   const due = feeRowsFor(byType, "due");
   const review = feeRowsFor(byType, "review");
   const paid = feeRowsFor(byType, "paid");
+  const historyCount = transactions.filter((tx) => tx.status !== "unpaid").length;
+
+  const totalOutstanding = payments.reduce(
+    (sum, row) => sum + (isFeeFullyPaid(row) ? 0 : feeRemaining(row)),
+    0,
+  );
 
   const tuitionAccount = byType.tuition;
   const passportUnlocked = hasTuitionInstallmentPaid(tuitionAccount);
@@ -141,15 +165,38 @@ export function StudentPaymentsBoard({
       hint: paid.length ? String(paid.length) : undefined,
       rows: paid,
     },
+    {
+      id: "history",
+      label: "History",
+      hint: historyCount ? String(historyCount) : undefined,
+      rows: [],
+    },
   ];
 
   const active = tabs.find((item) => item.id === tab) ?? tabs[0]!;
+
+  const lastUpdated = payments.reduce<string | null>((latest, row) => {
+    if (!row.updated_at) return latest;
+    if (!latest || row.updated_at > latest) return row.updated_at;
+    return latest;
+  }, null);
 
   function selectTab(next: PaymentsTab) {
     setTab(next);
     const rows = feeRowsFor(byType, next);
     setOpenType(rows[0] ?? null);
   }
+
+  useEffect(() => {
+    function onTourTab(event: Event) {
+      const detail = (event as CustomEvent<StudentTourTabPayload>).detail;
+      if (detail?.page !== "payments") return;
+      selectTab(detail.tab);
+    }
+    window.addEventListener(SOD_STUDENT_TOUR_TAB_EVENT, onTourTab);
+    return () =>
+      window.removeEventListener(SOD_STUDENT_TOUR_TAB_EVENT, onTourTab);
+  }, [byType]);
 
   if (loadError) {
     return (
@@ -168,6 +215,13 @@ export function StudentPaymentsBoard({
   return (
     <div className="mx-auto w-full max-w-5xl space-y-4 sm:space-y-5">
       <Header flash={flash} />
+      {lastUpdated ? (
+        <p className="text-xs text-ink/45">
+          Last updated{" "}
+          <time dateTime={lastUpdated}>{formatPaymentDateTime(lastUpdated)}</time>
+          . Leave this tab and come back to pick up desk updates.
+        </p>
+      ) : null}
 
       {photoTab && tab !== photoTab ? (
         <p className="border border-[#c4a574]/40 bg-[#efe8dc]/50 px-4 py-3 text-sm leading-relaxed text-[#6b4f2a]">
@@ -184,15 +238,21 @@ export function StudentPaymentsBoard({
       ) : null}
 
       <div className="grid grid-cols-2 gap-px border border-stone bg-stone sm:grid-cols-4 sm:gap-0 sm:bg-mist/50">
+        <MiniStat
+          label="Outstanding"
+          value={formatGbp(totalOutstanding)}
+        />
         <MiniStat label="Due" value={String(due.length)} />
         <MiniStat label="In review" value={String(review.length)} />
-        <MiniStat label="Paid" value={String(paid.length)} />
         <MiniStat label="Reference" value={reference} mono />
       </div>
 
+      <BalanceSummary payments={payments} />
+
       <nav
-        className="grid grid-cols-3 border border-stone bg-mist/40 sm:flex sm:gap-1 sm:overflow-x-auto sm:border-0 sm:border-b sm:bg-transparent sm:pb-px [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+        className="grid grid-cols-4 border border-stone bg-mist/40 sm:flex sm:gap-1 sm:overflow-x-auto sm:border-0 sm:border-b sm:bg-transparent sm:pb-px [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
         aria-label="Payment sections"
+        data-tour="student-payments-tabs"
       >
         {tabs.map((item) => {
           const isActive = tab === item.id;
@@ -209,7 +269,11 @@ export function StudentPaymentsBoard({
             >
               <span className="inline-flex flex-wrap items-center justify-center gap-1 sm:justify-start sm:gap-1.5">
                 <span className="sm:hidden">
-                  {item.id === "review" ? "Review" : item.label}
+                  {item.id === "review"
+                    ? "Review"
+                    : item.id === "history"
+                      ? "History"
+                      : item.label}
                 </span>
                 <span className="hidden sm:inline">{item.label}</span>
                 {item.hint ? (
@@ -230,23 +294,29 @@ export function StudentPaymentsBoard({
       </nav>
 
       <Panel
-        eyebrow="Fees"
+        eyebrow={tab === "history" ? "Ledger" : "Fees"}
         title={
           tab === "due"
             ? "Ready to pay"
             : tab === "review"
               ? "Waiting on the desk"
-              : "Confirmed"
+              : tab === "history"
+                ? "Payment history"
+                : "Confirmed"
         }
         body={
           tab === "due"
             ? "Open a fee, choose an amount, then pay by card or bank transfer."
             : tab === "review"
               ? "Bank proofs with the admin desk. You will get an email when approved."
-              : "Fees that are settled — card or approved bank transfer."
+              : tab === "history"
+                ? "Each instalment or full payment — card or bank transfer."
+                : "Fees that are settled — card or approved bank transfer."
         }
       >
-        {active.rows.length === 0 ? (
+        {tab === "history" ? (
+          <PaymentHistoryList transactions={transactions} />
+        ) : active.rows.length === 0 ? (
           <Empty>
             {tab === "due"
               ? "Nothing due right now."
@@ -291,7 +361,7 @@ export function StudentPaymentsBoard({
 
 function Header({ flash }: { flash?: string | null }) {
   return (
-    <section className="animate-fade-rise">
+    <section className="animate-fade-rise" data-tour="student-payments-header">
       <p className="text-[0.65rem] font-medium uppercase tracking-[0.18em] text-celadon">
         Fees
       </p>
@@ -350,6 +420,9 @@ function FeeRow({
     feeType === "tuition" && paidSoFar > 0 && !passportUploaded;
   const [amount, setAmount] = useState("");
   const [mode, setMode] = useState<"idle" | "bank">("idle");
+  const [pendingConfirm, setPendingConfirm] =
+    useState<PendingPayConfirm | null>(null);
+  const [proofForm, setProofForm] = useState<HTMLFormElement | null>(null);
   const [pending, startTransition] = useTransition();
   const [busyLabel, setBusyLabel] = useState<string | null>(null);
   const busy = pending || Boolean(busyLabel);
@@ -371,6 +444,7 @@ function FeeRow({
           error(result.message);
           return;
         }
+        setPendingConfirm(null);
         window.location.href = result.url;
       } finally {
         setBusyLabel(null);
@@ -378,10 +452,18 @@ function FeeRow({
     });
   }
 
-  function onProof(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const form = event.currentTarget;
-    const formData = new FormData(form);
+  function requestCardCheckout() {
+    const parsed = Number(String(amount).trim().replace(/[£,]/g, ""));
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+      error("Enter a valid amount.");
+      return;
+    }
+    setPendingConfirm("card");
+  }
+
+  function submitProof() {
+    if (!proofForm) return;
+    const formData = new FormData(proofForm);
     formData.set("feeType", feeType);
     formData.set("amount", amount);
     setBusyLabel("Uploading bank proof…");
@@ -394,12 +476,20 @@ function FeeRow({
         }
         success(result.message);
         setMode("idle");
-        form.reset();
+        setPendingConfirm(null);
+        proofForm.reset();
+        setProofForm(null);
         router.refresh();
       } finally {
         setBusyLabel(null);
       }
     });
+  }
+
+  function onProof(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setProofForm(event.currentTarget);
+    setPendingConfirm("proof");
   }
 
   return (
@@ -417,9 +507,8 @@ function FeeRow({
         >
           <p className="text-[0.6rem] uppercase tracking-[0.12em] text-celadon">
             {meta.label} · {formatGbp(fee.amountGbp)} total
-            {paidSoFar > 0 && !fullyPaid
-              ? ` · ${formatGbp(paidSoFar)} paid · ${formatGbp(remaining)} left`
-              : ""}
+            {paidSoFar > 0 ? ` · ${formatGbp(paidSoFar)} paid` : ""}
+            {!fullyPaid ? ` · ${formatGbp(remaining)} left` : ""}
             {needsPhoto ? " · photo required" : ""}
           </p>
           <h3 className="mt-1 break-words font-display text-base text-pine sm:text-lg">
@@ -589,7 +678,7 @@ function FeeRow({
                 </div>
               </form>
             </div>
-          ) : (
+          ) : !fullyPaid ? (
             <div className="space-y-3">
               <label className="block text-sm font-medium text-ink">
                 Amount to pay now (£)
@@ -612,7 +701,7 @@ function FeeRow({
                 <button
                   type="button"
                   disabled={busy || !cardReady}
-                  onClick={payCard}
+                  onClick={requestCardCheckout}
                   className="inline-flex min-h-11 flex-1 items-center justify-center bg-pine px-4 py-2.5 text-sm font-medium text-mist transition-colors hover:bg-celadon disabled:opacity-50"
                 >
                   {busy && busyLabel?.startsWith("Opening") ? (
@@ -637,10 +726,177 @@ function FeeRow({
                 </p>
               ) : null}
             </div>
-          )}
+          ) : null}
         </div>
       ) : null}
+
+      <DeskConfirmModal
+        open={Boolean(pendingConfirm)}
+        onClose={() => !busy && setPendingConfirm(null)}
+        onConfirm={() => {
+          if (pendingConfirm === "card") payCard();
+          else if (pendingConfirm === "proof") submitProof();
+        }}
+        eyebrow={pendingConfirm === "proof" ? "Bank transfer" : "Card checkout"}
+        title={
+          pendingConfirm === "proof"
+            ? "Submit this proof?"
+            : `Pay ${formatGbp(Number(String(amount).replace(/[£,]/g, "")) || 0)} by card?`
+        }
+        body={
+          pendingConfirm === "proof" ? (
+            <>
+              Your proof goes to the admin desk for review. Use reference{" "}
+              <span className="font-mono font-medium text-ink">
+                {referenceCompact}
+              </span>{" "}
+              on the transfer. You cannot send another proof while one is in
+              review.
+            </>
+          ) : (
+            <>
+              You will leave the portal for secure Stripe checkout for{" "}
+              <span className="font-medium text-ink">{fee.label}</span>. Your
+              balance updates when payment is confirmed.
+            </>
+          )
+        }
+        confirmLabel={
+          pendingConfirm === "proof" ? "Submit proof" : "Continue to checkout"
+        }
+        busy={busy}
+        busyLabel={busyLabel ?? "Working…"}
+      />
     </li>
+  );
+}
+
+function BalanceSummary({ payments }: { payments: StudentFeePayment[] }) {
+  const byType = Object.fromEntries(
+    payments.map((row) => [row.fee_type, row]),
+  ) as Partial<Record<FeeType, StudentFeePayment>>;
+
+  return (
+    <section className="border border-stone bg-mist/40 px-4 py-4 sm:px-5" data-tour="student-payments-balances">
+      <p className="text-[0.65rem] font-medium uppercase tracking-[0.14em] text-celadon">
+        Balances
+      </p>
+      <ul className="mt-3 space-y-3">
+        {FEE_CATALOGUE.map((fee) => {
+          const account = byType[fee.type];
+          const due = account?.amount_due_gbp ?? fee.amountGbp;
+          const paid = account?.amount_paid_gbp ?? 0;
+          const remaining = account ? feeRemaining(account) : fee.amountGbp;
+          const fullyPaid = account ? isFeeFullyPaid(account) : false;
+          const progress = due > 0 ? Math.min(100, (paid / due) * 100) : 0;
+
+          return (
+            <li key={fee.type}>
+              <div className="flex flex-wrap items-baseline justify-between gap-2 text-sm">
+                <span className="font-medium text-ink">{fee.label}</span>
+                <span className="tabular-nums text-ink/65">
+                  {formatGbp(paid)} of {formatGbp(due)}
+                  {!fullyPaid ? (
+                    <span className="text-ink/45">
+                      {" "}
+                      · {formatGbp(remaining)} left
+                    </span>
+                  ) : (
+                    <span className="text-pine"> · paid in full</span>
+                  )}
+                </span>
+              </div>
+              <div
+                className="mt-2 h-1.5 overflow-hidden bg-stone/80"
+                role="progressbar"
+                aria-valuenow={Math.round(progress)}
+                aria-valuemin={0}
+                aria-valuemax={100}
+                aria-label={`${fee.label} paid`}
+              >
+                <div
+                  className="h-full bg-pine transition-[width]"
+                  style={{ width: `${progress}%` }}
+                />
+              </div>
+            </li>
+          );
+        })}
+      </ul>
+    </section>
+  );
+}
+
+function paymentMethodLabel(
+  method: FeeTransaction["method"],
+): string {
+  if (method === "stripe") return "Card";
+  if (method === "bank_transfer") return "Bank transfer";
+  return "Payment";
+}
+
+function PaymentHistoryList({
+  transactions,
+}: {
+  transactions: FeeTransaction[];
+}) {
+  const visible = transactions.filter((tx) => tx.status !== "unpaid");
+
+  if (visible.length === 0) {
+    return (
+      <Empty>
+        No payments recorded yet. Instalments and full payments appear here once
+        submitted or confirmed.
+      </Empty>
+    );
+  }
+
+  return (
+    <ul className="divide-y divide-stone border-y border-stone">
+      {visible.map((tx) => {
+        const fee = feeDefinition(tx.fee_type);
+        const meta = FEE_STATUS_META[tx.status];
+        const when = tx.paid_at ?? tx.created_at;
+
+        return (
+          <li key={tx.id} className="py-3.5 first:pt-0 last:pb-0">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between sm:gap-3">
+              <div className="min-w-0">
+                <p className="text-[0.6rem] uppercase tracking-[0.12em] text-celadon">
+                  {fee.label} · {paymentMethodLabel(tx.method)}
+                </p>
+                <p className="mt-1 font-display text-base text-pine sm:text-lg">
+                  {formatGbp(Number(tx.amount_gbp))}
+                </p>
+                <p className="mt-1 text-xs text-ink/45">
+                  {when ? (
+                    <time dateTime={when}>
+                      {formatPaymentDateTime(when)}
+                    </time>
+                  ) : (
+                    "—"
+                  )}
+                </p>
+                {tx.status === "pending_review" && tx.proof_note ? (
+                  <p className="mt-2 text-sm leading-relaxed text-ink/60">
+                    {tx.proof_note}
+                  </p>
+                ) : null}
+              </div>
+              <span
+                className={`w-fit shrink-0 border px-2 py-1 text-[0.6rem] font-medium uppercase tracking-[0.1em] ${
+                  tx.status === "paid"
+                    ? "border-pine bg-pine text-mist"
+                    : "border-[#c4a574] text-[#6b4f2a]"
+                }`}
+              >
+                {meta.label}
+              </span>
+            </div>
+          </li>
+        );
+      })}
+    </ul>
   );
 }
 
@@ -728,4 +984,16 @@ function Empty({ children }: { children: ReactNode }) {
       {children}
     </p>
   );
+}
+
+function formatPaymentDateTime(iso: string): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return iso;
+  return new Intl.DateTimeFormat("en-GB", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(date);
 }

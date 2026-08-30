@@ -12,9 +12,19 @@ export const metadata: Metadata = {
   title: "Payments | School of Disciples Portal",
 };
 
-export default async function AdminPaymentsPage() {
+type Props = {
+  searchParams?: Promise<{ user?: string; from?: string }>;
+};
+
+export default async function AdminPaymentsPage({ searchParams }: Props) {
   const profile = await getSessionAdmin();
   if (!profile) redirect("/login/admin");
+
+  const params = (await searchParams) ?? {};
+  const initialUserId = params.user?.trim() || undefined;
+  const studentBackHref = params.from?.startsWith("student:")
+    ? `/admin/students/${params.from.slice("student:".length)}`
+    : undefined;
 
   let pending: Awaited<ReturnType<typeof listAdminPaymentQueue>> = [];
   let recent: Awaited<ReturnType<typeof listAdminPaymentQueue>> = [];
@@ -40,12 +50,11 @@ export default async function AdminPaymentsPage() {
           Fees
         </p>
         <h1 className="mt-1.5 font-display text-[clamp(1.6rem,5vw,2.4rem)] tracking-[-0.02em] text-pine">
-          Bank proofs
+          Payments
         </h1>
         <p className="mt-1.5 max-w-2xl text-sm leading-relaxed text-ink/70">
-          {isNationalAdmin(profile)
-            ? "Fee desk only — review bank transfer uploads across the UK network. Student profiles and enrolment CRUD stay on Students."
-            : "Fee desk only — review bank transfer uploads for your parish. Student profiles and enrolment CRUD stay on Students."}
+          Review bank transfer proofs on the Desk. Open Insight for how this
+          desk relates to Students and card payments.
         </p>
       </section>
 
@@ -61,6 +70,8 @@ export default async function AdminPaymentsPage() {
           pending={pending}
           recentPaid={recent}
           national={isNationalAdmin(profile)}
+          initialUserId={initialUserId}
+          studentBackHref={studentBackHref}
         />
       )}
     </div>

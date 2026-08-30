@@ -23,6 +23,10 @@ export type ZoomClass = {
   duration_minutes: number;
   attendance_threshold_percent: number;
   attendance_code: string | null;
+  /** When true, desk allows listing check-in code on the student portal. */
+  show_checkin_code_to_students?: boolean;
+  /** Populated on student reads when admin enabled portal visibility. */
+  student_checkin_code?: string | null;
   zoom_meeting_id: string | null;
   zoom_meeting_uuid: string | null;
   zoom_join_url: string | null;
@@ -61,6 +65,16 @@ export type ZoomClassAttendance = {
 
 export const DEFAULT_ATTENDANCE_THRESHOLD = 90;
 
+/** Default scheduled class / Zoom length (6 hours). */
+export const DEFAULT_CLASS_DURATION_MINUTES = 360;
+
+export type ClassSessionPhase =
+  | "upcoming"
+  | "in_window"
+  | "past"
+  | "cancelled"
+  | "ended";
+
 export function requiredSecondsForClass(
   durationMinutes: number,
   thresholdPercent: number = DEFAULT_ATTENDANCE_THRESHOLD,
@@ -83,6 +97,85 @@ export function formatDuration(seconds: number): string {
   const m = Math.floor((s % 3600) / 60);
   if (h > 0) return `${h}h ${m}m`;
   return `${m} min`;
+}
+
+export function formatDurationMinutes(minutes: number): string {
+  const m = Math.max(0, Math.round(minutes));
+  const h = Math.floor(m / 60);
+  const r = m % 60;
+  if (h > 0 && r > 0) return `${h}h ${r}m`;
+  if (h > 0) return h === 1 ? "1 hour" : `${h} hours`;
+  return `${m} min`;
+}
+
+const classDateTimeFmt = new Intl.DateTimeFormat("en-GB", {
+  weekday: "short",
+  day: "numeric",
+  month: "short",
+  year: "numeric",
+  hour: "2-digit",
+  minute: "2-digit",
+});
+
+export function formatClassDateTime(iso: string): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "—";
+  return classDateTimeFmt.format(date);
+}
+
+export function formatClassScheduleRange(
+  startIso: string,
+  endIso: string,
+): string {
+  const start = new Date(startIso);
+  const end = new Date(endIso);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
+    return "—";
+  }
+  const sameDay =
+    start.toDateString() === end.toDateString() &&
+    start.getFullYear() === end.getFullYear();
+  if (sameDay) {
+    const day = classDateTimeFmt.format(start);
+    const endTime = end.toLocaleTimeString("en-GB", {
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+    return `${day} – ${endTime}`;
+  }
+  return `${formatClassDateTime(startIso)} – ${formatClassDateTime(endIso)}`;
+}
+
+export function classSessionPhase(
+  item: Pick<ZoomClass, "scheduled_start" | "scheduled_end" | "status">,
+  now: Date = new Date(),
+): ClassSessionPhase {
+  if (item.status === "cancelled") return "cancelled";
+  if (item.status === "ended") return "ended";
+  const start = new Date(item.scheduled_start);
+  const end = new Date(item.scheduled_end);
+  const t = now.getTime();
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
+    return item.status === "live" ? "in_window" : "upcoming";
+  }
+  if (t < start.getTime()) return "upcoming";
+  if (t <= end.getTime()) return "in_window";
+  return "past";
+}
+
+export function classSessionPhaseLabel(phase: ClassSessionPhase): string {
+  switch (phase) {
+    case "upcoming":
+      return "Upcoming";
+    case "in_window":
+      return "In session window";
+    case "past":
+      return "Past scheduled window";
+    case "cancelled":
+      return "Cancelled";
+    case "ended":
+      return "Ended";
+  }
 }
 
 export function audienceLabel(

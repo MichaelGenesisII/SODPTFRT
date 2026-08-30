@@ -172,8 +172,9 @@ function normalizeYearIndex(value: unknown): number | null {
   return n;
 }
 
-function revalidateExams() {
+function revalidateExams(examId?: string) {
   revalidatePath("/admin/exams");
+  if (examId) revalidatePath(`/admin/exams/${examId}`);
   revalidatePath("/admin/records");
   revalidatePath("/student/exams");
   revalidatePath("/student/records");
@@ -394,7 +395,7 @@ export async function createExam(input: {
     .single();
 
   if (error) return actionFail(error);
-  revalidateExams();
+  revalidateExams(data.id);
   return {
     ok: true,
     message: "Exam created as draft.",
@@ -474,7 +475,7 @@ export async function updateExamMeta(
     .eq("id", examId);
 
   if (error) return actionFail(error);
-  revalidateExams();
+  revalidateExams(examId);
   return { ok: true, message: "Exam updated.", examId, slug };
 }
 
@@ -502,7 +503,7 @@ export async function setExamStatus(
     .eq("id", examId);
 
   if (error) return actionFail(error);
-  revalidateExams();
+  revalidateExams(examId);
   return {
     ok: true,
     message:
@@ -520,7 +521,7 @@ export async function deleteExam(examId: string): Promise<ExamActionResult> {
 
   const { error } = await access.supabase.from("exams").delete().eq("id", examId);
   if (error) return actionFail(error);
-  revalidateExams();
+  revalidateExams(examId);
   return { ok: true, message: "Exam deleted." };
 }
 
@@ -574,7 +575,7 @@ export async function upsertQuestion(input: {
     .update({ updated_at: new Date().toISOString() })
     .eq("id", input.exam_id);
 
-  revalidateExams();
+  revalidateExams(input.exam_id);
   return { ok: true, message: "Question saved.", examId: input.exam_id };
 }
 
@@ -591,7 +592,7 @@ export async function deleteQuestion(
     .eq("id", questionId)
     .eq("exam_id", examId);
   if (error) return actionFail(error);
-  revalidateExams();
+  revalidateExams(examId);
   return { ok: true, message: "Question removed.", examId };
 }
 
@@ -611,7 +612,7 @@ export async function reorderQuestions(
       .eq("exam_id", examId);
     if (error) return actionFail(error);
   }
-  revalidateExams();
+  revalidateExams(examId);
   return { ok: true, message: "Order updated.", examId };
 }
 
@@ -660,7 +661,7 @@ export async function importQuestionsToExam(
     .update({ updated_at: new Date().toISOString() })
     .eq("id", examId);
 
-  revalidateExams();
+  revalidateExams(examId);
   return {
     ok: true,
     message,
@@ -767,7 +768,7 @@ export async function createExamFromQuestionFile(
     };
   }
 
-  revalidateExams();
+  revalidateExams(exam.id);
   return {
     ok: true,
     message: `Draft “${title}” created with ${questions.length} question${questions.length === 1 ? "" : "s"}.`,

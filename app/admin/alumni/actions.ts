@@ -12,6 +12,8 @@ import type {
   ParsedAlumniRow,
 } from "@/lib/alumni/types";
 import { isNationalAdmin, requireSessionAdmin } from "@/lib/admin/auth";
+import { ALUMNI_PAGE_SIZE } from "@/lib/admin/alumni-desk";
+import { formatCohortLabel } from "@/lib/cohorts";
 import {
   createApplicationReference,
   createTemporaryPassword,
@@ -85,8 +87,13 @@ function mapLegacyRow(row: Record<string, unknown>): AlumniLegacyPerson {
     mobile: row.mobile ? String(row.mobile) : null,
     address_text: row.address_text ? String(row.address_text) : null,
     centre: row.centre ? String(row.centre) : null,
+    region: row.region ? String(row.region) : null,
+    parish: row.parish ? String(row.parish) : null,
+    date_of_birth: row.date_of_birth ? String(row.date_of_birth) : null,
     student_id: row.student_id ? String(row.student_id) : null,
     legacy_ref: row.legacy_ref ? String(row.legacy_ref) : null,
+    screenshot_gbp: Number(row.screenshot_gbp ?? 0),
+    bank_statement_gbp: Number(row.bank_statement_gbp ?? 0),
     tuition_paid_gbp: Number(row.tuition_paid_gbp ?? 0),
     tuition_covered: Boolean(row.tuition_covered),
     tuition_note: row.tuition_note ? String(row.tuition_note) : null,
@@ -113,24 +120,84 @@ export async function searchLegacyAlumniAction(input: {
   query: string;
   batchYear: number | null;
   portal: AlumniPortalFilter;
-}): Promise<{ rows: AlumniLegacyPerson[]; total: number }> {
+  page?: number;
+}): Promise<{
+  rows: AlumniLegacyPerson[];
+  total: number;
+  page: number;
+  pageSize: number;
+}> {
   const result = await listLegacyAlumni({
     query: input.query,
     batchYear: input.batchYear,
     portal: input.portal,
-    limit: 180,
+    page: input.page ?? 1,
+    pageSize: ALUMNI_PAGE_SIZE,
   });
-  return { rows: result.rows, total: result.total };
+  return {
+    rows: result.rows,
+    total: result.total,
+    page: result.page,
+    pageSize: result.pageSize,
+  };
+}
+
+export async function getLegacyAlumniById(
+  id: string,
+): Promise<
+  | { ok: true; person: AlumniLegacyPerson }
+  | { ok: false; message: string }
+> {
+  const actor = await requireSessionAdmin();
+  if (!isNationalAdmin(actor)) {
+    return { ok: false, message: "National desk only." };
+  }
+
+  const service = createServiceSupabaseClient();
+  const { data, error } = await service
+    .from("alumni_legacy_people")
+    .select("*")
+    .eq("id", id)
+    .maybeSingle();
+
+  if (error) {
+    console.error("[alumni] get by id", error);
+    return { ok: false, message: "Could not load this alumni record." };
+  }
+  if (!data) {
+    return { ok: false, message: "Alumni record was not found." };
+  }
+
+  const person = mapLegacyRow(data as Record<string, unknown>);
+  if (person.cohort_id) {
+    const { data: cohort } = await service
+      .from("cohorts")
+      .select("name, year_start, year_end")
+      .eq("id", person.cohort_id)
+      .maybeSingle();
+    if (cohort) {
+      person.cohort_label = formatCohortLabel({
+        name: String(cohort.name),
+        year_start: Number(cohort.year_start),
+        year_end: Number(cohort.year_end),
+      });
+    }
+  }
+
+  return { ok: true, person };
 }
 
 export async function listLegacyAlumni(input?: {
   query?: string;
   batchYear?: number | null;
   portal?: AlumniPortalFilter;
-  limit?: number;
+  page?: number;
+  pageSize?: number;
 }): Promise<{
   rows: AlumniLegacyPerson[];
   total: number;
+  page: number;
+  pageSize: number;
   batchYears: number[];
   stats: {
     total: number;
@@ -143,13 +210,17 @@ export async function listLegacyAlumni(input?: {
     return {
       rows: [],
       total: 0,
+      page: 1,
+      pageSize: ALUMNI_PAGE_SIZE,
       batchYears: [],
       stats: { total: 0, awaitingEmail: 0, portalReady: 0 },
     };
   }
 
   const service = createServiceSupabaseClient();
-  const limit = Math.min(Math.max(input?.limit ?? 120, 1), 400);
+  const pageSize = Math.min(Math.max(input?.pageSize ?? ALUMNI_PAGE_SIZE, 1), 100);
+  const page = Math.max(input?.page ?? 1, 1);
+  const offset = (page - 1) * pageSize;
   const q = (input?.query ?? "").trim();
 
   let request = service
@@ -157,7 +228,7 @@ export async function listLegacyAlumni(input?: {
     .select("*", { count: "exact" })
     .order("batch_year", { ascending: false })
     .order("display_name", { ascending: true })
-    .limit(limit);
+    .range(offset, offset + pageSize - 1);
 
   if (input?.batchYear) {
     request = request.eq("batch_year", input.batchYear);
@@ -219,6 +290,8 @@ export async function listLegacyAlumni(input?: {
   return {
     rows: (data ?? []).map((row) => mapLegacyRow(row as Record<string, unknown>)),
     total: count ?? 0,
+    page,
+    pageSize,
     batchYears,
     stats: {
       total: totalAll ?? 0,
@@ -280,8 +353,13 @@ async function upsertLegacyRow(
     mobile: row.mobile,
     address_text: row.addressText,
     centre: row.centre,
+    region: row.region,
+    parish: row.parish,
+    date_of_birth: row.dateOfBirth,
     student_id: row.studentId,
     legacy_ref: row.legacyAppComNo,
+    screenshot_gbp: row.screenshotGbp,
+    bank_statement_gbp: row.bankStatementGbp,
     tuition_paid_gbp: row.tuitionPaidGbp,
     tuition_covered: row.tuitionCovered,
     tuition_note: row.tuitionNote,
@@ -691,6 +769,7 @@ export async function assignAlumniEmail(input: {
     }
 
     revalidatePath("/admin/alumni");
+    revalidatePath(`/admin/alumni/${input.legacyId}`);
     revalidatePath("/admin/students");
 
     return {

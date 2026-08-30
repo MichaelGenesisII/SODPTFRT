@@ -34,9 +34,7 @@ export async function getStudentSupportPulse(): Promise<StudentSupportPulse> {
   try {
     const student = await requireSessionStudent();
     // Claim orphans in the background — do not block first paint after login.
-    void claimTicketsByEmail(student).catch((error) => {
-      console.error("[student/support/pulse] claim", error);
-    });
+    void claimTicketsByEmail(student);
     const supabase = await createServerSupabaseClient();
 
     const { data: tickets, error: ticketsError } = await supabase

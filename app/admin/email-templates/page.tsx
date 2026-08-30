@@ -20,9 +20,8 @@ export default async function AdminEmailTemplatesPage() {
           Email templates
         </h1>
         <p className="mt-1.5 max-w-2xl text-sm leading-relaxed text-ink/70">
-          Edit outbound email copy for the portal. Placeholders like{" "}
-          {"{{firstName}}"} are replaced when each email sends. Restore returns
-          to the built-in default.
+          Browse lifecycle email templates, then open one to edit, preview with
+          sample data, save overrides, or restore the built-in default.
         </p>
       </section>
 

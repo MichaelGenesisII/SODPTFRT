@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { redirect } from "next/navigation";
@@ -58,9 +59,9 @@ export default async function AdminStudentsPage() {
         </h1>
         <p className="mt-1.5 max-w-2xl text-sm leading-relaxed text-ink/70">
           {isNationalAdmin(profile)
-            ? "Search the full UK cohort and open a student file — profile, application, attendance and exams — then manage placement, contact, or account."
-            : "Search students enrolled in your parish and open a file — profile, application, attendance and exams — then manage placement, contact, or account."}{" "}
-          Bank proof review lives on{" "}
+            ? "Browse and filter the full UK cohort, then open a student file to manage placement, contact, or account."
+            : "Browse and filter students in your parish, then open a file to manage placement, contact, or account."}{" "}
+          The list is view-only — all changes happen on the student file page. Bank proof review lives on{" "}
           <Link href="/admin/payments" className="font-medium text-pine underline">
             Payments
           </Link>
@@ -76,12 +77,20 @@ export default async function AdminStudentsPage() {
           {loadError}
         </div>
       ) : (
-        <StudentsManager
-          students={students}
-          profile={profile}
-          parishes={parishes}
-          batches={batches}
-        />
+        <Suspense
+          fallback={
+            <div className="border border-stone bg-mist/40 px-4 py-12 text-center text-sm text-ink/50">
+              Loading students…
+            </div>
+          }
+        >
+          <StudentsManager
+            students={students}
+            profile={profile}
+            parishes={parishes}
+            batches={batches}
+          />
+        </Suspense>
       )}
     </div>
   );

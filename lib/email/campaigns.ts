@@ -1,3 +1,9 @@
+export type CampaignPaymentLane =
+  | "all"
+  | "unpaid"
+  | "pending_review"
+  | "paid";
+
 export type CampaignTemplateId = "custom";
 
 /** Max recipients sent per campaign batch. */
@@ -45,7 +51,10 @@ export type CampaignRecipient = {
   is_active: boolean;
   parish_id: string | null;
   parish_name: string | null;
+  cohort_id: string | null;
+  cohort_name: string | null;
   batch_id: string | null;
   batch_name: string | null;
+  saturday_slot: 1 | 2 | 3 | 4 | null;
   payment_status: string | null;
 };

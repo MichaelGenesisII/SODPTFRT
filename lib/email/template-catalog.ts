@@ -17,6 +17,67 @@ export type EmailTemplateSlug =
   | "campaign"
   | "manuals-sent";
 
+export type EmailTemplateCategory =
+  | "enrolment"
+  | "payments"
+  | "student"
+  | "classes"
+  | "support"
+  | "admin"
+  | "marketing";
+
+export const EMAIL_TEMPLATE_CATEGORY_LABELS: Record<
+  EmailTemplateCategory,
+  string
+> = {
+  enrolment: "Enrolment",
+  payments: "Payments",
+  student: "Student account",
+  classes: "Classes & records",
+  support: "Support",
+  admin: "Admin access",
+  marketing: "Campaigns",
+};
+
+export const EMAIL_TEMPLATE_CATEGORIES: EmailTemplateCategory[] = [
+  "enrolment",
+  "payments",
+  "student",
+  "classes",
+  "support",
+  "admin",
+  "marketing",
+];
+
+export const EMAIL_TEMPLATE_CATEGORY: Record<
+  EmailTemplateSlug,
+  EmailTemplateCategory
+> = {
+  "enrolment-confirmation": "enrolment",
+  "enrolment-access-recovery": "enrolment",
+  "payment-received": "payments",
+  "payment-approved": "payments",
+  "payment-proof-received": "payments",
+  "payment-returned": "payments",
+  "student-suspended": "student",
+  "student-removed": "student",
+  "student-temp-password": "student",
+  "manuals-sent": "student",
+  "class-invite": "classes",
+  "student-scorecard": "classes",
+  "exam-result-certificate": "classes",
+  "ticket-reply": "support",
+  "admin-welcome": "admin",
+  "admin-access-recovery": "admin",
+  campaign: "marketing",
+};
+
+export function templateCategoryForSlug(
+  slug: EmailTemplateSlug,
+): EmailTemplateCategory {
+  return EMAIL_TEMPLATE_CATEGORY[slug];
+}
+
 export type EmailTemplateCatalogEntry = {
   slug: EmailTemplateSlug;
   label: string;

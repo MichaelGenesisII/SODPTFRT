@@ -9,13 +9,7 @@ import {
 import Link from "next/link";
 import {
   getAdminStudentPathDetail,
-  reassignEnrolmentBatch,
-  resetStudentPassword,
-  setManualsSent,
-  sendManualsPart,
-  setStudentActive,
   unlockStudentExamMonth,
-  upgradeAlumniToStudent,
   updateEnrolmentContact,
   updateEnrolmentStatus,
   updatePaymentStatus,
@@ -30,6 +24,7 @@ import {
   PAYMENT_STATUS_META,
   PAYMENT_STATUSES,
   studentFullName,
+  type AdminEnrolmentRecord,
   type AdminStudentRecord,
 } from "@/lib/admin/students";
 import { isNationalAdmin, type AdminProfile } from "@/lib/admin/profile";
@@ -39,11 +34,29 @@ import {
   ACCOUNT_KIND_LABELS,
 } from "@/lib/student/account";
 import { formatBatchLabel, formatBatchPlacementLabel, type Batch, type Parish } from "@/lib/parishes";
+import { formatCohortLabel } from "@/lib/cohorts";
+import { SATURDAY_SLOT_LABELS } from "@/lib/cohorts/saturday";
 
 const fieldClass =
   "w-full border border-stone bg-white/70 px-3 py-2 text-sm outline-none focus:border-pine";
 
 type DossierTab = "profile" | "application" | "path" | "manage";
+
+export type StudentPendingConfirm =
+  | { kind: "delete" }
+  | { kind: "pause" }
+  | { kind: "reactivate" }
+  | { kind: "password" }
+  | { kind: "clearManuals" }
+  | { kind: "upgrade" }
+  | { kind: "sendManuals"; part: 1 | 2 | 3 }
+  | {
+      kind: "savePlacement";
+      enrolmentId: string;
+      parishId: string;
+      batchId: string;
+      reason: string;
+    };
 
 type Props = {
   student: AdminStudentRecord;
@@ -56,17 +69,30 @@ type Props = {
   pending: boolean;
   busyLabel: string | null;
   revealedPassword: string | null;
+  backHref?: string;
   onBack?: () => void;
   onRun: (
     action: () => Promise<StudentActionResult>,
     options?: { clearPassword?: boolean; label?: string },
   ) => void;
-  onDeleteRequest: () => void;
+  onRequestConfirm: (confirm: StudentPendingConfirm) => void;
   onCopyPassword: (value: string) => void;
 };
 
 function programmeLabel(mode: string) {
   return ATTENDANCE_MODES.find((item) => item.value === mode)?.label ?? mode;
+}
+
+function formatEnrolmentCohort(enrol: AdminEnrolmentRecord): string | null {
+  if (!enrol.cohort_name) return null;
+  if (enrol.cohort_year_start != null && enrol.cohort_year_end != null) {
+    return formatCohortLabel({
+      name: enrol.cohort_name,
+      year_start: enrol.cohort_year_start,
+      year_end: enrol.cohort_year_end,
+    });
+  }
+  return enrol.cohort_name;
 }
 
 function DetailRow({
@@ -118,9 +144,10 @@ export function StudentDossier({
   pending,
   busyLabel,
   revealedPassword,
+  backHref,
   onBack,
   onRun,
-  onDeleteRequest,
+  onRequestConfirm,
   onCopyPassword,
 }: Props) {
   const national = isNationalAdmin(profile);
@@ -186,7 +213,14 @@ export function StudentDossier({
   return (
     <div className="animate-panel-in">
       <header className="border-b border-stone px-3 py-4 sm:px-6 sm:py-5">
-        {onBack ? (
+        {backHref ? (
+          <Link
+            href={backHref}
+            className="mb-3 inline-flex items-center gap-1.5 text-sm font-medium text-pine hover:underline"
+          >
+            <span aria-hidden>←</span> Back to students
+          </Link>
+        ) : onBack ? (
           <button
             type="button"
             onClick={onBack}
@@ -357,7 +391,7 @@ export function StudentDossier({
             onAssignBatch={setAssignBatchId}
             onAssignReason={setAssignReason}
             onRun={onRun}
-            onDeleteRequest={onDeleteRequest}
+            onRequestConfirm={onRequestConfirm}
             onCopyPassword={onCopyPassword}
           />
         ) : null}
@@ -413,6 +447,10 @@ function ProfilePane({
           <DetailRow label="Region" value={enrol.parish_region} />
           <DetailRow label="Parish" value={enrol.parish_name} />
           <DetailRow
+            label="Cohort"
+            value={formatEnrolmentCohort(enrol)}
+          />
+          <DetailRow
             label="Batch"
             value={
               enrol.batch_name
@@ -421,6 +459,15 @@ function ProfilePane({
                     year: enrol.batch_year ?? 0,
                   })
                 : null
+            }
+          />
+          <DetailRow
+            label="Saturday"
+            value={
+              enrol.saturday_label ??
+              (enrol.saturday_slot
+                ? SATURDAY_SLOT_LABELS[enrol.saturday_slot]
+                : null)
             }
           />
           <DetailRow label="Assembly" value={enrol.local_church} />
@@ -568,10 +615,10 @@ function PathPane({
           </p>
         </div>
         <Link
-          href="/admin/records"
+          href={`/admin/records/${student.id}`}
           className="text-sm font-medium text-pine underline decoration-pine/30 underline-offset-4"
         >
-          Open Records desk →
+          Open scorecard →
         </Link>
       </div>
 
@@ -748,7 +795,7 @@ function ManagePane({
   onAssignBatch,
   onAssignReason,
   onRun,
-  onDeleteRequest,
+  onRequestConfirm,
   onCopyPassword,
 }: {
   student: AdminStudentRecord;
@@ -771,7 +818,7 @@ function ManagePane({
     action: () => Promise<StudentActionResult>,
     options?: { clearPassword?: boolean; label?: string },
   ) => void;
-  onDeleteRequest: () => void;
+  onRequestConfirm: (confirm: StudentPendingConfirm) => void;
   onCopyPassword: (value: string) => void;
 }) {
   const enrol = student.enrolment;
@@ -829,7 +876,7 @@ function ManagePane({
               </label>
               {enrol.payment_status === "pending_review" ? (
                 <Link
-                  href="/admin/payments"
+                  href={`/admin/payments?user=${student.id}&from=${encodeURIComponent(`student:${student.id}`)}`}
                   className="inline-flex text-sm font-medium text-pine underline"
                 >
                   Review bank proof on Payments →
@@ -941,18 +988,16 @@ function ManagePane({
               <button
                 type="button"
                 disabled={pending || !assignParishId || !assignBatchId}
-                onClick={() =>
-                  onRun(
-                    () =>
-                      reassignEnrolmentBatch(
-                        enrol.id,
-                        assignParishId,
-                        assignBatchId,
-                        { reason: assignReason },
-                      ),
-                    { label: "Saving placement…" },
-                  )
-                }
+                onClick={() => {
+                  if (!enrol) return;
+                  onRequestConfirm({
+                    kind: "savePlacement",
+                    enrolmentId: enrol.id,
+                    parishId: assignParishId,
+                    batchId: assignBatchId,
+                    reason: assignReason,
+                  });
+                }}
                 className="inline-flex min-h-[2.5rem] min-w-[8.5rem] items-center justify-center border border-pine px-4 py-2.5 text-sm font-medium text-pine hover:bg-pine hover:text-mist disabled:opacity-50"
               >
                 {pending && busyLabel?.startsWith("Saving placement") ? (
@@ -1009,8 +1054,9 @@ function ManagePane({
                   type="button"
                   disabled={pending || Boolean(item.at)}
                   onClick={() =>
-                    onRun(() => sendManualsPart(student.id, item.part), {
-                      label: `Sending manuals ${item.part}…`,
+                    onRequestConfirm({
+                      kind: "sendManuals",
+                      part: item.part,
                     })
                   }
                   className="inline-flex min-h-[2.25rem] min-w-[7.5rem] items-center justify-center border border-pine/25 px-3 py-1.5 text-sm font-medium text-pine hover:border-pine disabled:opacity-45"
@@ -1033,11 +1079,7 @@ function ManagePane({
             <button
               type="button"
               disabled={pending}
-              onClick={() =>
-                onRun(() => setManualsSent(student.id, false), {
-                  label: "Clearing manuals…",
-                })
-              }
+              onClick={() => onRequestConfirm({ kind: "clearManuals" })}
               className="mt-3 text-xs font-medium text-ink/50 underline hover:text-pine disabled:opacity-50"
             >
               Clear all manuals sends
@@ -1058,11 +1100,7 @@ function ManagePane({
             <button
               type="button"
               disabled={pending}
-              onClick={() =>
-                onRun(() => upgradeAlumniToStudent(student.id), {
-                  label: "Upgrading seat…",
-                })
-              }
+              onClick={() => onRequestConfirm({ kind: "upgrade" })}
               className="mt-4 inline-flex min-h-[2.5rem] min-w-[11rem] items-center justify-center border border-pine px-4 py-2.5 text-sm font-medium text-pine hover:bg-pine hover:text-mist disabled:opacity-50"
             >
               {pending && busyLabel?.startsWith("Upgrading") ? (
@@ -1084,14 +1122,9 @@ function ManagePane({
               type="button"
               disabled={pending}
               onClick={() =>
-                onRun(
-                  () => setStudentActive(student.id, !student.is_active),
-                  {
-                    label: student.is_active
-                      ? "Pausing seat…"
-                      : "Reactivating…",
-                  },
-                )
+                onRequestConfirm({
+                  kind: student.is_active ? "pause" : "reactivate",
+                })
               }
               className="inline-flex min-h-[2.5rem] min-w-[6.5rem] items-center justify-center border border-pine/25 px-4 py-2.5 text-sm font-medium text-pine hover:border-pine disabled:opacity-50"
             >
@@ -1108,11 +1141,7 @@ function ManagePane({
             <button
               type="button"
               disabled={pending}
-              onClick={() =>
-                onRun(() => resetStudentPassword(student.id), {
-                  label: "Resetting password…",
-                })
-              }
+              onClick={() => onRequestConfirm({ kind: "password" })}
               className="inline-flex min-h-[2.5rem] min-w-[10rem] items-center justify-center border border-pine/25 px-4 py-2.5 text-sm font-medium text-pine hover:border-pine disabled:opacity-50"
             >
               {pending && busyLabel?.startsWith("Resetting") ? (
@@ -1124,7 +1153,7 @@ function ManagePane({
             <button
               type="button"
               disabled={pending}
-              onClick={onDeleteRequest}
+              onClick={() => onRequestConfirm({ kind: "delete" })}
               className="border border-red-800/30 px-4 py-2.5 text-sm font-medium text-red-800 hover:bg-red-50 disabled:opacity-50"
             >
               Remove student

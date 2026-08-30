@@ -9,6 +9,7 @@ import {
   type TakeActionResult,
 } from "@/app/exam/actions";
 import { ExamRunner } from "@/components/exam/exam-runner";
+import { DeskConfirmModal } from "@/components/ui/desk-confirm-modal";
 import { DeskLoaderOverlay } from "@/components/ui/desk-loader";
 import { publicActionMessage } from "@/lib/safe-action-message";
 import { attemptHasFinalScore } from "@/lib/exams/attempt-status";
@@ -101,6 +102,9 @@ export function StudentExamClient({
   const [attempt, setAttempt] = useState(initialAttempt);
   const [provisional, setProvisional] = useState(initialProvisional ?? null);
   const [live, setLive] = useState(false);
+  const [confirmBegin, setConfirmBegin] = useState<"begin" | "retake" | null>(
+    null,
+  );
 
   function beginAttempt(label: string) {
     setBusyLabel(label);
@@ -139,6 +143,7 @@ export function StudentExamClient({
         });
         setProvisional(null);
         setLive(true);
+        setConfirmBegin(null);
       } finally {
         setBusyLabel(null);
       }
@@ -267,7 +272,7 @@ export function StudentExamClient({
             <button
               type="button"
               disabled={busy}
-              onClick={() => beginAttempt("Starting retake…")}
+              onClick={() => setConfirmBegin("retake")}
               className="mt-3 bg-pine px-5 py-3 text-sm font-medium text-mist disabled:opacity-50"
             >
               {busy ? "Starting…" : "Start retake"}
@@ -281,6 +286,20 @@ export function StudentExamClient({
         >
           Back to exams
         </Link>
+
+        <BeginConfirmModal
+          open={Boolean(confirmBegin)}
+          busy={busy}
+          busyLabel={busyLabel}
+          confirmBegin={confirmBegin}
+          exam={exam}
+          onClose={() => !busy && setConfirmBegin(null)}
+          onConfirm={() =>
+            beginAttempt(
+              confirmBegin === "retake" ? "Starting retake…" : "Starting exam…",
+            )
+          }
+        />
       </div>
     );
   }
@@ -337,7 +356,7 @@ export function StudentExamClient({
       <button
         type="button"
         disabled={busy || Boolean(windowClosed) || locked}
-        onClick={() => beginAttempt("Starting exam…")}
+        onClick={() => setConfirmBegin("begin")}
         className="mt-6 bg-pine px-5 py-3 text-sm font-medium text-mist disabled:opacity-50"
       >
         {busy
@@ -353,6 +372,64 @@ export function StudentExamClient({
           Need help? Contact Admin to unlock attendance for this month.
         </p>
       ) : null}
+
+      <BeginConfirmModal
+        open={Boolean(confirmBegin)}
+        busy={busy}
+        busyLabel={busyLabel}
+        confirmBegin={confirmBegin}
+        exam={exam}
+        onClose={() => !busy && setConfirmBegin(null)}
+        onConfirm={() =>
+          beginAttempt(
+            confirmBegin === "retake" ? "Starting retake…" : "Starting exam…",
+          )
+        }
+      />
     </div>
+  );
+}
+
+function BeginConfirmModal({
+  open,
+  busy,
+  busyLabel,
+  confirmBegin,
+  exam,
+  onClose,
+  onConfirm,
+}: {
+  open: boolean;
+  busy: boolean;
+  busyLabel: string | null;
+  confirmBegin: "begin" | "retake" | null;
+  exam: Exam;
+  onClose: () => void;
+  onConfirm: () => void;
+}) {
+  return (
+    <DeskConfirmModal
+      open={open}
+      onClose={onClose}
+      onConfirm={onConfirm}
+      eyebrow={confirmBegin === "retake" ? "Retake" : "Begin sitting"}
+      title={
+        confirmBegin === "retake" ? "Start your retake?" : "Begin this exam?"
+      }
+      body={
+        <>
+          The {exam.duration_minutes}-minute timer starts now. Answers autosave as
+          you go. You have one retake for this paper
+          {exam.counts_toward_record
+            ? " — released scores count toward Records."
+            : "."}
+        </>
+      }
+      confirmLabel={confirmBegin === "retake" ? "Start retake" : "Begin exam"}
+      busy={busy}
+      busyLabel={
+        confirmBegin === "retake" ? "Starting retake…" : "Starting exam…"
+      }
+    />
   );
 }

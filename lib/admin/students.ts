@@ -2,6 +2,10 @@ import type {
   EnrolmentStatus,
   PaymentStatus,
 } from "@/lib/student/types";
+import {
+  isFeeFullyPaid,
+  type FeeType,
+} from "@/lib/payments/fees";
 
 export type AdminEnrolmentRecord = {
   id: string;
@@ -56,6 +60,9 @@ export type AdminEnrolmentRecord = {
   cohort_name?: string | null;
   cohort_year_start?: number | null;
   cohort_year_end?: number | null;
+  saturday_cohort_id?: string | null;
+  saturday_slot?: 1 | 2 | 3 | 4 | null;
+  saturday_label?: string | null;
 };
 
 export type StudentFeeSnap = {
@@ -137,6 +144,20 @@ export function studentFullName(student: AdminStudentRecord): string {
   return [student.first_name, student.middle_name, student.last_name]
     .filter(Boolean)
     .join(" ");
+}
+
+export function studentFeeSnap(
+  student: AdminStudentRecord,
+  feeType: FeeType,
+): StudentFeeSnap | undefined {
+  return student.fees.find((fee) => fee.fee_type === feeType);
+}
+
+export function isStudentFeePaid(
+  fee: StudentFeeSnap | null | undefined,
+): boolean {
+  if (!fee) return false;
+  return fee.status === "paid" || isFeeFullyPaid(fee);
 }
 
 export function formatAdminDate(iso?: string | null): string {

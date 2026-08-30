@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 import { getOwnStudentRecord } from "@/app/student/records/actions";
-import { StudentRecordsClient } from "@/components/student/student-records";
+import { StudentRecordsClient, StudentRecordsRefresh } from "@/components/student/student-records";
 import { computeGraduationEligibility } from "@/lib/graduation/eligibility";
 import { publicActionMessage } from "@/lib/safe-action-message";
 import { getSessionStudent } from "@/lib/student/auth";
@@ -37,7 +37,8 @@ export default async function StudentRecordsPage() {
   }
 
   return (
-    <div className="mx-auto w-full max-w-4xl">
+    <StudentRecordsRefresh>
+      <div className="mx-auto w-full max-w-4xl">
       <section className="animate-fade-rise mb-4 px-0 sm:mb-6">
         <p className="text-[0.65rem] font-medium uppercase tracking-[0.18em] text-celadon">
           Your path
@@ -66,6 +67,7 @@ export default async function StudentRecordsPage() {
           graduationEligibility={graduationEligibility}
         />
       )}
-    </div>
+      </div>
+    </StudentRecordsRefresh>
   );
 }

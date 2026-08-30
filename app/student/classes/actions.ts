@@ -170,6 +170,9 @@ function mapStudentClass(row: Record<string, unknown>): ZoomClass {
     duration_minutes: Number(row.duration_minutes),
     attendance_threshold_percent: Number(row.attendance_threshold_percent),
     attendance_code: null,
+    show_checkin_code_to_students: false,
+    student_checkin_code:
+      (row.student_checkin_code as string | null)?.trim() || null,
     zoom_meeting_id: (row.zoom_meeting_id as string | null) ?? null,
     zoom_meeting_uuid: (row.zoom_meeting_uuid as string | null) ?? null,
     zoom_join_url: (row.zoom_join_url as string | null) ?? null,
@@ -445,15 +448,22 @@ export async function getInPortalJoinSession(
       .filter(Boolean)
       .join(" ")
       .trim();
+    const meetingNumber = String(klass.zoom_meeting_id).replace(/\D/g, "");
+    if (!meetingNumber) {
+      return {
+        ok: false,
+        message: "This class has no Zoom meeting to join in the portal.",
+      };
+    }
     return {
       ok: true,
       session: {
         signature: createMeetingSdkSignature({
-          meetingNumber: String(klass.zoom_meeting_id),
+          meetingNumber,
           role: 0,
         }),
         sdkKey: process.env.ZOOM_MEETING_SDK_KEY!,
-        meetingNumber: String(klass.zoom_meeting_id),
+        meetingNumber,
         password: klass.zoom_passcode ?? "",
         userName: displayName || profile.email,
         userEmail: profile.email,

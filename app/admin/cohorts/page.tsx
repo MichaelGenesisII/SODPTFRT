@@ -25,8 +25,8 @@ export default async function AdminCohortsPage() {
           Cohorts
         </h1>
         <p className="mt-1.5 max-w-2xl text-sm leading-relaxed text-ink/70">
-          Year → cohort → batch. Create programme cohorts (SP 2022/23, EP May
-          2023, etc.) and link batches from Parishes.
+          Year → cohort → batch on the Desk. Open Insight for the full placement
+          flow and how this differs from the Students Saturday filter.
         </p>
       </section>
 

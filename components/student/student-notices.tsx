@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useState, type ReactNode } from "react";
 import { NoticeAttachmentList, NoticeFilesMark } from "@/components/notices/notice-attachments";
+import { DeskConfirmModal } from "@/components/ui/desk-confirm-modal";
 import {
   formatAnnouncementDate,
   isSafeAnnouncementHref,
@@ -11,18 +12,39 @@ import {
 
 type NoticesTab = "latest" | "earlier";
 
+type PendingExternal =
+  | { kind: "link"; href: string; label: string }
+  | { kind: "attachment"; href: string; action: "view" | "download"; fileName: string };
+
 function isExternalHref(href: string) {
   return href.startsWith("http://") || href.startsWith("https://");
+}
+
+function openExternal(href: string, download?: string) {
+  if (download) {
+    const anchor = document.createElement("a");
+    anchor.href = href;
+    anchor.download = download;
+    anchor.rel = "noopener noreferrer";
+    anchor.target = "_blank";
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    return;
+  }
+  window.open(href, "_blank", "noopener,noreferrer");
 }
 
 function NoticeLink({
   href,
   label,
   tone = "pine",
+  onExternalNavigate,
 }: {
   href: string;
   label: string;
   tone?: "pine" | "mist" | "parchment";
+  onExternalNavigate?: (payload: { href: string; label: string }) => void;
 }) {
   if (!isSafeAnnouncementHref(href)) {
     return null;
@@ -36,6 +58,18 @@ function NoticeLink({
         : "mt-4 inline-flex min-h-11 items-center border border-pine/25 px-4 py-2.5 text-sm font-medium text-pine transition-colors hover:border-pine";
 
   if (isExternalHref(href)) {
+    if (onExternalNavigate) {
+      return (
+        <button
+          type="button"
+          onClick={() => onExternalNavigate({ href, label })}
+          className={className}
+        >
+          {label}
+        </button>
+      );
+    }
+
     return (
       <a
         href={href}
@@ -58,15 +92,22 @@ function NoticeLink({
 function NoticeAttachments({
   notice,
   tone = "pine",
+  onExternalNavigate,
 }: {
   notice: Announcement;
   tone?: "pine" | "mist" | "parchment";
+  onExternalNavigate?: (payload: {
+    href: string;
+    action: "view" | "download";
+    fileName: string;
+  }) => void;
 }) {
   return (
     <NoticeAttachmentList
       files={notice.attachments}
       tone={tone}
       className="mt-3"
+      onExternalNavigate={onExternalNavigate}
     />
   );
 }
@@ -76,6 +117,9 @@ export function StudentNoticesBoard({ notices }: { notices: Announcement[] }) {
   const earlier = notices.slice(1);
   const [tab, setTab] = useState<NoticesTab>("latest");
   const [openId, setOpenId] = useState<string | null>(earlier[0]?.id ?? null);
+  const [pendingExternal, setPendingExternal] = useState<PendingExternal | null>(
+    null,
+  );
 
   const tabs: { id: NoticesTab; label: string; hint?: string }[] = [
     { id: "latest", label: "Latest" },
@@ -86,9 +130,33 @@ export function StudentNoticesBoard({ notices }: { notices: Announcement[] }) {
     },
   ];
 
+  function requestExternalLink(payload: { href: string; label: string }) {
+    setPendingExternal({ kind: "link", ...payload });
+  }
+
+  function requestAttachment(payload: {
+    href: string;
+    action: "view" | "download";
+    fileName: string;
+  }) {
+    setPendingExternal({ kind: "attachment", ...payload });
+  }
+
+  function confirmExternal() {
+    if (!pendingExternal) return;
+    if (pendingExternal.kind === "link") {
+      openExternal(pendingExternal.href);
+    } else if (pendingExternal.action === "download") {
+      openExternal(pendingExternal.href, pendingExternal.fileName);
+    } else {
+      openExternal(pendingExternal.href);
+    }
+    setPendingExternal(null);
+  }
+
   return (
     <div className="mx-auto w-full max-w-5xl space-y-4 sm:space-y-5">
-      <section className="animate-fade-rise border border-[#c4a574]/30 bg-[#f7f1e6] px-4 py-5 sm:px-6 sm:py-7">
+      <section className="animate-fade-rise border border-[#c4a574]/30 bg-[#f7f1e6] px-4 py-5 sm:px-6 sm:py-7" data-tour="student-notices-header">
         <p className="text-[0.65rem] font-medium uppercase tracking-[0.18em] text-[#6b4f2a]/75">
           Student board
         </p>
@@ -191,12 +259,17 @@ export function StudentNoticesBoard({ notices }: { notices: Announcement[] }) {
                 <p className="mt-3 max-w-2xl whitespace-pre-wrap break-words text-sm leading-relaxed text-mist/75 sm:mt-4 sm:text-base">
                   {featured.body}
                 </p>
-                <NoticeAttachments notice={featured} tone="mist" />
+                <NoticeAttachments
+                  notice={featured}
+                  tone="mist"
+                  onExternalNavigate={requestAttachment}
+                />
                 {featured.href ? (
                   <NoticeLink
                     href={featured.href}
                     label={featured.hrefLabel ?? "Read more"}
                     tone="mist"
+                    onExternalNavigate={requestExternalLink}
                   />
                 ) : null}
               </div>
@@ -231,7 +304,7 @@ export function StudentNoticesBoard({ notices }: { notices: Announcement[] }) {
                             )
                           }
                           aria-expanded={open}
-              className="flex w-full items-start gap-3 py-3.5 pr-16 text-left sm:gap-4 sm:pr-20"
+                          className="flex w-full items-start gap-3 py-3.5 pr-16 text-left sm:gap-4 sm:pr-20"
                         >
                           <span className="mt-0.5 hidden w-8 shrink-0 font-display text-xl tabular-nums text-[#c4a574] sm:block">
                             {String(index + 2).padStart(2, "0")}
@@ -263,12 +336,17 @@ export function StudentNoticesBoard({ notices }: { notices: Announcement[] }) {
                             <p className="whitespace-pre-wrap break-words text-sm leading-relaxed text-ink/65">
                               {notice.body}
                             </p>
-                            <NoticeAttachments notice={notice} tone="parchment" />
+                            <NoticeAttachments
+                              notice={notice}
+                              tone="parchment"
+                              onExternalNavigate={requestAttachment}
+                            />
                             {notice.href ? (
                               <NoticeLink
                                 href={notice.href}
                                 label={notice.hrefLabel ?? "Read more"}
                                 tone="parchment"
+                                onExternalNavigate={requestExternalLink}
                               />
                             ) : null}
                           </div>
@@ -282,6 +360,44 @@ export function StudentNoticesBoard({ notices }: { notices: Announcement[] }) {
           ) : null}
         </>
       )}
+
+      <DeskConfirmModal
+        open={Boolean(pendingExternal)}
+        onClose={() => setPendingExternal(null)}
+        onConfirm={confirmExternal}
+        eyebrow="Leave the portal"
+        title={
+          pendingExternal?.kind === "attachment"
+            ? pendingExternal.action === "download"
+              ? "Download this file?"
+              : "Open this file?"
+            : "Open this link?"
+        }
+        body={
+          pendingExternal?.kind === "attachment" ? (
+            <>
+              You are about to{" "}
+              {pendingExternal.action === "download" ? "download" : "open"}{" "}
+              <span className="font-medium text-ink">
+                {pendingExternal.fileName}
+              </span>{" "}
+              in a new tab. The School hosts this file outside the notice board.
+            </>
+          ) : pendingExternal?.kind === "link" ? (
+            <>
+              <span className="font-medium text-ink">{pendingExternal.label}</span>{" "}
+              opens on an external site. You will leave the student portal.
+            </>
+          ) : null
+        }
+        confirmLabel={
+          pendingExternal?.kind === "attachment"
+            ? pendingExternal.action === "download"
+              ? "Download file"
+              : "Open file"
+            : "Continue"
+        }
+      />
     </div>
   );
 }

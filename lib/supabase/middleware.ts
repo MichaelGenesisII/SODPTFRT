@@ -1,6 +1,7 @@
 import { createServerClient, type CookieOptions } from "@supabase/ssr";
 import type { SupabaseClient, User } from "@supabase/supabase-js";
 import { NextResponse, type NextRequest } from "next/server";
+import { isStaleRefreshAuthError } from "@/lib/supabase/auth-errors";
 
 type MiddlewareSession = {
   supabase: SupabaseClient | null;
@@ -10,8 +11,7 @@ type MiddlewareSession = {
 
 /**
  * Refreshes the auth cookie and resolves the caller in a single round trip.
- * Every /admin request passes through here, so it validates the session once
- * and hands the client back for any follow-up query.
+ * Stale refresh tokens are cleared so the request continues as a guest.
  */
 export async function createMiddlewareSession(
   request: NextRequest,
@@ -50,7 +50,14 @@ export async function createMiddlewareSession(
 
   const {
     data: { user },
+    error,
   } = await supabase.auth.getUser();
 
-  return { supabase, response, user };
+  if (error && isStaleRefreshAuthError(error)) {
+    // Drop dead session cookies so the next request does not keep failing.
+    await supabase.auth.signOut({ scope: "local" }).catch(() => undefined);
+    return { supabase, response, user: null };
+  }
+
+  return { supabase, response, user: user ?? null };
 }

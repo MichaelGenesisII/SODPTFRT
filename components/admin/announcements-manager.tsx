@@ -28,13 +28,15 @@ import {
 } from "@/lib/announcements";
 import { isNationalAdmin, type AdminProfile } from "@/lib/admin/profile";
 import { formatBatchLabel, type Batch, type Parish } from "@/lib/parishes";
+import { DeskPagination } from "@/lib/ui/desk-pagination";
 
 const NOTIC_PAGE_SIZE = 8;
 
 const fieldClass =
   "w-full border border-stone bg-white/70 px-4 py-3 text-sm outline-none transition-[border-color,background-color] duration-300 focus:border-pine focus:bg-mist";
 
-type Panel = "live" | "drafts" | "compose" | "preview" | "insight";
+type PageView = "desk" | "insight";
+type ListTab = "live" | "drafts" | "preview";
 type AudienceFilter = "all" | AnnouncementAudience;
 
 type AnnouncementsManagerProps = {
@@ -80,6 +82,23 @@ function canManageNotice(
   );
 }
 
+function noticeScopeLabel(
+  item: AdminAnnouncementRecord,
+  parishes: Pick<Parish, "id" | "name">[],
+  batches: Pick<Batch, "id" | "parish_id" | "name" | "year">[],
+): string {
+  if (audienceOf(item) === "general") return "Home page";
+  if (!item.parish_id) return "All UK students";
+  const parish = parishes.find((p) => p.id === item.parish_id);
+  if (item.batch_id) {
+    const batch = batches.find((b) => b.id === item.batch_id);
+    return batch
+      ? `${parish?.name ?? "Parish"} · ${formatBatchLabel(batch)}`
+      : (parish?.name ?? "Parish students");
+  }
+  return parish?.name ?? "Parish students";
+}
+
 function AudiencePill({ audience }: { audience: AnnouncementAudience }) {
   const meta = AUDIENCE_META[audience];
   const students = audience === "students";
@@ -95,51 +114,6 @@ function AudiencePill({ audience }: { audience: AnnouncementAudience }) {
       />
       {meta.short}
     </span>
-  );
-}
-
-function SlotMeter({
-  label,
-  filled,
-  max,
-  tone,
-  pulse,
-}: {
-  label: string;
-  filled: number;
-  max: number;
-  tone: "general" | "students";
-  pulse?: boolean;
-}) {
-  return (
-    <div className="min-w-0 flex-1">
-      <div className="flex items-baseline justify-between gap-2">
-        <p className="text-[0.65rem] font-medium uppercase tracking-[0.14em] text-ink/50">
-          {label}
-        </p>
-        <p className="text-xs tabular-nums text-ink/55">
-          <span className="font-medium text-ink">
-            {filled}/{max}
-          </span>
-        </p>
-      </div>
-      <div className="mt-2 flex gap-1" aria-hidden>
-        {Array.from({ length: max }).map((_, index) => (
-          <span
-            key={index}
-            className={`h-2 flex-1 transition-colors ${
-              index < filled
-                ? tone === "students"
-                  ? "bg-[#c4a574]"
-                  : pulse
-                    ? "animate-pulse-soft bg-pine"
-                    : "bg-pine"
-                : "bg-stone"
-            }`}
-          />
-        ))}
-      </div>
-    </div>
   );
 }
 
@@ -328,14 +302,22 @@ export function AnnouncementsManager({
 }: AnnouncementsManagerProps) {
   const { success, error } = useToast();
   const national = isNationalAdmin(profile);
-  const [panel, setPanel] = useState<Panel>("live");
+  const [pageView, setPageView] = useState<PageView>("desk");
+  const [listTab, setListTab] = useState<ListTab>("live");
+  const [composing, setComposing] = useState(false);
   const [pending, startTransition] = useTransition();
   const [busyLabel, setBusyLabel] = useState<string | null>(null);
   const busy = pending || Boolean(busyLabel);
   const [editing, setEditing] = useState<AdminAnnouncementRecord | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
-  const [pendingDelete, setPendingDelete] =
-    useState<AdminAnnouncementRecord | null>(null);
+  const [pendingConfirm, setPendingConfirm] = useState<
+    | { kind: "delete"; item: AdminAnnouncementRecord }
+    | { kind: "unpublish"; item: AdminAnnouncementRecord }
+    | { kind: "discard" }
+    | { kind: "switchEdit"; item: AdminAnnouncementRecord }
+    | null
+  >(null);
+  const [query, setQuery] = useState("");
   const [titleLen, setTitleLen] = useState(0);
   const [bodyLen, setBodyLen] = useState(0);
   const [audienceFilter, setAudienceFilter] = useState<AudienceFilter>("all");
@@ -423,39 +405,59 @@ export function AnnouncementsManager({
     return drafts.filter((item) => audienceOf(item) === audienceFilter);
   }, [drafts, audienceFilter]);
 
+  function matchesQuery(item: AdminAnnouncementRecord) {
+    const q = query.trim().toLowerCase();
+    if (!q) return true;
+    const hay = [
+      item.title,
+      item.body,
+      noticeScopeLabel(item, parishes, batches),
+      AUDIENCE_META[audienceOf(item)].short,
+    ]
+      .join(" ")
+      .toLowerCase();
+    return hay.includes(q);
+  }
+
+  const searchedPublished = useMemo(
+    () => filteredPublished.filter(matchesQuery),
+    [filteredPublished, query, parishes, batches],
+  );
+  const searchedDrafts = useMemo(
+    () => filteredDrafts.filter(matchesQuery),
+    [filteredDrafts, query, parishes, batches],
+  );
+
   const liveTotalPages = Math.max(
     1,
-    Math.ceil(filteredPublished.length / NOTIC_PAGE_SIZE),
+    Math.ceil(searchedPublished.length / NOTIC_PAGE_SIZE),
   );
   const draftTotalPages = Math.max(
     1,
-    Math.ceil(filteredDrafts.length / NOTIC_PAGE_SIZE),
+    Math.ceil(searchedDrafts.length / NOTIC_PAGE_SIZE),
   );
-  const activeListPage = panel === "live" ? livePage : draftPage;
-  const activeTotalPages = panel === "live" ? liveTotalPages : draftTotalPages;
+  const activeListPage = listTab === "live" ? livePage : draftPage;
+  const activeTotalPages = listTab === "live" ? liveTotalPages : draftTotalPages;
   const activeFiltered =
-    panel === "live" ? filteredPublished : filteredDrafts;
+    listTab === "live" ? searchedPublished : searchedDrafts;
   const pageStart = (activeListPage - 1) * NOTIC_PAGE_SIZE;
   const pageItems = activeFiltered.slice(
     pageStart,
     pageStart + NOTIC_PAGE_SIZE,
   );
-  const rangeFrom =
-    activeFiltered.length === 0 ? 0 : pageStart + 1;
-  const rangeTo = Math.min(pageStart + NOTIC_PAGE_SIZE, activeFiltered.length);
 
   useEffect(() => {
     setLivePage(1);
     setDraftPage(1);
-  }, [audienceFilter]);
+  }, [audienceFilter, query]);
 
   const defaultComposeAudience = (): AnnouncementAudience =>
     national ? "general" : "students";
 
   useEffect(() => {
-    if (!pendingDelete) return;
+    if (!pendingConfirm) return;
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape" && !busy) setPendingDelete(null);
+      if (event.key === "Escape" && !busy) setPendingConfirm(null);
     };
     document.addEventListener("keydown", onKey);
     document.body.style.overflow = "hidden";
@@ -463,7 +465,47 @@ export function AnnouncementsManager({
       document.removeEventListener("keydown", onKey);
       document.body.style.overflow = "";
     };
-  }, [pendingDelete, busy]);
+  }, [pendingConfirm, busy]);
+
+  const composeIsDirty = useMemo(() => {
+    if (!composing) return false;
+    const baselineTitle = editing?.title.length ?? 0;
+    const baselineBody = editing?.body.length ?? 0;
+    const baselineAttachmentIds = (editing?.attachments ?? [])
+      .map((file) => file.id)
+      .sort()
+      .join(",");
+    const currentAttachmentIds = composeAttachments
+      .map((file) => file.id)
+      .sort()
+      .join(",");
+    if (titleLen !== baselineTitle) return true;
+    if (bodyLen !== baselineBody) return true;
+    if (currentAttachmentIds !== baselineAttachmentIds) return true;
+    if (editing) {
+      if (audienceOf(editing) !== composeAudience) return true;
+      if ((editing.parish_id ?? "") !== composeParishId) return true;
+      if ((editing.batch_id ?? "") !== composeBatchId) return true;
+    } else if (
+      composeAudience !== defaultComposeAudience() ||
+      composeParishId !== (profile.parish_id ?? "") ||
+      composeBatchId
+    ) {
+      return titleLen > 0 || bodyLen > 0 || composeAttachments.length > 0;
+    }
+    return false;
+  }, [
+    composing,
+    editing,
+    titleLen,
+    bodyLen,
+    composeAttachments,
+    composeAudience,
+    composeParishId,
+    composeBatchId,
+    profile.parish_id,
+    national,
+  ]);
 
   function run(
     action: () => Promise<AnnouncementActionResult>,
@@ -477,7 +519,7 @@ export function AnnouncementsManager({
         const next = await action();
         if (next.ok) {
           success(next.message, "Notices");
-          setPendingDelete(null);
+          setPendingConfirm(null);
           setExpandedId(null);
           if (options?.keepCompose) {
             return;
@@ -490,7 +532,9 @@ export function AnnouncementsManager({
           setComposeParishId(profile.parish_id ?? "");
           setComposeBatchId("");
           setComposeAttachments([]);
-          setPanel("live");
+          setComposing(false);
+          setListTab("live");
+          setPageView("desk");
         } else {
           error(next.message, "Notices");
         }
@@ -500,7 +544,7 @@ export function AnnouncementsManager({
     });
   }
 
-  function openCompose(item?: AdminAnnouncementRecord) {
+  function applyCompose(item?: AdminAnnouncementRecord) {
     if (item && !canManageNotice(profile, item)) {
       error("You can only edit notices for your own parish.", "Notices");
       return;
@@ -509,13 +553,9 @@ export function AnnouncementsManager({
     setTitleLen(item?.title.length ?? 0);
     setBodyLen(item?.body.length ?? 0);
     setComposeAudience(
-      item
-        ? audienceOf(item)
-        : defaultComposeAudience(),
+      item ? audienceOf(item) : defaultComposeAudience(),
     );
-    setComposeParishId(
-      item?.parish_id ?? profile.parish_id ?? "",
-    );
+    setComposeParishId(item?.parish_id ?? profile.parish_id ?? "");
     setComposeBatchId(item?.batch_id ?? "");
     setComposeAttachments(
       (item?.attachments ?? []).map((file) => ({
@@ -528,7 +568,83 @@ export function AnnouncementsManager({
     );
     setExpandedId(null);
     setGatePulse(false);
-    setPanel("compose");
+    setComposing(true);
+    setPageView("desk");
+  }
+
+  function openCompose(item?: AdminAnnouncementRecord) {
+    if (composing && composeIsDirty) {
+      if (item) {
+        setPendingConfirm({ kind: "switchEdit", item });
+        return;
+      }
+      setPendingConfirm({ kind: "discard" });
+      return;
+    }
+    applyCompose(item);
+  }
+
+  function closeCompose() {
+    if (composeIsDirty) {
+      setPendingConfirm({ kind: "discard" });
+      return;
+    }
+    setEditing(null);
+    setTitleLen(0);
+    setBodyLen(0);
+    setComposeAudience(defaultComposeAudience());
+    setComposeParishId(profile.parish_id ?? "");
+    setComposeBatchId("");
+    setComposeAttachments([]);
+    setComposing(false);
+  }
+
+  function forceCloseCompose() {
+    setEditing(null);
+    setTitleLen(0);
+    setBodyLen(0);
+    setComposeAudience(defaultComposeAudience());
+    setComposeParishId(profile.parish_id ?? "");
+    setComposeBatchId("");
+    setComposeAttachments([]);
+    setComposing(false);
+  }
+
+  function requestTogglePublish(item: AdminAnnouncementRecord) {
+    if (item.is_published) {
+      setPendingConfirm({ kind: "unpublish", item });
+      return;
+    }
+    run(() => setAnnouncementPublished(item.id, true), null, {
+      label: "Publishing…",
+    });
+  }
+
+  function confirmPendingAction() {
+    if (!pendingConfirm || busy) return;
+    switch (pendingConfirm.kind) {
+      case "delete":
+        run(() => deleteAnnouncement(pendingConfirm.item.id), null, {
+          keepCompose: composing,
+          label: "Removing notice…",
+        });
+        return;
+      case "unpublish":
+        run(() => setAnnouncementPublished(pendingConfirm.item.id, false), null, {
+          keepCompose: composing,
+          label: composing ? "Freeing a slot…" : "Unpublishing…",
+        });
+        return;
+      case "discard":
+        setPendingConfirm(null);
+        forceCloseCompose();
+        return;
+      case "switchEdit": {
+        const item = pendingConfirm.item;
+        setPendingConfirm(null);
+        applyCompose(item);
+      }
+    }
   }
 
   function nudgeCapacityGate() {
@@ -538,231 +654,277 @@ export function AnnouncementsManager({
     window.setTimeout(() => setGatePulse(false), 1600);
   }
 
-  const tabs: { id: Panel; label: string; count?: number }[] = [
-    { id: "live", label: "Live", count: published.length },
-    { id: "drafts", label: "Drafts", count: drafts.length },
-    { id: "compose", label: editing ? "Edit" : "Compose" },
-    { id: "preview", label: "Preview" },
-    { id: "insight", label: "Insight" },
-  ];
-
   const composeCapacity = atCapacityFor(composeAudience);
   const publishDisabled = !editing?.is_published && composeCapacity;
   const occupiedForCompose =
     composeAudience === "general" ? generalLive : studentLiveManaged;
 
+  const deskKey = composing ? "compose" : listTab;
+
   return (
-    <div className="relative mx-auto max-w-2xl" aria-busy={busy}>
+    <div className="relative space-y-4" aria-busy={busy}>
       <DeskLoaderOverlay
-        active={busy && !pendingDelete}
+        active={busy && !pendingConfirm}
         label={busyLabel ?? "Working…"}
       />
-      <div className="flex flex-col gap-4 border-b border-stone pb-4 sm:flex-row sm:items-end sm:justify-between">
-        <div className="flex min-w-0 flex-1 flex-col gap-4 sm:flex-row sm:gap-6">
-          {national ? (
-            <SlotMeter
-              label="Home page"
-              filled={generalLive.length}
-              max={MAX_GENERAL_ANNOUNCEMENTS}
-              tone="general"
-              pulse={
-                panel === "compose" &&
-                composeAudience === "general" &&
-                generalAtCapacity
-              }
-            />
-          ) : null}
-          <SlotMeter
-            label={studentSlotLabel}
-            filled={studentLiveManaged.length}
-            max={MAX_STUDENT_LIVE_ANNOUNCEMENTS}
-            tone="students"
-            pulse={
-              panel === "compose" &&
-              composeAudience === "students" &&
-              studentAtCapacity
-            }
-          />
-        </div>
-        <button
-          type="button"
-          onClick={() => openCompose()}
-          className="shrink-0 bg-pine px-3.5 py-2 text-sm font-medium text-mist transition-colors hover:bg-celadon"
-        >
-          New notice
-        </button>
-      </div>
 
-      <nav
-        className="mt-4 flex gap-1 overflow-x-auto border-b border-stone pb-px"
-        aria-label="Announcement sections"
-      >
-        {tabs.map((tab) => {
-          const active = panel === tab.id;
-          return (
-            <button
-              key={tab.id}
-              type="button"
-              onClick={() => {
-                if (tab.id === "compose" && panel !== "compose") {
-                  openCompose();
-                  return;
-                }
-                setPanel(tab.id);
-              }}
-              className={`relative shrink-0 px-3.5 py-2.5 text-sm font-medium tracking-wide transition-colors ${
-                active ? "text-pine" : "text-ink/50 hover:text-ink/80"
-              }`}
-            >
-              {tab.label}
-              {typeof tab.count === "number" ? (
-                <span className="ml-1.5 text-xs text-ink/40">{tab.count}</span>
-              ) : null}
-              <span
-                className={`absolute inset-x-2.5 bottom-0 h-0.5 bg-celadon transition-opacity duration-300 ${
-                  active ? "opacity-100" : "opacity-0"
-                }`}
-                aria-hidden
-              />
-            </button>
-          );
-        })}
-      </nav>
-
-      <div key={panel} className="animate-panel-in pt-6">
-        {panel === "live" || panel === "drafts" ? (
-          <>
-            <div
-              className="mb-4 flex flex-wrap gap-2"
-              role="group"
-              aria-label="Filter by audience"
-            >
-              {(
-                national
-                  ? ([
-                      { id: "all" as const, label: "All" },
-                      { id: "general" as const, label: "Home page" },
-                      { id: "students" as const, label: "Student portal" },
-                    ] as const)
-                  : ([
-                      { id: "all" as const, label: "All visible" },
-                      { id: "students" as const, label: "Student portal" },
-                      { id: "general" as const, label: "Home (read-only)" },
-                    ] as const)
-              ).map((chip) => {
-                const active = audienceFilter === chip.id;
-                return (
-                  <button
-                    key={chip.id}
-                    type="button"
-                    onClick={() => setAudienceFilter(chip.id)}
-                    className={`px-3 py-1.5 text-xs font-medium tracking-wide transition-colors ${
-                      active
-                        ? "bg-pine text-mist"
-                        : "border border-stone text-ink/60 hover:border-pine/40 hover:text-pine"
+      {!composing ? (
+        <>
+          <nav
+            data-tour="notices-tabs"
+            className="flex gap-1 overflow-x-auto border-b border-stone pb-px"
+            aria-label="Notices page"
+          >
+            {(
+              [
+                { id: "desk" as const, label: "Desk" },
+                { id: "insight" as const, label: "Insight" },
+              ] as const
+            ).map((tab) => {
+              const active = pageView === tab.id;
+              return (
+                <button
+                  key={tab.id}
+                  type="button"
+                  onClick={() => setPageView(tab.id)}
+                  className={`relative shrink-0 px-3 py-1.5 text-sm font-medium tracking-wide transition-colors ${
+                    active ? "text-pine" : "text-ink/50 hover:text-ink/80"
+                  }`}
+                >
+                  {tab.label}
+                  <span
+                    className={`absolute inset-x-2 bottom-0 h-0.5 bg-celadon transition-opacity ${
+                      active ? "opacity-100" : "opacity-0"
                     }`}
-                  >
-                    {chip.label}
-                  </button>
-                );
-              })}
-            </div>
-            <NoticeList
-              items={pageItems}
-              empty={
-                panel === "live"
-                  ? "No live notices in this lane. Compose one and publish into an open slot."
-                  : "No drafts in this lane."
-              }
-              mode={panel}
-              pending={busy}
-              expandedId={expandedId}
-              atCapacityFor={atCapacityFor}
-              canManage={(item) => canManageNotice(profile, item)}
-              onExpand={setExpandedId}
-              onEdit={openCompose}
-              onToggle={(item) =>
-                run(
-                  () => setAnnouncementPublished(item.id, !item.is_published),
-                  null,
+                    aria-hidden
+                  />
+                </button>
+              );
+            })}
+          </nav>
+
+          {pageView === "insight" ? (
+            <NoticesInsightGuide national={national} />
+          ) : (
+            <>
+              <div
+                data-tour="notices-stats"
+                className="grid gap-px border border-stone bg-stone sm:grid-cols-2 lg:grid-cols-4"
+              >
+                {[
                   {
-                    label: item.is_published
-                      ? "Unpublishing…"
-                      : "Publishing…",
+                    label: "Live",
+                    value: published.length,
+                    hint: "Published notices",
                   },
-                )
-              }
-              onDelete={setPendingDelete}
-            />
-            {activeFiltered.length > NOTIC_PAGE_SIZE ? (
-              <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-stone/70 pt-4 text-sm">
-                <p className="text-ink/55">
-                  Showing {rangeFrom}–{rangeTo} of {activeFiltered.length}
-                </p>
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    disabled={activeListPage <= 1}
-                    onClick={() =>
-                      panel === "live"
-                        ? setLivePage((p) => Math.max(1, p - 1))
-                        : setDraftPage((p) => Math.max(1, p - 1))
-                    }
-                    className="border border-stone px-3 py-1.5 text-xs disabled:opacity-40"
+                  {
+                    label: "Drafts",
+                    value: drafts.length,
+                    hint: "Not yet published",
+                  },
+                  ...(national
+                    ? [
+                        {
+                          label: "Home slots",
+                          value: `${generalLive.length}/${MAX_GENERAL_ANNOUNCEMENTS}`,
+                          hint: "Public home page",
+                        },
+                      ]
+                    : []),
+                  {
+                    label: national ? "Student board" : "Your board",
+                    value: `${studentLiveManaged.length}/${MAX_STUDENT_LIVE_ANNOUNCEMENTS}`,
+                    hint: national ? studentSlotLabel : "Parish student portal",
+                  },
+                ].map((tile) => (
+                  <div
+                    key={tile.label}
+                    className="bg-mist/90 px-4 py-3 sm:px-5 sm:py-4"
                   >
-                    Previous
-                  </button>
-                  <span className="text-xs tabular-nums text-ink/50">
-                    {activeListPage}/{activeTotalPages}
-                  </span>
-                  <button
-                    type="button"
-                    disabled={activeListPage >= activeTotalPages}
-                    onClick={() =>
-                      panel === "live"
-                        ? setLivePage((p) =>
-                            Math.min(liveTotalPages, p + 1),
-                          )
-                        : setDraftPage((p) =>
-                            Math.min(draftTotalPages, p + 1),
-                          )
-                    }
-                    className="border border-stone px-3 py-1.5 text-xs disabled:opacity-40"
-                  >
-                    Next
-                  </button>
-                </div>
+                    <p className="text-[0.65rem] font-medium uppercase tracking-[0.14em] text-celadon">
+                      {tile.label}
+                    </p>
+                    <p className="mt-1 font-display text-2xl tabular-nums text-pine">
+                      {tile.value}
+                    </p>
+                    <p className="mt-1 text-xs text-ink/50">{tile.hint}</p>
+                  </div>
+                ))}
               </div>
-            ) : null}
-          </>
-        ) : null}
 
-        {panel === "preview" ? (
-          <div>
-            <div className="mb-4 flex gap-2">
-              {(
-                [
-                  { id: "general" as const, label: "Home page" },
-                  { id: "students" as const, label: "Student portal" },
-                ] as const
-              ).map((lane) => {
-                const active = previewLane === lane.id;
-                return (
-                  <button
-                    key={lane.id}
-                    type="button"
-                    onClick={() => setPreviewLane(lane.id)}
-                    className={`px-3 py-1.5 text-xs font-medium tracking-wide transition-colors ${
-                      active
-                        ? "bg-pine text-mist"
-                        : "border border-stone text-ink/60 hover:border-pine/40"
-                    }`}
-                  >
-                    {lane.label}
-                  </button>
-                );
-              })}
-            </div>
+              <div
+                data-tour="notices-compose"
+                className="flex flex-col gap-3 border border-stone bg-mist/40 p-4 sm:flex-row sm:items-end sm:justify-between sm:p-5"
+              >
+                <div className="min-w-0 flex-1">
+                  <label className="block">
+                    <span className="text-[0.65rem] font-medium uppercase tracking-[0.14em] text-ink/45">
+                      Search notices
+                    </span>
+                    <input
+                      value={query}
+                      onChange={(event) => setQuery(event.target.value)}
+                      placeholder="Title, body, or audience…"
+                      disabled={busy}
+                      className="mt-2 w-full max-w-md border border-stone bg-white/80 px-3 py-2 text-sm outline-none focus:border-pine disabled:opacity-50"
+                    />
+                  </label>
+                </div>
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => openCompose()}
+                  className="inline-flex min-h-[2.5rem] shrink-0 items-center justify-center bg-pine px-4 py-2 text-sm font-medium text-mist disabled:opacity-50"
+                >
+                  New notice
+                </button>
+              </div>
+
+              <div className="flex flex-col gap-4 border border-stone bg-mist/40 p-4 sm:p-5">
+                <nav
+                  className="flex gap-1 overflow-x-auto border-b border-stone pb-px"
+                  aria-label="Notice lists"
+                >
+                    {(
+                      [
+                        { id: "live" as const, label: "Live", count: published.length },
+                        { id: "drafts" as const, label: "Drafts", count: drafts.length },
+                        { id: "preview" as const, label: "Preview" },
+                      ] as const
+                    ).map((tab) => {
+                      const active = listTab === tab.id;
+                      return (
+                        <button
+                          key={tab.id}
+                          type="button"
+                          onClick={() => setListTab(tab.id)}
+                          className={`relative shrink-0 px-3 py-1.5 text-sm font-medium tracking-wide transition-colors ${
+                            active ? "text-pine" : "text-ink/50 hover:text-ink/80"
+                          }`}
+                        >
+                          {tab.label}
+                          {"count" in tab && typeof tab.count === "number" ? (
+                            <span className="ml-1.5 text-xs text-ink/40">
+                              {tab.count}
+                            </span>
+                          ) : null}
+                          <span
+                            className={`absolute inset-x-2 bottom-0 h-0.5 bg-celadon transition-opacity ${
+                              active ? "opacity-100" : "opacity-0"
+                            }`}
+                            aria-hidden
+                          />
+                        </button>
+                      );
+                    })}
+                </nav>
+
+                {listTab === "live" || listTab === "drafts" ? (
+                  <>
+                    <div
+                      className="flex flex-wrap gap-2"
+                      role="group"
+                      aria-label="Filter by audience"
+                    >
+                      {(
+                        national
+                          ? ([
+                              { id: "all" as const, label: "All" },
+                              { id: "general" as const, label: "Home page" },
+                              { id: "students" as const, label: "Student portal" },
+                            ] as const)
+                          : ([
+                              { id: "all" as const, label: "All visible" },
+                              { id: "students" as const, label: "Student portal" },
+                              { id: "general" as const, label: "Home (read-only)" },
+                            ] as const)
+                      ).map((chip) => {
+                        const active = audienceFilter === chip.id;
+                        return (
+                          <button
+                            key={chip.id}
+                            type="button"
+                            onClick={() => setAudienceFilter(chip.id)}
+                            className={`border px-2.5 py-1 text-xs font-medium transition-colors ${
+                              active
+                                ? "border-pine bg-pine text-mist"
+                                : "border-stone bg-white/60 text-ink/70 hover:border-pine/30"
+                            }`}
+                          >
+                            {chip.label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <NoticeList
+                      items={pageItems}
+                      parishes={parishes}
+                      batches={batches}
+                      empty={
+                        listTab === "live"
+                          ? announcements.length === 0
+                            ? "No live notices yet. Create a notice and publish it into an open slot."
+                            : query.trim()
+                              ? "No live notices match your search."
+                              : "No live notices in this lane. Compose one and publish into an open slot."
+                          : announcements.length === 0
+                            ? "No drafts yet. Create a notice and save it as a draft."
+                            : query.trim()
+                              ? "No drafts match your search."
+                              : "No drafts in this lane."
+                      }
+                      mode={listTab}
+                      pending={busy}
+                      expandedId={expandedId}
+                      atCapacityFor={atCapacityFor}
+                      canManage={(item) => canManageNotice(profile, item)}
+                      onExpand={setExpandedId}
+                      onEdit={openCompose}
+                      onToggle={requestTogglePublish}
+                      onDelete={(item) =>
+                        setPendingConfirm({ kind: "delete", item })
+                      }
+                    />
+                    <DeskPagination
+                      page={activeListPage}
+                      totalItems={activeFiltered.length}
+                      pageSize={NOTIC_PAGE_SIZE}
+                      onPageChange={(next) =>
+                        listTab === "live"
+                          ? setLivePage(next)
+                          : setDraftPage(next)
+                      }
+                      itemLabel="notices"
+                    />
+                  </>
+                ) : null}
+
+                {listTab === "preview" ? (
+                  <div>
+                    <div className="mb-4 flex gap-2">
+                      {(
+                        [
+                          { id: "general" as const, label: "Home page" },
+                          { id: "students" as const, label: "Student portal" },
+                        ] as const
+                      ).map((lane) => {
+                        const active = previewLane === lane.id;
+                        return (
+                          <button
+                            key={lane.id}
+                            type="button"
+                            onClick={() => setPreviewLane(lane.id)}
+                            className={`border px-2.5 py-1 text-xs font-medium transition-colors ${
+                              active
+                                ? "border-pine bg-pine text-mist"
+                                : "border-stone bg-white/60 text-ink/70 hover:border-pine/30"
+                            }`}
+                          >
+                            {lane.label}
+                          </button>
+                        );
+                      })}
+                    </div>
 
             {previewLane === "general" ? (
               <aside className="bg-pine text-mist">
@@ -887,16 +1049,28 @@ export function AnnouncementsManager({
                 )}
               </aside>
             )}
-          </div>
-        ) : null}
+                  </div>
+                ) : null}
+              </div>
+            </>
+          )}
+        </>
+      ) : (
+        <div key={deskKey} className="animate-panel-in space-y-4">
+          <button
+            type="button"
+            disabled={busy}
+            onClick={closeCompose}
+            className="inline-flex min-h-[2.75rem] items-center gap-2 border border-pine/35 bg-white px-4 py-2.5 text-sm font-medium text-pine shadow-[0_1px_0_rgba(20,53,44,0.06)] transition-colors hover:border-pine hover:bg-mist disabled:opacity-50"
+          >
+            <span aria-hidden className="text-base leading-none">
+              ←
+            </span>
+            All notices
+          </button>
 
-        {panel === "insight" ? (
-          <NoticesInsightGuide national={national} />
-        ) : null}
-
-        {panel === "compose" ? (
           <form
-            className="grid gap-4"
+            className="grid gap-4 border border-stone bg-mist/40 p-4 sm:p-5"
             onSubmit={(event) => {
               event.preventDefault();
               const form = event.currentTarget;
@@ -1081,17 +1255,12 @@ export function AnnouncementsManager({
                   occupied={occupiedForCompose}
                   pending={busy}
                   onUnpublish={(item) =>
-                    run(
-                      () => setAnnouncementPublished(item.id, false),
-                      null,
-                      {
-                        keepCompose: true,
-                        label: "Freeing a slot…",
-                      },
-                    )
+                    setPendingConfirm({ kind: "unpublish", item })
                   }
                   onEdit={(item) => openCompose(item)}
-                  onDelete={(item) => setPendingDelete(item)}
+                  onDelete={(item) =>
+                    setPendingConfirm({ kind: "delete", item })
+                  }
                 />
               </div>
             ) : null}
@@ -1271,82 +1440,143 @@ export function AnnouncementsManager({
               <button
                 type="button"
                 disabled={busy}
-                onClick={() => {
-                  setEditing(null);
-                  setComposeAudience(defaultComposeAudience());
-                  setComposeParishId(profile.parish_id ?? "");
-                  setComposeBatchId("");
-                  setPanel("live");
-                }}
+                onClick={closeCompose}
                 className="border border-pine/25 px-4 py-2.5 text-sm font-medium text-pine transition-colors hover:border-pine disabled:opacity-60"
               >
                 Cancel
               </button>
             </div>
           </form>
-        ) : null}
-      </div>
+        </div>
+      )}
 
-      {pendingDelete ? (
+      {pendingConfirm ? (
         <div
           className="fixed inset-0 z-[90] flex items-end justify-center bg-ink/45 p-4 sm:items-center"
           role="presentation"
-          onClick={() => !busy && setPendingDelete(null)}
+          onClick={() => !busy && setPendingConfirm(null)}
         >
           <div
             role="dialog"
             aria-modal="true"
-            aria-labelledby="delete-announcement-title"
-            className="relative animate-fade-rise w-full max-w-md border border-stone bg-mist p-6 text-ink shadow-[0_16px_48px_rgba(20,53,44,0.2)] sm:p-7"
+            aria-labelledby="notices-confirm-title"
+            className="relative w-full max-w-md border border-stone bg-mist p-6 text-ink shadow-[0_16px_48px_rgba(20,53,44,0.2)] sm:p-7"
             onClick={(event) => event.stopPropagation()}
           >
             <DeskLoaderOverlay
               active={busy}
-              label={busyLabel ?? "Removing notice…"}
+              label={busyLabel ?? "Working…"}
             />
-            <p className="text-[0.65rem] font-medium uppercase tracking-[0.16em] text-red-800/80">
-              Delete notice
-            </p>
-            <h3
-              id="delete-announcement-title"
-              className="mt-3 font-display text-2xl tracking-[-0.02em] text-pine"
-            >
-              Remove this announcement?
-            </h3>
-            <p className="mt-3 text-sm leading-relaxed text-ink/70">
-              “{pendingDelete.title}” will be permanently deleted
-              {pendingDelete.is_published
-                ? ` and removed from ${AUDIENCE_META[audienceOf(pendingDelete)].surface}`
-                : ""}
-              .
-            </p>
-            <div className="mt-7 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
-              <button
-                type="button"
-                disabled={busy}
-                onClick={() => setPendingDelete(null)}
-                className="border border-pine/25 px-4 py-2.5 text-sm font-medium text-pine transition-colors hover:border-pine disabled:opacity-60"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                disabled={busy}
-                onClick={() =>
-                  run(() => deleteAnnouncement(pendingDelete.id), null, {
-                    keepCompose: panel === "compose",
-                    label: "Removing notice…",
-                  })
-                }
-                className="inline-flex min-h-[2.5rem] min-w-[9rem] items-center justify-center bg-[#5c2a2a] px-4 py-2.5 text-sm font-medium text-mist transition-colors hover:bg-red-900 disabled:opacity-60"
-              >
-                {busy ? (
-                  <DeskLoader label="Deleting…" tone="mist" />
-                ) : (
-                  "Delete permanently"
-                )}
-              </button>
-            </div>
+            {(() => {
+              const copy =
+                pendingConfirm.kind === "delete"
+                  ? {
+                      eyebrow: "Delete notice",
+                      title: "Remove this announcement?",
+                      body: (
+                        <>
+                          “{pendingConfirm.item.title}” will be permanently
+                          deleted
+                          {pendingConfirm.item.is_published
+                            ? ` and removed from ${AUDIENCE_META[audienceOf(pendingConfirm.item)].surface}`
+                            : ""}
+                          .
+                        </>
+                      ),
+                      confirmLabel: "Delete permanently",
+                      destructive: true,
+                    }
+                  : pendingConfirm.kind === "unpublish"
+                    ? {
+                        eyebrow: "Unpublish",
+                        title: "Take this notice offline?",
+                        body: (
+                          <>
+                            “{pendingConfirm.item.title}” will leave{" "}
+                            {
+                              AUDIENCE_META[
+                                audienceOf(pendingConfirm.item)
+                              ].surface
+                            }{" "}
+                            and return to drafts.
+                          </>
+                        ),
+                        confirmLabel: "Unpublish",
+                        destructive: false,
+                      }
+                    : pendingConfirm.kind === "switchEdit"
+                      ? {
+                          eyebrow: "Unsaved changes",
+                          title: "Switch notice without saving?",
+                          body: (
+                            <>
+                              You have unsaved edits. Opening another notice
+                              discards them.
+                            </>
+                          ),
+                          confirmLabel: "Discard and switch",
+                          destructive: false,
+                        }
+                      : {
+                          eyebrow: "Unsaved changes",
+                          title: "Leave without saving?",
+                          body: (
+                            <>
+                              You have unsaved edits to this notice. Leaving now
+                              discards those changes.
+                            </>
+                          ),
+                          confirmLabel: "Discard and leave",
+                          destructive: false,
+                        };
+
+              return (
+                <>
+                  <p
+                    className={`text-[0.65rem] font-medium uppercase tracking-[0.16em] ${
+                      copy.destructive ? "text-red-800/80" : "text-celadon"
+                    }`}
+                  >
+                    {copy.eyebrow}
+                  </p>
+                  <h3
+                    id="notices-confirm-title"
+                    className="mt-3 font-display text-2xl tracking-[-0.02em] text-pine"
+                  >
+                    {copy.title}
+                  </h3>
+                  <p className="mt-3 text-sm leading-relaxed text-ink/70">
+                    {copy.body}
+                  </p>
+                  <div className="mt-7 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() => setPendingConfirm(null)}
+                      className="border border-pine/25 px-4 py-2.5 text-sm font-medium text-pine transition-colors hover:border-pine disabled:opacity-60"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={confirmPendingAction}
+                      className={`inline-flex min-h-[2.5rem] min-w-[9rem] items-center justify-center px-4 py-2.5 text-sm font-medium text-mist transition-colors disabled:opacity-60 ${
+                        copy.destructive
+                          ? "bg-[#5c2a2a] hover:bg-red-900"
+                          : "bg-pine hover:bg-celadon"
+                      }`}
+                    >
+                      {busy ? (
+                        <DeskLoader label="Working…" tone="mist" />
+                      ) : (
+                        copy.confirmLabel
+                      )}
+                    </button>
+                  </div>
+                </>
+              );
+            })()}
           </div>
         </div>
       ) : null}
@@ -1362,6 +1592,8 @@ function NoticeList({
   expandedId,
   atCapacityFor,
   canManage,
+  parishes,
+  batches,
   onExpand,
   onEdit,
   onToggle,
@@ -1374,6 +1606,8 @@ function NoticeList({
   expandedId: string | null;
   atCapacityFor: (audience: AnnouncementAudience) => boolean;
   canManage: (item: AdminAnnouncementRecord) => boolean;
+  parishes: Pick<Parish, "id" | "name">[];
+  batches: Pick<Batch, "id" | "parish_id" | "name" | "year">[];
   onExpand: (id: string | null) => void;
   onEdit: (item: AdminAnnouncementRecord) => void;
   onToggle: (item: AdminAnnouncementRecord) => void;
@@ -1388,59 +1622,84 @@ function NoticeList({
   }
 
   return (
-    <ul className="divide-y divide-stone border-y border-stone">
+    <ul className="divide-y divide-stone border border-stone bg-white/50">
       {items.map((item) => {
         const open = expandedId === item.id;
         const audience = audienceOf(item);
         const manageable = canManage(item);
         const blocked =
           mode === "drafts" && atCapacityFor(audience) && manageable;
+        const updatedLabel = formatAnnouncementDate(item.updated_at);
+        const scope = noticeScopeLabel(item, parishes, batches);
+
+        function handleRowActivate() {
+          if (manageable) {
+            onEdit(item);
+            return;
+          }
+          onExpand(open ? null : item.id);
+        }
+
         return (
           <li key={item.id} className="relative">
             <NoticeFilesMark
               count={item.attachments?.length ?? 0}
-              className="top-2"
+              className="top-3"
             />
-            <button
-              type="button"
-              onClick={() => onExpand(open ? null : item.id)}
-              className="flex w-full items-start gap-3 py-3.5 pr-14 text-left transition-colors hover:bg-mist/70"
-              aria-expanded={open}
+            <div
+              role="button"
+              tabIndex={pending ? -1 : 0}
+              onClick={handleRowActivate}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" || event.key === " ") {
+                  event.preventDefault();
+                  handleRowActivate();
+                }
+              }}
+              className="flex w-full cursor-pointer items-start gap-3 px-4 py-3.5 pr-4 text-left transition-colors hover:bg-pine/[0.03] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-pine sm:pr-6"
+              aria-expanded={manageable ? undefined : open}
+              aria-label={
+                manageable
+                  ? `Edit ${item.title}`
+                  : `View ${item.title}`
+              }
             >
               <span className="min-w-0 flex-1">
                 <span className="flex flex-wrap items-center gap-x-3 gap-y-1">
-                  <span className="font-medium text-ink">{item.title}</span>
+                  <span className="font-medium text-pine">{item.title}</span>
                   <AudiencePill audience={audience} />
                 </span>
-                <span className="mt-0.5 block line-clamp-1 text-sm text-ink/55">
+                <span className="mt-1 block line-clamp-2 text-sm leading-relaxed text-ink/55">
                   {item.body}
                 </span>
+                <span className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-[0.65rem] uppercase tracking-[0.1em] text-ink/40">
+                  <span>{scope}</span>
+                  {updatedLabel ? (
+                    <>
+                      <span aria-hidden>·</span>
+                      <span>Updated {updatedLabel}</span>
+                    </>
+                  ) : null}
+                  {!manageable ? (
+                    <>
+                      <span aria-hidden>·</span>
+                      <span>Read-only</span>
+                    </>
+                  ) : null}
+                </span>
               </span>
-              <span className="mt-1 text-xs text-ink/40" aria-hidden>
-                {open ? "−" : "+"}
-              </span>
-            </button>
-            {open ? (
-              <div className="animate-panel-in space-y-3 border-t border-stone/70 bg-mist/40 px-0 pb-4 pt-3">
-                {item.attachments?.length ? (
-                  <NoticeAttachmentList files={item.attachments} />
-                ) : null}
-                <div className="flex flex-wrap gap-2">
+              <div
+                className="flex shrink-0 flex-wrap items-center justify-end gap-1.5"
+                onClick={(event) => event.stopPropagation()}
+                onKeyDown={(event) => event.stopPropagation()}
+              >
                 {manageable ? (
                   <>
                     <button
                       type="button"
-                      disabled={pending}
-                      onClick={() => onEdit(item)}
-                      className="border border-pine/25 px-3 py-1.5 text-xs font-medium text-pine hover:border-pine disabled:opacity-60"
-                    >
-                      Edit
-                    </button>
-                    <button
-                      type="button"
                       disabled={pending || blocked}
                       onClick={() => onToggle(item)}
-                      className="border border-pine/25 px-3 py-1.5 text-xs font-medium text-pine hover:border-pine disabled:cursor-not-allowed disabled:opacity-40"
+                      className="border border-pine/25 px-2.5 py-1 text-xs font-medium text-pine transition-colors hover:border-pine disabled:cursor-not-allowed disabled:opacity-40"
                     >
                       {mode === "live" ? "Unpublish" : "Publish"}
                     </button>
@@ -1448,19 +1707,33 @@ function NoticeList({
                       type="button"
                       disabled={pending}
                       onClick={() => onDelete(item)}
-                      className="inline-flex h-8 w-8 items-center justify-center border border-red-900/20 text-red-800 hover:bg-red-50 disabled:opacity-60"
+                      className="inline-flex h-8 w-8 items-center justify-center border border-red-900/20 text-red-800 transition-colors hover:bg-red-50 disabled:opacity-60"
                       aria-label={`Delete ${item.title}`}
                     >
                       <TrashIcon className="h-3.5 w-3.5" />
                     </button>
                   </>
                 ) : (
-                  <p className="text-xs text-ink/55">
-                    Read-only — managed by the national desk
-                    {audience === "general" ? " (home page)" : ""}.
-                  </p>
+                  <span className="text-xs text-ink/40" aria-hidden>
+                    {open ? "−" : "+"}
+                  </span>
                 )}
-                </div>
+              </div>
+            </div>
+            {open && !manageable ? (
+              <div className="animate-panel-in space-y-3 border-t border-stone/70 bg-mist/40 px-4 pb-4 pt-3 sm:px-6">
+                {item.attachments?.length ? (
+                  <NoticeAttachmentList files={item.attachments} />
+                ) : null}
+                <p className="text-xs text-ink/55">
+                  Read-only — managed by the national desk
+                  {audience === "general" ? " (home page)" : ""}.
+                </p>
+              </div>
+            ) : null}
+            {open && manageable && item.attachments?.length ? (
+              <div className="border-t border-stone/70 bg-mist/25 px-4 py-3 sm:px-6">
+                <NoticeAttachmentList files={item.attachments} />
               </div>
             ) : null}
           </li>

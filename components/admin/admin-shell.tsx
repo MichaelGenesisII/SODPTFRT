@@ -7,6 +7,7 @@ import {
   useMemo,
   useRef,
   useState,
+  Suspense,
   type ReactNode,
 } from "react";
 import { usePathname } from "next/navigation";
@@ -19,11 +20,13 @@ import {
   getPaymentsPulse,
   type PaymentsPulse,
 } from "@/app/admin/payments/pulse";
+import { AdminTourProvider } from "@/components/admin/admin-tour-provider";
 import { AdminWelcome } from "@/components/admin/admin-welcome";
 import { NavProgress } from "@/components/ui/nav-progress";
 import { useToast } from "@/components/ui/toast";
 import type { AdminProfile } from "@/lib/admin/profile";
 import { isNationalAdmin, isParishAdmin } from "@/lib/admin/profile";
+import { SOD_ADMIN_TOUR_EXPAND_EVENT } from "@/lib/admin/overview-tour-steps";
 import { createBrowserSupabaseClient } from "@/lib/supabase/client";
 
 const SIDEBAR_KEY = "sod-admin-sidebar-open";
@@ -185,6 +188,12 @@ const nav: NavEntry[] = [
 
 function pathMatches(href: string, pathname: string) {
   return href === "/admin" ? pathname === "/admin" : pathname.startsWith(href);
+}
+
+function tourNavAttr(href: string) {
+  if (href === "/admin") return "nav-overview";
+  const slug = href.replace(/^\/admin\/?/, "").replace(/\//g, "-");
+  return slug ? `nav-${slug}` : "nav-overview";
 }
 
 function filterNav(
@@ -758,6 +767,19 @@ export function AdminShell({
   }, [pathname, visibleNav]);
 
   useEffect(() => {
+    function onTourExpand(event: Event) {
+      const detail = (event as CustomEvent<{ groupId?: string }>).detail;
+      setDesktopOpen(true);
+      setMobileOpen(true);
+      const groupId = detail?.groupId;
+      if (groupId) setOpenGroupId(groupId);
+    }
+    window.addEventListener(SOD_ADMIN_TOUR_EXPAND_EVENT, onTourExpand);
+    return () =>
+      window.removeEventListener(SOD_ADMIN_TOUR_EXPAND_EVENT, onTourExpand);
+  }, []);
+
+  useEffect(() => {
     const frame = window.requestAnimationFrame(() => {
       const stored = window.localStorage.getItem(SIDEBAR_KEY);
       if (stored === "0") setDesktopOpen(false);
@@ -951,8 +973,12 @@ export function AdminShell({
   }
 
   const currentSection = findActiveNavLabel(pathname, visibleNav);
+  const tourFirstName =
+    profile.full_name?.trim().split(/\s+/)[0] ?? "";
 
   return (
+    <Suspense fallback={null}>
+    <AdminTourProvider firstName={tourFirstName}>
     <div className="relative flex min-h-svh flex-col bg-mist text-ink lg:flex-row">
       <NavProgress />
       <div
@@ -1113,6 +1139,7 @@ export function AdminShell({
                   key={entry.href}
                   href={entry.href}
                   prefetch={false}
+                  data-tour={tourNavAttr(entry.href)}
                   onClick={() => setMobileOpen(false)}
                   tabIndex={desktopOpen ? undefined : -1}
                   className={`group relative flex animate-slide-in-left items-start gap-3 px-3 py-3.5 transition-colors duration-300 ${
@@ -1171,6 +1198,7 @@ export function AdminShell({
               >
                 <button
                   type="button"
+                  data-tour={`nav-group-${entry.id}`}
                   onClick={() => toggleGroup(entry.id)}
                   tabIndex={desktopOpen ? undefined : -1}
                   aria-expanded={open}
@@ -1244,6 +1272,7 @@ export function AdminShell({
                             key={child.href}
                             href={child.href}
                             prefetch={false}
+                            data-tour={tourNavAttr(child.href)}
                             onClick={() => setMobileOpen(false)}
                             tabIndex={desktopOpen && open ? undefined : -1}
                             className={`group/child relative flex items-start gap-2 px-2.5 py-2.5 transition-colors duration-300 ${
@@ -1401,5 +1430,7 @@ export function AdminShell({
 
       <AdminWelcome profile={profile} deskLabel={deskLabel} />
     </div>
+    </AdminTourProvider>
+    </Suspense>
   );
 }

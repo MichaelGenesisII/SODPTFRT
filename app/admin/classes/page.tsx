@@ -75,9 +75,8 @@ export default async function AdminClassesPage() {
           Classes
         </h1>
         <p className="mt-1.5 max-w-2xl text-sm leading-relaxed text-ink/70">
-          Schedule sessions, email the cohort, host Zoom in the portal or the
-          Zoom app, then mark attendance onto Records. Parish desks only manage
-          classes for their parish; national desks can schedule everyone.
+          Browse scheduled sessions on the Desk. Open any row for the class file
+          — attendance, Zoom host, exports, and student links live there.
         </p>
       </section>
 
@@ -96,7 +95,6 @@ export default async function AdminClassesPage() {
           batches={batches}
           cohorts={cohorts}
           zoomReady={zoomReady}
-          meetingSdkReady={meetingSdkReady}
         />
       )}
     </div>

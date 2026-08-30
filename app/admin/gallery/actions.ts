@@ -15,6 +15,10 @@ import {
   mapAdminGalleryItems,
 } from "@/lib/gallery/list-page";
 import { publicActionMessage } from "@/lib/safe-action-message";
+import {
+  computeGraduationEligibility,
+  type GraduationEligibility,
+} from "@/lib/graduation/eligibility";
 import { STUDENT_PHOTOS_BUCKET } from "@/lib/student/photos";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { createServiceSupabaseClient } from "@/lib/supabase/service";
@@ -202,6 +206,31 @@ export async function listAdminGalleryPage(input: {
     page: result.page,
     pageSize: result.pageSize,
   };
+}
+
+export async function getAdminGalleryStudentContext(
+  userId: string,
+): Promise<
+  | { ok: true; eligibility: GraduationEligibility }
+  | { ok: false; message: string }
+> {
+  const access = await requireAccessibleStudentPhoto(userId);
+  if (!access.ok) return { ok: false, message: access.message };
+
+  try {
+    const supabase = await createServerSupabaseClient();
+    const eligibility = await computeGraduationEligibility(supabase, userId);
+    return { ok: true, eligibility };
+  } catch (error) {
+    console.error("[admin/gallery/context]", error);
+    return {
+      ok: false as const,
+      message: publicActionMessage(
+        error,
+        "Could not load graduation context.",
+      ),
+    };
+  }
 }
 
 export async function flagGallerySelfie(

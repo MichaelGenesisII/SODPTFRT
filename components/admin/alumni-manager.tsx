@@ -6,20 +6,23 @@ import {
   useRef,
   useState,
   useTransition,
-  type FormEvent,
   type ReactNode,
   type RefObject,
 } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import {
-  assignAlumniEmail,
   commitAlumniImport,
   previewAlumniImport,
   type AlumniActionResult,
 } from "@/app/admin/alumni/actions";
-import { upgradeAlumniToStudent } from "@/app/admin/students/actions";
-import { AlumniPortraitCard } from "@/components/admin/alumni-portrait-card";
+import { AlumniListRow } from "@/components/admin/alumni-portrait-card";
 import { DeskLoader, DeskLoaderOverlay } from "@/components/ui/desk-loader";
 import { useToast } from "@/components/ui/toast";
+import {
+  ALUMNI_PAGE_SIZE,
+  alumniListQuery,
+  parseAlumniListQuery,
+} from "@/lib/admin/alumni-desk";
 import {
   SHEET_COHORT_HINTS,
   type AlumniImportPreview,
@@ -27,12 +30,12 @@ import {
   type AlumniPortalFilter,
 } from "@/lib/alumni/types";
 import type { Cohort } from "@/lib/cohorts";
+import { DeskPagination } from "@/lib/ui/desk-pagination";
 
 const fieldClass =
   "w-full min-w-0 border border-stone bg-white/70 px-3 py-2 text-sm outline-none focus:border-pine disabled:opacity-50";
 
 type DeskTab = "register" | "import";
-type MobileSurface = "directory" | "workspace";
 
 type AlumniManagerProps = {
   initialRows: AlumniLegacyPerson[];
@@ -48,31 +51,14 @@ type AlumniManagerProps = {
     query: string;
     batchYear: number | null;
     portal: AlumniPortalFilter;
+    page?: number;
   }) => Promise<{
     rows: AlumniLegacyPerson[];
     total: number;
+    page: number;
+    pageSize: number;
   }>;
 };
-
-function examAverage(person: AlumniLegacyPerson): number | null {
-  const scored = person.exams.filter((e) => e.percent != null);
-  if (!scored.length) return null;
-  return (
-    Math.round(
-      (scored.reduce((sum, e) => sum + Number(e.percent), 0) / scored.length) *
-        10,
-    ) / 10
-  );
-}
-
-function sessionsPresent(person: AlumniLegacyPerson): {
-  present: number;
-  total: number;
-} {
-  const total = person.sessions.length;
-  const present = person.sessions.filter((s) => s.present).length;
-  return { present, total };
-}
 
 export function AlumniManager({
   initialRows,
@@ -82,25 +68,24 @@ export function AlumniManager({
   cohorts,
   onSearch,
 }: AlumniManagerProps) {
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
   const { success, error, info } = useToast();
   const [pending, startTransition] = useTransition();
   const [busyLabel, setBusyLabel] = useState<string | null>(null);
+  const [confirmImport, setConfirmImport] = useState(false);
   const busy = pending || Boolean(busyLabel);
 
-  const [tab, setTab] = useState<DeskTab>("register");
-  const [mobileSurface, setMobileSurface] =
-    useState<MobileSurface>("directory");
+  const parsed = parseAlumniListQuery(searchParams.toString());
 
+  const [tab, setTab] = useState<DeskTab>("register");
   const [rows, setRows] = useState(initialRows);
   const [total, setTotal] = useState(initialTotal);
-  const [query, setQuery] = useState("");
-  const [batchYear, setBatchYear] = useState<number | null>(null);
-  const [portal, setPortal] = useState<AlumniPortalFilter>("all");
-  const [selectedId, setSelectedId] = useState<string | null>(
-    initialRows[0]?.id ?? null,
-  );
-  const [emailDraft, setEmailDraft] = useState("");
-  const [sendMail, setSendMail] = useState(true);
+  const [query, setQuery] = useState(parsed.query);
+  const [batchYear, setBatchYear] = useState<number | null>(parsed.batchYear);
+  const [portal, setPortal] = useState<AlumniPortalFilter>(parsed.portal);
+  const [page, setPage] = useState(parsed.page);
 
   const [preview, setPreview] = useState<AlumniImportPreview | null>(null);
   const [cohortBySheet, setCohortBySheet] = useState<
@@ -109,15 +94,96 @@ export function AlumniManager({
   const [dragOver, setDragOver] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const queryDebounceReady = useRef(false);
-
-  const selected = useMemo(
-    () => rows.find((row) => row.id === selectedId) ?? null,
-    [rows, selectedId],
-  );
+  const skipInitialFetch = useRef(true);
 
   useEffect(() => {
-    if (selected) setEmailDraft(selected.email ?? "");
-  }, [selected?.id, selected?.email]);
+    if (!confirmImport) return;
+    function onKey(event: KeyboardEvent) {
+      if (event.key === "Escape" && !busy) setConfirmImport(false);
+    }
+    document.addEventListener("keydown", onKey);
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.body.style.overflow = "";
+    };
+  }, [confirmImport, busy]);
+
+  const listQuery = useMemo(
+    () => alumniListQuery({ query, batchYear, portal, page }),
+    [query, batchYear, portal, page],
+  );
+
+  const totalPages = Math.max(1, Math.ceil(total / ALUMNI_PAGE_SIZE));
+  const pageStart = (page - 1) * ALUMNI_PAGE_SIZE;
+  const rangeFrom = total === 0 ? 0 : pageStart + 1;
+  const rangeTo = Math.min(pageStart + ALUMNI_PAGE_SIZE, total);
+
+  useEffect(() => {
+    const next = listQuery;
+    const current = searchParams.toString();
+    const normalizedCurrent = current ? `?${current}` : "";
+    if (next !== normalizedCurrent) {
+      router.replace(next ? `${pathname}${next}` : pathname, { scroll: false });
+    }
+  }, [listQuery, pathname, router, searchParams]);
+
+  useEffect(() => {
+    if (page > totalPages) setPage(totalPages);
+  }, [page, totalPages]);
+
+  function refresh(next?: {
+    query?: string;
+    batchYear?: number | null;
+    portal?: AlumniPortalFilter;
+    page?: number;
+  }) {
+    const q = next?.query ?? query;
+    const year = next?.batchYear === undefined ? batchYear : next.batchYear;
+    const status = next?.portal ?? portal;
+    const pageNum = next?.page ?? page;
+    setBusyLabel("Searching…");
+    startTransition(async () => {
+      try {
+        const result = await onSearch({
+          query: q,
+          batchYear: year,
+          portal: status,
+          page: pageNum,
+        });
+        setRows(result.rows);
+        setTotal(result.total);
+        setPage(result.page);
+      } catch (err) {
+        console.error("[alumni] search", err);
+        error("Could not search the alumni register.");
+      } finally {
+        setBusyLabel(null);
+      }
+    });
+  }
+
+  useEffect(() => {
+    if (skipInitialFetch.current) {
+      skipInitialFetch.current = false;
+      return;
+    }
+    refresh();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [batchYear, portal, page]);
+
+  useEffect(() => {
+    if (!queryDebounceReady.current) {
+      queryDebounceReady.current = true;
+      return;
+    }
+    const handle = window.setTimeout(() => {
+      setPage(1);
+      refresh({ query, page: 1 });
+    }, 350);
+    return () => window.clearTimeout(handle);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [query]);
 
   function run(
     action: () => Promise<AlumniActionResult | { ok: boolean; message: string }>,
@@ -130,57 +196,33 @@ export function AlumniManager({
         const result = await action();
         if (result.ok) {
           success(result.message);
+          setConfirmImport(false);
           onOk?.();
-        } else error(result.message);
+        } else {
+          error(result.message);
+        }
       } finally {
         setBusyLabel(null);
       }
     });
   }
 
-  function refresh(next?: {
-    query?: string;
-    batchYear?: number | null;
-    portal?: AlumniPortalFilter;
-  }) {
-    const q = next?.query ?? query;
-    const year = next?.batchYear === undefined ? batchYear : next.batchYear;
-    const status = next?.portal ?? portal;
-    setBusyLabel("Searching…");
-    startTransition(async () => {
-      try {
-        const result = await onSearch({
-          query: q,
-          batchYear: year,
-          portal: status,
-        });
-        setRows(result.rows);
-        setTotal(result.total);
-        setSelectedId((prev) => {
-          if (prev && result.rows.some((r) => r.id === prev)) return prev;
-          return result.rows[0]?.id ?? null;
-        });
-      } catch (err) {
-        console.error("[alumni] search", err);
-        error("Could not search the alumni register.");
-      } finally {
-        setBusyLabel(null);
-      }
-    });
+  function commitImport() {
+    if (!preview || busy) return;
+    run(
+      async () =>
+        commitAlumniImport({
+          rows: preview.rows,
+          cohortBySheet,
+        }),
+      "Importing alumni…",
+      () => {
+        setPreview(null);
+        setTab("register");
+        refresh({ page: 1 });
+      },
+    );
   }
-
-  useEffect(() => {
-    if (!queryDebounceReady.current) {
-      queryDebounceReady.current = true;
-      return;
-    }
-    const handle = window.setTimeout(() => {
-      refresh({ query });
-    }, 350);
-    return () => window.clearTimeout(handle);
-    // Intentionally debounce query only; year/portal refresh immediately.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [query]);
 
   async function parseFile(file: File) {
     const formData = new FormData();
@@ -216,24 +258,28 @@ export function AlumniManager({
     });
   }
 
-  function openPerson(person: AlumniLegacyPerson) {
-    setSelectedId(person.id);
-    setMobileSurface("workspace");
+  function alumniDetailHref(personId: string) {
+    const from = listQuery.startsWith("?") ? listQuery.slice(1) : "";
+    return from
+      ? `/admin/alumni/${personId}?from=${encodeURIComponent(from)}`
+      : `/admin/alumni/${personId}`;
   }
 
-  const directoryClass =
-    mobileSurface === "directory" ? "block" : "hidden lg:block";
-  const workspaceClass =
-    mobileSurface === "workspace" ? "block" : "hidden lg:block";
-
-  const avg = selected ? examAverage(selected) : null;
-  const attendance = selected ? sessionsPresent(selected) : null;
+  function goToPage(next: number) {
+    setPage(Math.min(totalPages, Math.max(1, next)));
+  }
 
   return (
     <div className="relative space-y-5 sm:space-y-6" aria-busy={busy}>
-      <DeskLoaderOverlay active={busy} label={busyLabel ?? "Working…"} />
+      <DeskLoaderOverlay
+        active={busy && !confirmImport}
+        label={busyLabel ?? "Working…"}
+      />
 
-      <section className="grid grid-cols-3 gap-px border border-stone bg-stone">
+      <section
+        data-tour="alumni-stats"
+        className="grid grid-cols-3 gap-px border border-stone bg-stone"
+      >
         {[
           { label: "In register", value: stats.total },
           { label: "Needs email", value: stats.awaitingEmail },
@@ -251,6 +297,7 @@ export function AlumniManager({
       </section>
 
       <nav
+        data-tour="alumni-tabs"
         className="flex gap-1 border-b border-stone"
         aria-label="Alumni desk sections"
       >
@@ -297,34 +344,30 @@ export function AlumniManager({
           onCohortChange={(sheet, value) =>
             setCohortBySheet((prev) => ({ ...prev, [sheet]: value }))
           }
-          onClearPreview={() => setPreview(null)}
+          onClearPreview={() => {
+            setPreview(null);
+            setConfirmImport(false);
+          }}
           onCommit={() => {
-            if (!preview) return;
-            run(
-              async () =>
-                commitAlumniImport({
-                  rows: preview.rows,
-                  cohortBySheet,
-                }),
-              "Importing alumni…",
-              () => {
-                setPreview(null);
-                setTab("register");
-                refresh();
-              },
-            );
+            if (!preview || preview.rows.length === 0) return;
+            setConfirmImport(true);
           }}
         />
       ) : (
         <div className="space-y-3">
-          <div className="border border-stone bg-mist/40 px-3 py-3 sm:px-4">
+          <div
+            data-tour="alumni-register"
+            className="border border-stone bg-mist/40 px-3 py-3 sm:px-4"
+          >
             <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
               <div className="min-w-0">
                 <p className="text-[0.65rem] font-medium uppercase tracking-[0.14em] text-celadon">
                   Graduating lists
                 </p>
                 <p className="mt-1 text-sm text-ink/60">
-                  Showing {rows.length} of {total}
+                  {total === 0
+                    ? "No alumni match."
+                    : `Showing ${rangeFrom}–${rangeTo} of ${total}`}
                   {batchYear ? ` · batch ${batchYear}` : ""}
                 </p>
               </div>
@@ -349,7 +392,7 @@ export function AlumniManager({
                         ? Number(e.target.value)
                         : null;
                       setBatchYear(next);
-                      refresh({ batchYear: next });
+                      setPage(1);
                     }}
                     className={fieldClass}
                   >
@@ -367,9 +410,8 @@ export function AlumniManager({
                     value={portal}
                     disabled={busy}
                     onChange={(e) => {
-                      const next = e.target.value as AlumniPortalFilter;
-                      setPortal(next);
-                      refresh({ portal: next });
+                      setPortal(e.target.value as AlumniPortalFilter);
+                      setPage(1);
                     }}
                     className={fieldClass}
                   >
@@ -382,15 +424,16 @@ export function AlumniManager({
             </div>
           </div>
 
-          <div className="grid gap-3 lg:grid-cols-[minmax(0,22rem)_minmax(0,1fr)] xl:grid-cols-[minmax(0,24rem)_minmax(0,1fr)]">
-            <aside
-              className={`${directoryClass} border border-stone bg-mist/50`}
-            >
-              <div className="flex items-center justify-between gap-2 border-b border-stone px-3 py-2.5 text-sm text-ink/55 sm:px-4">
-                <p>
-                  {rows.length === 0
-                    ? "No matches"
-                    : `${rows.length} in view`}
+          <section className="border border-stone bg-mist/30">
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-stone px-3 py-2.5 text-sm text-ink/55 sm:px-4 sm:py-3">
+              <p>
+                {total === 0
+                  ? "No alumni match."
+                  : `${total} in register`}
+              </p>
+              <div className="flex items-center gap-3">
+                <p className="text-[0.65rem] font-medium uppercase tracking-[0.12em] text-ink/40">
+                  View only — open a row to manage portal access
                 </p>
                 <button
                   type="button"
@@ -400,381 +443,120 @@ export function AlumniManager({
                   Import
                 </button>
               </div>
-              <ul className="max-h-[min(62vh,36rem)] divide-y divide-stone overflow-y-auto lg:max-h-[min(70vh,40rem)]">
-                {rows.length === 0 ? (
-                  <li className="px-4 py-12 text-center text-sm text-ink/50">
-                    No alumni match. Import a batch workbook or clear filters.
-                  </li>
-                ) : (
-                  rows.map((person) => (
-                    <li key={person.id}>
-                      <AlumniPortraitCard
-                        person={person}
-                        selected={person.id === selectedId}
-                        onSelect={() => openPerson(person)}
-                      />
-                    </li>
-                  ))
-                )}
-              </ul>
-            </aside>
+            </div>
 
-            <section
-              className={`${workspaceClass} relative min-h-[18rem] border border-stone bg-mist`}
-            >
-              {selected ? (
-                <div className="flex h-full flex-col">
-                  <header className="border-b border-stone px-4 py-4 sm:px-6 sm:py-5">
-                    <button
-                      type="button"
-                      onClick={() => setMobileSurface("directory")}
-                      className="mb-3 inline-flex items-center gap-1.5 text-sm font-medium text-pine lg:hidden"
-                    >
-                      <span aria-hidden>←</span> Register
-                    </button>
-                    <div className="flex flex-wrap items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <p className="text-[0.65rem] font-medium uppercase tracking-[0.16em] text-celadon">
-                          {selected.batch_label}
-                          {selected.centre ? ` · ${selected.centre}` : ""}
-                        </p>
-                        <h2 className="mt-1 font-display text-[clamp(1.4rem,4vw,2rem)] tracking-[-0.02em] text-pine">
-                          {selected.display_name}
-                        </h2>
-                        <p className="mt-1.5 break-all text-sm text-ink/55">
-                          {selected.email ?? "No email on file yet"}
-                        </p>
-                      </div>
-                      <div className="flex flex-wrap gap-2">
-                        <span
-                          className={`border px-2.5 py-1 text-[0.65rem] font-medium uppercase tracking-[0.12em] ${
-                            selected.activated_user_id
-                              ? "border-celadon/40 bg-celadon/10 text-pine"
-                              : "border-pine/25 text-pine"
-                          }`}
-                        >
-                          {selected.activated_user_id
-                            ? "Portal ready"
-                            : "Needs email"}
-                        </span>
-                        {selected.tuition_covered ||
-                        selected.tuition_paid_gbp > 0 ? (
-                          <span className="border border-stone px-2.5 py-1 text-[0.65rem] font-medium uppercase tracking-[0.12em] text-ink/55">
-                            {selected.tuition_covered
-                              ? "Tuition covered"
-                              : `£${Number(selected.tuition_paid_gbp).toFixed(0)} tuition`}
-                          </span>
-                        ) : null}
-                      </div>
-                    </div>
+            <div className="hidden border-b border-stone bg-white/50 px-4 py-2 text-[0.65rem] font-medium uppercase tracking-[0.12em] text-ink/45 md:grid md:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)_5rem_7rem_5rem_2rem] md:gap-3">
+              <span>Alumnus</span>
+              <span>Centre / batch</span>
+              <span>Year</span>
+              <span>Portal</span>
+              <span>Tuition</span>
+              <span />
+            </div>
 
-                    <div className="mt-4 grid grid-cols-3 gap-2 border border-stone/80 bg-white/40">
-                      <MiniMetric
-                        label="Exam avg"
-                        value={avg != null ? `${avg}%` : "—"}
-                      />
-                      <MiniMetric
-                        label="Sessions"
-                        value={
-                          attendance && attendance.total
-                            ? `${attendance.present}/${attendance.total}`
-                            : "—"
-                        }
-                      />
-                      <MiniMetric
-                        label="Batch"
-                        value={String(selected.batch_year)}
-                      />
-                    </div>
-                  </header>
+            <ul className="divide-y divide-stone">
+              {rows.map((person) => (
+                <AlumniListRow
+                  key={person.id}
+                  person={person}
+                  href={alumniDetailHref(person.id)}
+                />
+              ))}
+            </ul>
 
-                  <div className="grid flex-1 gap-0 lg:grid-cols-2">
-                    <div className="space-y-5 border-b border-stone px-4 py-5 sm:px-6 lg:border-b-0 lg:border-r">
-                      <DetailSection title="Contact & placement">
-                        <InfoRow label="Mobile" value={selected.mobile} />
-                        <InfoRow label="Address" value={selected.address_text} />
-                        <InfoRow
-                          label="Student ID"
-                          value={
-                            selected.student_id || selected.legacy_ref
-                          }
-                          mono
-                        />
-                        <InfoRow label="Centre" value={selected.centre} />
-                        <InfoRow
-                          label="Source"
-                          value={
-                            selected.source_file
-                              ? `${selected.source_file}${
-                                  selected.source_sheet
-                                    ? ` · ${selected.source_sheet}`
-                                    : ""
-                                }`
-                              : null
-                          }
-                        />
-                      </DetailSection>
+            {rows.length === 0 ? (
+              <div className="px-4 py-16 text-center">
+                <p className="font-display text-lg text-pine">No matches</p>
+                <p className="mt-2 text-sm text-ink/55">
+                  Try clearing filters or import a batch workbook.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setQuery("");
+                    setBatchYear(null);
+                    setPortal("all");
+                    setPage(1);
+                  }}
+                  className="mt-4 border border-pine/30 px-4 py-2 text-sm font-medium text-pine hover:bg-pine hover:text-mist"
+                >
+                  Reset filters
+                </button>
+              </div>
+            ) : null}
 
-                      <DetailSection title="Fees & notes">
-                        <InfoRow
-                          label="Tuition"
-                          value={
-                            selected.tuition_covered
-                              ? selected.tuition_note || "Covered"
-                              : selected.tuition_paid_gbp > 0
-                                ? `£${Number(selected.tuition_paid_gbp).toFixed(2)}`
-                                : selected.tuition_note
-                          }
-                        />
-                        <InfoRow
-                          label="Graduation"
-                          value={
-                            selected.graduation_paid_gbp > 0
-                              ? `£${Number(selected.graduation_paid_gbp).toFixed(2)}`
-                              : selected.certificate_note
-                          }
-                        />
-                        <InfoRow
-                          label="Manuals"
-                          value={selected.manuals_sent ? "Sent" : "Not marked"}
-                        />
-                        <InfoRow label="Comments" value={selected.comments} />
-                      </DetailSection>
-                    </div>
-
-                    <div className="space-y-5 px-4 py-5 sm:px-6">
-                      <DetailSection title="Exam marks">
-                        {selected.exams.some((e) => e.percent != null) ? (
-                          <ul className="space-y-2">
-                            {selected.exams
-                              .filter((e) => e.percent != null)
-                              .map((exam) => {
-                                const pct = Number(exam.percent);
-                                const passed = pct >= 50;
-                                return (
-                                  <li key={exam.label} className="space-y-1">
-                                    <div className="flex items-center justify-between gap-3 text-sm">
-                                      <span className="min-w-0 truncate text-ink/75">
-                                        {exam.label}
-                                      </span>
-                                      <span
-                                        className={`shrink-0 text-[0.65rem] font-medium uppercase tracking-[0.1em] ${
-                                          passed ? "text-celadon" : "text-ink/45"
-                                        }`}
-                                      >
-                                        {pct}% · {passed ? "Pass" : "Below"}
-                                      </span>
-                                    </div>
-                                    <div className="h-1.5 overflow-hidden bg-stone/60">
-                                      <div
-                                        className={`h-full ${
-                                          passed ? "bg-celadon" : "bg-pine/40"
-                                        }`}
-                                        style={{
-                                          width: `${Math.min(100, pct)}%`,
-                                        }}
-                                      />
-                                    </div>
-                                  </li>
-                                );
-                              })}
-                          </ul>
-                        ) : (
-                          <p className="text-sm text-ink/45">
-                            No exam marks in this import row.
-                          </p>
-                        )}
-                      </DetailSection>
-
-                      {selected.sessions.length ? (
-                        <DetailSection title="Attendance">
-                          <div className="flex flex-wrap gap-1.5">
-                            {selected.sessions.map((session, i) => (
-                              <span
-                                key={`${session.label}-${i}`}
-                                title={session.label}
-                                className={`flex size-7 items-center justify-center text-[0.65rem] font-medium ${
-                                  session.present
-                                    ? "bg-celadon/20 text-pine"
-                                    : "bg-stone/50 text-ink/35"
-                                }`}
-                              >
-                                {session.present ? "Y" : "N"}
-                              </span>
-                            ))}
-                          </div>
-                          <p className="mt-2 text-xs text-ink/45">
-                            {attendance?.present}/{attendance?.total} present
-                            from the batch sheet
-                          </p>
-                        </DetailSection>
-                      ) : null}
-
-                      <div className="border border-stone bg-white/50 px-4 py-4">
-                        <p className="text-[0.65rem] font-medium uppercase tracking-[0.14em] text-celadon">
-                          Portal access
-                        </p>
-                        {selected.activated_user_id ? (
-                          <div className="mt-3 space-y-3">
-                            <p className="text-sm leading-relaxed text-ink/65">
-                              Ready for{" "}
-                              <span className="break-all font-medium text-pine">
-                                {selected.email}
-                              </span>
-                              . They sign in via Alumni login.
-                            </p>
-                            <button
-                              type="button"
-                              disabled={busy}
-                              onClick={() =>
-                                run(
-                                  () =>
-                                    upgradeAlumniToStudent(
-                                      selected.activated_user_id!,
-                                    ),
-                                  "Upgrading to student…",
-                                  () => refresh(),
-                                )
-                              }
-                              className="inline-flex min-h-[2.5rem] w-full items-center justify-center border border-pine/30 px-4 py-2.5 text-sm font-medium text-pine hover:border-pine disabled:opacity-50"
-                            >
-                              {busy && busyLabel?.startsWith("Upgrading") ? (
-                                <DeskLoader label={busyLabel} />
-                              ) : (
-                                "Upgrade to student portal"
-                              )}
-                            </button>
-                          </div>
-                        ) : (
-                          <form
-                            className="mt-3 space-y-3"
-                            onSubmit={(e: FormEvent) => {
-                              e.preventDefault();
-                              run(
-                                () =>
-                                  assignAlumniEmail({
-                                    legacyId: selected.id,
-                                    email: emailDraft,
-                                    sendAccessEmail: sendMail,
-                                  }),
-                                "Assigning email…",
-                                () => refresh(),
-                              );
-                            }}
-                          >
-                            <label className="block text-sm">
-                              Email for portal access
-                              <input
-                                type="email"
-                                required
-                                value={emailDraft}
-                                onChange={(e) => setEmailDraft(e.target.value)}
-                                placeholder="alumni@example.com"
-                                disabled={busy}
-                                className={`mt-1 ${fieldClass}`}
-                              />
-                            </label>
-                            <label className="flex items-center gap-2 text-sm text-ink/70">
-                              <input
-                                type="checkbox"
-                                checked={sendMail}
-                                onChange={(e) => setSendMail(e.target.checked)}
-                                disabled={busy}
-                              />
-                              Email temporary access details
-                            </label>
-                            <button
-                              type="submit"
-                              disabled={busy || !emailDraft.trim()}
-                              className="inline-flex min-h-[2.5rem] w-full items-center justify-center bg-pine px-4 py-2.5 text-sm font-medium text-mist hover:bg-pine/90 disabled:opacity-50"
-                            >
-                              {busy && busyLabel?.startsWith("Assigning") ? (
-                                <DeskLoader label={busyLabel} tone="mist" />
-                              ) : (
-                                "Save email & open portal"
-                              )}
-                            </button>
-                            <p className="text-xs leading-relaxed text-ink/50">
-                              Batch sheets often have no email. Assign one here
-                              when the alumnus is ready to sign in.
-                            </p>
-                          </form>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              ) : (
-                <div className="flex min-h-[18rem] flex-col items-center justify-center px-6 py-12 text-center">
-                  <p className="font-display text-xl text-pine">
-                    Select someone
-                  </p>
-                  <p className="mt-2 max-w-sm text-sm text-ink/55">
-                    Open a name from the register to review marks, attendance,
-                    and portal access.
-                  </p>
-                </div>
-              )}
-            </section>
-          </div>
+            <DeskPagination
+              page={page}
+              totalItems={total}
+              pageSize={ALUMNI_PAGE_SIZE}
+              onPageChange={goToPage}
+              className="px-3 pb-2.5 sm:px-4 sm:pb-3"
+              itemLabel="alumni"
+            />
+          </section>
         </div>
       )}
-    </div>
-  );
-}
 
-function MiniMetric({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="px-3 py-2.5">
-      <p className="text-[0.58rem] uppercase tracking-[0.12em] text-ink/40">
-        {label}
-      </p>
-      <p className="mt-0.5 font-display text-lg tabular-nums text-pine">
-        {value}
-      </p>
-    </div>
-  );
-}
-
-function DetailSection({
-  title,
-  children,
-}: {
-  title: string;
-  children: ReactNode;
-}) {
-  return (
-    <div>
-      <p className="border-b border-stone pb-2 text-[0.65rem] font-medium uppercase tracking-[0.14em] text-ink/45">
-        {title}
-      </p>
-      <div className="mt-3 space-y-3">{children}</div>
-    </div>
-  );
-}
-
-function InfoRow({
-  label,
-  value,
-  mono,
-}: {
-  label: string;
-  value: string | null | undefined;
-  mono?: boolean;
-}) {
-  if (!value) return null;
-  return (
-    <div className="grid gap-0.5 sm:grid-cols-[7rem_1fr] sm:gap-3">
-      <dt className="text-[0.65rem] font-medium uppercase tracking-[0.12em] text-ink/40">
-        {label}
-      </dt>
-      <dd
-        className={`break-words text-sm text-ink/80 ${
-          mono ? "font-mono text-[0.8rem]" : ""
-        }`}
-      >
-        {value}
-      </dd>
+      {confirmImport && preview ? (
+        <div
+          className="fixed inset-0 z-[90] flex items-end justify-center bg-ink/45 p-4 sm:items-center"
+          role="presentation"
+          onClick={() => !busy && setConfirmImport(false)}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="alumni-import-confirm-title"
+            className="relative w-full max-w-md border border-stone bg-mist p-6 text-ink shadow-[0_16px_48px_rgba(20,53,44,0.2)] sm:p-7"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <DeskLoaderOverlay
+              active={busy}
+              label={busyLabel ?? "Working…"}
+            />
+            <p className="text-[0.65rem] font-medium uppercase tracking-[0.16em] text-celadon">
+              Import batches
+            </p>
+            <h3
+              id="alumni-import-confirm-title"
+              className="mt-3 font-display text-2xl tracking-[-0.02em] text-pine"
+            >
+              Save {preview.rows.length} to the register?
+            </h3>
+            <p className="mt-3 text-sm leading-relaxed text-ink/70">
+              This writes the previewed people into the alumni register
+              {preview.skipped.length
+                ? ` (${preview.skipped.length} preview note${
+                    preview.skipped.length === 1 ? "" : "s"
+                  } will not be imported)`
+                : ""}
+              . You can still assign portal emails afterward.
+            </p>
+            <div className="mt-7 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => setConfirmImport(false)}
+                className="border border-pine/25 px-4 py-2.5 text-sm font-medium text-pine transition-colors hover:border-pine disabled:opacity-60"
+              >
+                Back to preview
+              </button>
+              <button
+                type="button"
+                disabled={busy}
+                onClick={commitImport}
+                className="inline-flex min-h-[2.5rem] min-w-[9rem] items-center justify-center bg-pine px-4 py-2.5 text-sm font-medium text-mist transition-colors hover:bg-celadon disabled:opacity-60"
+              >
+                {busy && busyLabel?.startsWith("Importing") ? (
+                  <DeskLoader label="Importing…" tone="mist" />
+                ) : (
+                  "Save to register"
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -820,7 +602,7 @@ function ImportPane({
         <p className="mt-1.5 max-w-2xl text-sm leading-relaxed text-ink/60">
           Drop a <span className="font-medium text-ink/80">Students – Batch</span>{" "}
           Excel file. Names without emails stay in the register until you assign
-          one on their portrait.
+          one on their alumni file page.
         </p>
       </div>
 

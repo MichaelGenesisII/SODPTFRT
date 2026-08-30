@@ -10,7 +10,6 @@ import {
 } from "react";
 import {
   postStudentCommunityMessage,
-  type CommunityActionResult,
 } from "@/app/student/community/actions";
 import {
   SupportChatComposer,
@@ -99,9 +98,12 @@ export function StudentCommunityDesk({
     };
   }, [appendMessage]);
 
-  function run(action: () => Promise<CommunityActionResult>) {
+  function onSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const body = draft.trim();
+    if (!body) return;
     startTransition(async () => {
-      const result = await action();
+      const result = await postStudentCommunityMessage(body);
       if (result.ok) {
         if (result.posted) appendMessage(result.posted);
         setDraft("");
@@ -109,13 +111,6 @@ export function StudentCommunityDesk({
         error(result.message);
       }
     });
-  }
-
-  function onSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const body = draft.trim();
-    if (!body) return;
-    run(() => postStudentCommunityMessage(body));
   }
 
   return (
@@ -133,6 +128,7 @@ export function StudentCommunityDesk({
         </p>
       </section>
 
+      <div className="min-h-0 flex-1" data-tour="student-community-room">
       <SupportChatPane
         className="min-h-0 flex-1 border-0 max-lg:rounded-none lg:border lg:border-stone/80"
         heightClass="min-h-0 flex-1 max-h-none"
@@ -155,6 +151,7 @@ export function StudentCommunityDesk({
           emptyHint="Say hello — the Listening Desk may reply."
         />
       </SupportChatPane>
+      </div>
     </div>
   );
 }

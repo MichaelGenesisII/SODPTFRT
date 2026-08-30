@@ -4,44 +4,40 @@ import {
   useEffect,
   useMemo,
   useState,
-  useTransition,
 } from "react";
 import Link from "next/link";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import {
-  bulkSetManualsSent,
-  deleteStudentAccount,
-  type StudentActionResult,
-} from "@/app/admin/students/actions";
-import { StudentDossier } from "@/components/admin/student-dossier";
-import { DeskLoader, DeskLoaderOverlay } from "@/components/ui/desk-loader";
-import { useToast } from "@/components/ui/toast";
+  defaultStudentDeskFilters,
+  parseStudentDeskListQuery,
+  StudentDeskFilters,
+  studentDeskListQuery,
+  type StudentDeskFilterState,
+  type StudentDeskLane,
+} from "@/components/admin/student-desk-filters";
 import {
   ENROLMENT_STATUS_META,
-  formatAdminDate,
+  isStudentFeePaid,
+  studentFeeSnap,
   studentFullName,
   type AdminStudentRecord,
 } from "@/lib/admin/students";
 import { isNationalAdmin, type AdminProfile } from "@/lib/admin/profile";
+import { SATURDAY_SLOT_LABELS } from "@/lib/cohorts/saturday";
 import type { EnrolmentStatus } from "@/lib/student/types";
-import { formatBatchLabel, type Batch, type Parish } from "@/lib/parishes";
+import { type Batch, type Parish } from "@/lib/parishes";
 import { DeskPagination } from "@/lib/ui/desk-pagination";
 
-const STUDENTS_PAGE_SIZE = 8;
+const STUDENTS_PAGE_SIZE = 12;
 
-type PathLane = "all" | "review" | "secured" | "paused";
-type ManualsLane = "all" | "not_sent" | "sent";
 type PageView = "desk" | "insight";
-type MobileSurface = "directory" | "workspace";
 
-const LANES: { id: PathLane; label: string }[] = [
+const LANES: { id: StudentDeskLane; label: string }[] = [
   { id: "all", label: "All" },
   { id: "review", label: "In review" },
   { id: "secured", label: "On path" },
   { id: "paused", label: "Paused" },
 ];
-
-const filterSelectClass =
-  "w-full min-w-0 border border-stone bg-white/70 px-3 py-2 text-sm outline-none focus:border-pine";
 
 type StudentsManagerProps = {
   students: AdminStudentRecord[];
@@ -63,7 +59,7 @@ function initials(name: string) {
     .toUpperCase();
 }
 
-function laneFor(student: AdminStudentRecord): Exclude<PathLane, "all"> {
+function laneFor(student: AdminStudentRecord): Exclude<StudentDeskLane, "all"> {
   if (!student.is_active) return "paused";
   const payment = student.enrolment?.payment_status;
   const status = student.enrolment?.status;
@@ -94,42 +90,39 @@ export function StudentsManager({
   parishes,
   batches,
 }: StudentsManagerProps) {
-  const { success, error, info } = useToast();
-  const [pending, startTransition] = useTransition();
-  const [busyLabel, setBusyLabel] = useState<string | null>(null);
-  const busy = pending || Boolean(busyLabel);
-  const [pageView, setPageView] = useState<PageView>("desk");
-  const [lane, setLane] = useState<PathLane>("all");
-  const [query, setQuery] = useState("");
-  const [parishFilter, setParishFilter] = useState(
-    isNationalAdmin(profile) ? "" : profile.parish_id ?? "",
-  );
-  const [batchFilter, setBatchFilter] = useState("");
-  const [manualsFilter, setManualsFilter] = useState<ManualsLane>("all");
-  const [bulkSelected, setBulkSelected] = useState<string[]>([]);
-  const [selectedId, setSelectedId] = useState<string | null>(
-    students[0]?.id ?? null,
-  );
-  const [mobileSurface, setMobileSurface] =
-    useState<MobileSurface>("directory");
-  const [revealedPassword, setRevealedPassword] = useState<string | null>(null);
-  const [pendingDelete, setPendingDelete] = useState<AdminStudentRecord | null>(
-    null,
-  );
-  const [page, setPage] = useState(1);
-
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
   const national = isNationalAdmin(profile);
 
-  const filterBatches = useMemo(
-    () =>
-      batches.filter((b) =>
-        parishFilter ? b.parish_id === parishFilter : true,
-      ),
-    [batches, parishFilter],
+  const initial = parseStudentDeskListQuery(
+    searchParams.toString(),
+    profile.parish_id,
+    national,
   );
 
+  const [pageView, setPageView] = useState<PageView>("desk");
+  const [lane, setLane] = useState<StudentDeskLane>(initial.lane);
+  const [query, setQuery] = useState(initial.query);
+  const [filters, setFilters] = useState<StudentDeskFilterState>(initial.filters);
+  const [page, setPage] = useState(1);
+
+  const listQuery = useMemo(
+    () => studentDeskListQuery({ lane, query, filters }),
+    [lane, query, filters],
+  );
+
+  useEffect(() => {
+    const next = studentDeskListQuery({ lane, query, filters });
+    const current = searchParams.toString();
+    const normalizedCurrent = current ? `?${current}` : "";
+    if (next !== normalizedCurrent) {
+      router.replace(next ? `${pathname}${next}` : pathname, { scroll: false });
+    }
+  }, [lane, query, filters, pathname, router, searchParams]);
+
   const counts = useMemo(() => {
-    const base: Record<PathLane, number> = {
+    const base: Record<StudentDeskLane, number> = {
       all: students.length,
       review: 0,
       secured: 0,
@@ -153,18 +146,38 @@ export function StudentsManager({
     const q = query.trim().toLowerCase();
     return students.filter((student) => {
       if (lane !== "all" && laneFor(student) !== lane) return false;
-      if (parishFilter && student.enrolment?.parish_id !== parishFilter) {
+      if (filters.parish && student.enrolment?.parish_id !== filters.parish) {
         return false;
       }
-      if (batchFilter && student.enrolment?.batch_id !== batchFilter) {
+      if (filters.batch && student.enrolment?.batch_id !== filters.batch) {
         return false;
       }
-      if (manualsFilter === "sent" && student.manuals_status !== "sent") {
+      if (filters.manuals === "sent" && student.manuals_status !== "sent") {
         return false;
       }
       if (
-        manualsFilter === "not_sent" &&
+        filters.manuals === "not_sent" &&
         (student.manuals_status ?? "not_sent") !== "not_sent"
+      ) {
+        return false;
+      }
+      if (
+        filters.saturday &&
+        String(student.enrolment?.saturday_slot ?? "") !== filters.saturday
+      ) {
+        return false;
+      }
+      const tuition = studentFeeSnap(student, "tuition");
+      const graduation = studentFeeSnap(student, "graduation");
+      const tuitionPaid = isStudentFeePaid(tuition);
+      const graduationPaid = isStudentFeePaid(graduation);
+      if (filters.tuition === "paid" && !tuitionPaid) return false;
+      if (filters.tuition === "unpaid" && tuitionPaid) return false;
+      if (filters.graduation === "paid" && !graduationPaid) return false;
+      if (filters.graduation === "unpaid" && graduationPaid) return false;
+      if (
+        filters.bothFees === "both_paid" &&
+        !(tuitionPaid && graduationPaid)
       ) {
         return false;
       }
@@ -186,7 +199,7 @@ export function StudentsManager({
         .toLowerCase();
       return haystack.includes(q);
     });
-  }, [students, lane, query, parishFilter, batchFilter, manualsFilter]);
+  }, [students, lane, query, filters]);
 
   const totalPages = Math.max(
     1,
@@ -203,88 +216,27 @@ export function StudentsManager({
 
   useEffect(() => {
     setPage(1);
-    setMobileSurface("directory");
-  }, [lane, query, parishFilter, batchFilter, manualsFilter]);
+  }, [lane, query, filters]);
 
   useEffect(() => {
     if (page > totalPages) setPage(totalPages);
   }, [page, totalPages]);
 
-  useEffect(() => {
-    if (selectedId && filtered.some((s) => s.id === selectedId)) return;
-    setSelectedId(filtered[0]?.id ?? null);
-    setRevealedPassword(null);
-    setMobileSurface("directory");
-  }, [filtered, selectedId]);
-
-  const directoryClass =
-    mobileSurface === "directory" ? "block" : "hidden lg:block";
-  const workspaceClass =
-    mobileSurface === "workspace" ? "block" : "hidden lg:block";
-
-  useEffect(() => {
-    if (!pendingDelete) return;
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setPendingDelete(null);
-    };
-    document.addEventListener("keydown", onKey);
-    document.body.style.overflow = "hidden";
-    return () => {
-      document.removeEventListener("keydown", onKey);
-      document.body.style.overflow = "";
-    };
-  }, [pendingDelete]);
-
-  const selected =
-    filtered.find((student) => student.id === selectedId) ??
-    students.find((s) => s.id === selectedId) ??
-    null;
-
   function goToPage(next: number) {
     setPage(Math.min(totalPages, Math.max(1, next)));
   }
 
-  function run(
-    action: () => Promise<StudentActionResult>,
-    options?: { clearPassword?: boolean; label?: string },
-  ) {
-    setBusyLabel(options?.label ?? "Working…");
-    startTransition(async () => {
-      try {
-        const next = await action();
-        if (next.ok) {
-          success(next.message, "Students");
-          if (next.temporaryPassword) {
-            setRevealedPassword(next.temporaryPassword);
-            info(
-              `Temporary password: ${next.temporaryPassword}`,
-              "Share securely",
-            );
-          } else if (options?.clearPassword) {
-            setRevealedPassword(null);
-          }
-          if (pendingDelete) setPendingDelete(null);
-        } else {
-          error(next.message, "Students");
-        }
-      } finally {
-        setBusyLabel(null);
-      }
-    });
-  }
-
-  async function copyPassword(value: string) {
-    try {
-      await navigator.clipboard.writeText(value);
-      success("Temporary password copied.", "Students");
-    } catch {
-      error("Could not copy to clipboard.", "Students");
-    }
+  function studentDetailHref(studentId: string) {
+    const from = listQuery.startsWith("?") ? listQuery.slice(1) : "";
+    return from
+      ? `/admin/students/${studentId}?from=${encodeURIComponent(from)}`
+      : `/admin/students/${studentId}`;
   }
 
   return (
     <div className="space-y-3 sm:space-y-4">
       <nav
+        data-tour="students-tabs"
         className="flex gap-1 overflow-x-auto border-b border-stone pb-px"
         aria-label="Students page"
       >
@@ -320,7 +272,10 @@ export function StudentsManager({
         <StudentsInsightGuide national={national} />
       ) : (
         <>
-          <section className="grid grid-cols-2 gap-2 sm:grid-cols-4 sm:gap-3.5">
+          <section
+            data-tour="students-stats"
+            className="grid grid-cols-2 gap-2 sm:grid-cols-4 sm:gap-3.5"
+          >
             <StudentStatTile
               label="Students"
               value={students.length}
@@ -362,8 +317,9 @@ export function StudentsManager({
             </Link>
           ) : null}
 
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+          <div className="flex flex-col gap-2">
             <nav
+              data-tour="students-lanes"
               className="flex gap-1 overflow-x-auto border-b border-stone pb-px [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
               aria-label="Student lanes"
             >
@@ -393,336 +349,212 @@ export function StudentsManager({
               })}
             </nav>
 
-            <label className="block w-full sm:max-w-sm">
-              <span className="sr-only">Search students</span>
-              <input
-                value={query}
-                onChange={(event) => setQuery(event.target.value)}
-                placeholder="Search name, email, parish, ref…"
-                className="w-full border border-stone bg-white/70 px-3 py-2 text-sm outline-none placeholder:text-ink/35 focus:border-pine focus:bg-mist"
-              />
-            </label>
+            <StudentDeskFilters
+              query={query}
+              onQueryChange={setQuery}
+              filters={filters}
+              onFiltersChange={setFilters}
+              parishes={parishes}
+              batches={batches}
+              national={national}
+              resultCount={filtered.length}
+              totalCount={students.length}
+            />
           </div>
 
-          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 sm:gap-3">
-            {national ? (
-              <label className="flex flex-col gap-1 text-xs text-ink/50">
-                Parish
-                <select
-                  value={parishFilter}
-                  onChange={(event) => {
-                    setParishFilter(event.target.value);
-                    setBatchFilter("");
-                  }}
-                  className={filterSelectClass}
-                >
-                  <option value="">All parishes</option>
-                  {parishes.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            ) : null}
-            <label className="flex flex-col gap-1 text-xs text-ink/50">
-              Batch
-              <select
-                value={batchFilter}
-                onChange={(event) => setBatchFilter(event.target.value)}
-                className={filterSelectClass}
-              >
-                <option value="">All batches</option>
-                {filterBatches.map((b) => (
-                  <option key={b.id} value={b.id}>
-                    {formatBatchLabel(b)}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="flex flex-col gap-1 text-xs text-ink/50">
-              Manuals
-              <select
-                value={manualsFilter}
-                onChange={(event) =>
-                  setManualsFilter(event.target.value as ManualsLane)
-                }
-                className={filterSelectClass}
-              >
-                <option value="all">All</option>
-                <option value="not_sent">Not sent</option>
-                <option value="sent">Sent</option>
-              </select>
-            </label>
-          </div>
-
-          {bulkSelected.length ? (
-            <div className="flex flex-wrap items-center gap-2 text-sm">
-              <span>{bulkSelected.length} selected</span>
-              <button
-                type="button"
-                disabled={busy}
-                onClick={() => {
-                  setBusyLabel("Marking manuals sent…");
-                  startTransition(async () => {
-                    try {
-                      const result = await bulkSetManualsSent(bulkSelected);
-                      if (result.ok) success(result.message);
-                      else error(result.message);
-                      setBulkSelected([]);
-                    } finally {
-                      setBusyLabel(null);
-                    }
-                  });
-                }}
-                className="inline-flex min-h-[1.85rem] min-w-[8.5rem] items-center justify-center border border-pine px-3 py-1.5 text-xs font-medium text-pine hover:bg-pine hover:text-mist disabled:opacity-50"
-              >
-                {busy && busyLabel?.startsWith("Marking manuals") ? (
-                  <DeskLoader label={busyLabel} />
-                ) : (
-                  "Mark send 1 of 3"
-                )}
-              </button>
+          <section className="border border-stone bg-mist/30">
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-stone px-3 py-2.5 text-sm text-ink/55 sm:px-4 sm:py-3">
+              <p>
+                {filtered.length === 0
+                  ? "No students match."
+                  : `Showing ${rangeFrom}–${rangeTo} of ${filtered.length}`}
+              </p>
+              <p className="text-[0.65rem] font-medium uppercase tracking-[0.12em] text-ink/40">
+                View only — open a row to manage the student
+              </p>
             </div>
-          ) : null}
 
-          <div className="grid gap-3 lg:grid-cols-[minmax(0,20rem)_minmax(0,1fr)] xl:grid-cols-[minmax(0,22rem)_minmax(0,1fr)]">
-            <section
-              className={`${directoryClass} border border-stone bg-mist/50`}
-            >
-              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-stone px-3 py-2.5 text-sm text-ink/55 sm:px-4 sm:py-3">
-                <p>
-                  {filtered.length === 0
-                    ? "No students match."
-                    : `Showing ${rangeFrom}–${rangeTo} of ${filtered.length}`}
-                </p>
-                {filtered.length > 0 ? (
-                  <p className="text-[0.65rem] font-medium uppercase tracking-[0.12em] text-ink/40">
-                    {STUDENTS_PAGE_SIZE}/page
-                  </p>
-                ) : null}
-              </div>
-              <ul className="max-h-[min(62vh,36rem)] divide-y divide-stone overflow-y-auto lg:max-h-[min(70vh,40rem)]">
-                {pageStudents.map((student) => {
-                  const active = student.id === selected?.id;
-                  const name = studentFullName(student);
-                  const status = student.enrolment?.status;
-                  return (
-                    <li key={student.id}>
-                      <div
-                        className={`flex w-full items-start gap-2 px-3 py-3 sm:px-4 sm:py-3.5 ${
-                          active ? "bg-pine text-mist" : "hover:bg-stone/40"
-                        }`}
-                      >
-                        <input
-                          type="checkbox"
-                          checked={bulkSelected.includes(student.id)}
-                          onChange={(event) => {
-                            event.stopPropagation();
-                            setBulkSelected((prev) =>
-                              event.target.checked
-                                ? [...prev, student.id]
-                                : prev.filter((id) => id !== student.id),
-                            );
-                          }}
-                          className="mt-2 shrink-0"
-                          aria-label={`Select ${name}`}
-                        />
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setSelectedId(student.id);
-                            setRevealedPassword(null);
-                            setMobileSurface("workspace");
-                          }}
-                          className="flex min-w-0 flex-1 items-start gap-3 text-left"
-                        >
-                        {student.passport_url ? (
-                          // eslint-disable-next-line @next/next/no-img-element
-                          <img
-                            src={student.passport_url}
-                            alt=""
-                            className={`mt-0.5 size-9 shrink-0 object-cover ${
-                              active ? "ring-1 ring-mist/30" : "ring-1 ring-pine/10"
-                            }`}
-                          />
-                        ) : (
-                          <span
-                            className={`mt-0.5 flex size-9 shrink-0 items-center justify-center text-xs font-medium ${
-                              active
-                                ? "bg-mist/15 text-mist"
-                                : "bg-stone/70 text-pine"
-                            }`}
-                          >
-                            {initials(name)}
-                          </span>
-                        )}
-                        <span className="min-w-0 flex-1">
-                          <span className="flex items-start justify-between gap-2">
-                            <span className="truncate font-medium">{name}</span>
-                            {!student.is_active ? (
-                              <span
-                                className={`shrink-0 text-[0.65rem] uppercase tracking-[0.12em] ${
-                                  active ? "text-mist/55" : "text-ink/40"
-                                }`}
-                              >
-                                Paused
-                              </span>
-                            ) : null}
-                          </span>
-                          <span
-                            className={`mt-1 block truncate text-xs ${
-                              active ? "text-mist/65" : "text-ink/50"
-                            }`}
-                          >
-                            {student.enrolment?.parish_name
-                              ? `${student.enrolment.parish_name}${
-                                  student.enrolment.batch_name
-                                    ? ` · ${student.enrolment.batch_name}`
-                                    : ""
-                                }`
-                              : (student.enrolment?.reference ?? student.email)}
-                          </span>
-                          <span className="mt-2 flex flex-wrap gap-1.5">
-                            {status ? (
-                              <span
-                                className={`border px-2 py-0.5 text-[0.65rem] uppercase tracking-[0.1em] ${
-                                  active
-                                    ? "border-mist/25 text-mist/80"
-                                    : statusChipClass(status)
-                                }`}
-                              >
-                                {ENROLMENT_STATUS_META[status].label}
-                              </span>
-                            ) : (
-                              <span
-                                className={`text-[0.65rem] uppercase tracking-[0.1em] ${
-                                  active ? "text-mist/55" : "text-ink/40"
-                                }`}
-                              >
-                                No form
-                              </span>
-                            )}
-                            {student.path.exam_average != null ? (
-                              <span
-                                className={`text-[0.65rem] tabular-nums ${
-                                  active ? "text-mist/60" : "text-ink/40"
-                                }`}
-                              >
-                                Avg {student.path.exam_average}%
-                              </span>
-                            ) : null}
-                          </span>
-                        </span>
-                      </button>
-                      </div>
-                    </li>
-                  );
-                })}
-              </ul>
-              <DeskPagination
-                page={currentPage}
-                totalItems={filtered.length}
-                pageSize={STUDENTS_PAGE_SIZE}
-                onPageChange={goToPage}
-                className="px-3 pb-2.5 sm:px-4 sm:pb-3"
-                itemLabel="students"
-              />
-            </section>
+            <div className="hidden border-b border-stone bg-white/50 px-4 py-2 text-[0.65rem] font-medium uppercase tracking-[0.12em] text-ink/45 md:grid md:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)_6rem_7rem_5rem_2rem] md:gap-3">
+              <span>Student</span>
+              <span>Placement</span>
+              <span>Saturday</span>
+              <span>Fees</span>
+              <span>Status</span>
+              <span />
+            </div>
 
-            <section
-              className={`${workspaceClass} relative min-h-[16rem] border border-stone bg-mist sm:min-h-[24rem]`}
-              aria-busy={busy}
-            >
-              <DeskLoaderOverlay
-                active={busy && !pendingDelete}
-                label={busyLabel ?? "Working…"}
-              />
-              {!selected ? (
-                <div className="flex min-h-[16rem] flex-col items-center justify-center px-5 py-12 text-center sm:min-h-[24rem] sm:px-6 sm:py-16">
-                  <p className="text-[0.7rem] font-medium uppercase tracking-[0.18em] text-celadon">
-                    Cohort desk
-                  </p>
-                  <p className="mt-3 font-display text-xl text-pine sm:text-2xl">
-                    Choose a student
-                  </p>
-                  <p className="mt-2 max-w-sm text-sm leading-relaxed text-ink/60">
-                    Search the directory, open a file, preview their full
-                    application and path, then manage placement or account.
-                  </p>
-                </div>
-              ) : (
-                <StudentDossier
-                  student={selected}
-                  profile={profile}
-                  parishes={parishes}
-                  batches={batches}
-                  pending={busy}
-                  busyLabel={busyLabel}
-                  revealedPassword={revealedPassword}
-                  onBack={() => setMobileSurface("directory")}
-                  onRun={run}
-                  onDeleteRequest={() => setPendingDelete(selected)}
-                  onCopyPassword={copyPassword}
+            <ul className="divide-y divide-stone">
+              {pageStudents.map((student) => (
+                <StudentListRow
+                  key={student.id}
+                  student={student}
+                  href={studentDetailHref(student.id)}
                 />
-              )}
-            </section>
-          </div>
+              ))}
+            </ul>
+
+            {filtered.length === 0 ? (
+              <div className="px-4 py-16 text-center">
+                <p className="font-display text-lg text-pine">No matches</p>
+                <p className="mt-2 text-sm text-ink/55">
+                  Try clearing filters or widening your search.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setLane("all");
+                    setQuery("");
+                    setFilters(
+                      defaultStudentDeskFilters(
+                        national ? "" : profile.parish_id,
+                        national,
+                      ),
+                    );
+                  }}
+                  className="mt-4 border border-pine/30 px-4 py-2 text-sm font-medium text-pine hover:bg-pine hover:text-mist"
+                >
+                  Reset filters
+                </button>
+              </div>
+            ) : null}
+
+            <DeskPagination
+              page={currentPage}
+              totalItems={filtered.length}
+              pageSize={STUDENTS_PAGE_SIZE}
+              onPageChange={goToPage}
+              className="px-3 pb-2.5 sm:px-4 sm:pb-3"
+              itemLabel="students"
+            />
+          </section>
         </>
       )}
-
-      {pendingDelete ? (
-        <div
-          className="fixed inset-0 z-50 flex items-end justify-center bg-pine/40 p-4 sm:items-center"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="delete-student-title"
-        >
-          <div className="animate-sheet-up w-full max-w-md border border-stone bg-mist px-5 py-6 shadow-[0_20px_60px_rgba(20,53,44,0.25)] sm:px-6">
-            <p className="text-[0.65rem] font-medium uppercase tracking-[0.16em] text-celadon">
-              Irreversible
-            </p>
-            <h3
-              id="delete-student-title"
-              className="mt-2 font-display text-2xl text-pine"
-            >
-              Remove {studentFullName(pendingDelete)}?
-            </h3>
-            <p className="mt-3 text-sm leading-relaxed text-ink/70">
-              This deletes their Auth account, student seat, and enrolment
-              record. Joined {formatAdminDate(pendingDelete.created_at)}.
-            </p>
-            <div className="mt-6 flex flex-wrap justify-end gap-2">
-              <button
-                type="button"
-                disabled={busy}
-                onClick={() => setPendingDelete(null)}
-                className="border border-pine/25 px-4 py-2.5 text-sm font-medium text-pine disabled:opacity-50"
-              >
-                Keep student
-              </button>
-              <button
-                type="button"
-                disabled={busy}
-                onClick={() =>
-                  run(() => deleteStudentAccount(pendingDelete.id), {
-                    clearPassword: true,
-                    label: "Removing student…",
-                  })
-                }
-                className="inline-flex min-h-[2.5rem] min-w-[10rem] items-center justify-center bg-red-800 px-4 py-2.5 text-sm font-medium text-red-50 disabled:opacity-50"
-              >
-                {busy && busyLabel?.startsWith("Removing") ? (
-                  <DeskLoader label={busyLabel} tone="mist" />
-                ) : (
-                  "Remove permanently"
-                )}
-              </button>
-            </div>
-          </div>
-        </div>
-      ) : null}
     </div>
+  );
+}
+
+function StudentListRow({
+  student,
+  href,
+}: {
+  student: AdminStudentRecord;
+  href: string;
+}) {
+  const name = studentFullName(student);
+  const status = student.enrolment?.status;
+  const tuitionPaid = isStudentFeePaid(studentFeeSnap(student, "tuition"));
+  const graduationPaid = isStudentFeePaid(studentFeeSnap(student, "graduation"));
+  const slot = student.enrolment?.saturday_slot;
+
+  return (
+    <li>
+      <div className="group grid items-center gap-3 px-3 py-3 transition-colors hover:bg-white/70 sm:px-4 md:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)_6rem_7rem_5rem_2rem]">
+        <Link href={href} className="flex min-w-0 items-start gap-3">
+          {student.passport_url ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={student.passport_url}
+              alt=""
+              className="mt-0.5 size-10 shrink-0 object-cover ring-1 ring-pine/10 group-hover:ring-pine/30"
+            />
+          ) : (
+            <span className="mt-0.5 flex size-10 shrink-0 items-center justify-center bg-stone/70 text-xs font-medium text-pine group-hover:bg-pine group-hover:text-mist">
+              {initials(name)}
+            </span>
+          )}
+          <span className="min-w-0">
+            <span className="block truncate font-medium text-ink group-hover:text-pine">
+              {name}
+            </span>
+            <span className="mt-0.5 block truncate text-xs text-ink/50">
+              {student.email}
+            </span>
+            {student.path.exam_average != null ? (
+              <span className="mt-1 inline-block text-[0.65rem] tabular-nums text-ink/40">
+                Exam avg {student.path.exam_average}%
+              </span>
+            ) : null}
+          </span>
+        </Link>
+
+        <Link href={href} className="hidden min-w-0 md:block">
+          <p className="truncate text-sm text-ink/75">
+            {student.enrolment?.parish_name ?? "—"}
+          </p>
+          <p className="truncate text-xs text-ink/45">
+            {student.enrolment?.batch_name ?? student.enrolment?.reference ?? "—"}
+          </p>
+        </Link>
+
+        <Link href={href} className="hidden text-sm text-ink/60 md:block">
+          {slot ? SATURDAY_SLOT_LABELS[slot] : "—"}
+        </Link>
+
+        <Link href={href} className="hidden flex-wrap gap-1 md:flex">
+          <FeePill label="Tuition" paid={tuitionPaid} />
+          <FeePill label="Grad" paid={graduationPaid} />
+        </Link>
+
+        <Link href={href} className="hidden md:block">
+          {status ? (
+            <span
+              className={`inline-block border px-2 py-0.5 text-[0.65rem] uppercase tracking-[0.1em] ${statusChipClass(status)}`}
+            >
+              {ENROLMENT_STATUS_META[status].label}
+            </span>
+          ) : (
+            <span className="text-xs text-ink/40">No form</span>
+          )}
+          {!student.is_active ? (
+            <span className="mt-1 block text-[0.65rem] uppercase tracking-[0.1em] text-ink/40">
+              Paused
+            </span>
+          ) : null}
+        </Link>
+
+        <Link
+          href={href}
+          className="ml-auto flex shrink-0 items-center justify-end text-pine/50 group-hover:text-pine md:ml-0"
+          aria-label={`Open ${name}`}
+        >
+          <span className="text-lg leading-none" aria-hidden>
+            →
+          </span>
+        </Link>
+      </div>
+
+      <div className="flex flex-wrap gap-2 border-t border-stone/60 px-3 pb-3 pt-0 md:hidden">
+        <span className="text-xs text-ink/50">
+          {student.enrolment?.parish_name ?? "No parish"}
+          {student.enrolment?.batch_name
+            ? ` · ${student.enrolment.batch_name}`
+            : ""}
+        </span>
+        {status ? (
+          <span
+            className={`border px-2 py-0.5 text-[0.65rem] uppercase tracking-[0.1em] ${statusChipClass(status)}`}
+          >
+            {ENROLMENT_STATUS_META[status].label}
+          </span>
+        ) : null}
+        <FeePill label="Tuition" paid={tuitionPaid} />
+        <FeePill label="Grad" paid={graduationPaid} />
+      </div>
+    </li>
+  );
+}
+
+function FeePill({ label, paid }: { label: string; paid: boolean }) {
+  return (
+    <span
+      className={`border px-1.5 py-0.5 text-[0.6rem] uppercase tracking-[0.08em] ${
+        paid
+          ? "border-celadon/40 bg-celadon/10 text-pine"
+          : "border-stone text-ink/40"
+      }`}
+    >
+      {label} {paid ? "paid" : "due"}
+    </span>
   );
 }
 
@@ -760,8 +592,12 @@ function StudentStatTile({
 function StudentsInsightGuide({ national }: { national: boolean }) {
   const sections = [
     {
+      title: "Navigation",
+      body: "The list is view-only — filter, search, and open any row for the full student file. Status, fees, placement, and account changes happen on the detail page only.",
+    },
+    {
       title: "What this desk is for",
-      body: "The main student directory — search, open a file, preview everything they submitted, see attendance and exam scores, then update placement or account tools.",
+      body: "Search the cohort, open a student file on its own page, preview everything they submitted, see attendance and exam scores, then update placement or account tools.",
     },
     {
       title: "Profile",

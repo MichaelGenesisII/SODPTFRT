@@ -1,5 +1,6 @@
 import { cache } from "react";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
+import { isStaleRefreshAuthError } from "@/lib/supabase/auth-errors";
 import type {
   StudentEnrolment,
   StudentProfile,
@@ -24,8 +25,13 @@ export const getSessionStudent = cache(
     const supabase = await createServerSupabaseClient();
     const {
       data: { user },
+      error: authError,
     } = await supabase.auth.getUser();
 
+    if (authError && isStaleRefreshAuthError(authError)) {
+      await supabase.auth.signOut({ scope: "local" }).catch(() => undefined);
+      return null;
+    }
     if (!user) return null;
 
     const { data, error } = await supabase

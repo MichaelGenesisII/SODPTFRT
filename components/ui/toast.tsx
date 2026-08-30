@@ -34,7 +34,28 @@ type ToastContextValue = {
   info: (message: string, title?: string) => void;
 };
 
-const ToastContext = createContext<ToastContextValue | null>(null);
+/**
+ * Pin the context on globalThis so Turbopack/HMR cannot create a second
+ * React context instance (Provider in layout vs useToast in a remounted chunk).
+ */
+const toastContextGlobal = globalThis as typeof globalThis & {
+  __sodToastContext?: ReturnType<
+    typeof createContext<ToastContextValue | null>
+  >;
+};
+
+const ToastContext =
+  toastContextGlobal.__sodToastContext ??
+  createContext<ToastContextValue | null>(null);
+
+toastContextGlobal.__sodToastContext = ToastContext;
+
+const NOOP_TOAST: ToastContextValue = {
+  toast: () => {},
+  success: () => {},
+  error: () => {},
+  info: () => {},
+};
 
 function toneStyles(tone: ToastTone) {
   switch (tone) {
@@ -166,8 +187,6 @@ export function ToastProvider({ children }: { children: ReactNode }) {
 
 export function useToast() {
   const context = useContext(ToastContext);
-  if (!context) {
-    throw new Error("useToast must be used within ToastProvider");
-  }
-  return context;
+  // Survive rare HMR / boundary gaps instead of crashing the desk.
+  return context ?? NOOP_TOAST;
 }

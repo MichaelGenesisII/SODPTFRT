@@ -36,8 +36,8 @@ function revalidateStudentSupport() {
 export async function listStudentConversations(): Promise<TicketWithMeta[]> {
   const student = await requireSessionStudent();
 
-  // Import prior /support notes that used this student's email.
-  await claimTicketsByEmail(student);
+  // Import prior /support notes that used this student's email (non-blocking).
+  void claimTicketsByEmail(student);
 
   const supabase = await createServerSupabaseClient();
 

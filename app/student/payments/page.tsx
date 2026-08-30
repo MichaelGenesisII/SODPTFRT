@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { redirect } from "next/navigation";
-import { StudentPaymentsBoard } from "@/components/student/student-payments";
-import { ensureStudentFeeRows } from "@/lib/payments/service";
+import { StudentPaymentsBoard, StudentPaymentsRefresh } from "@/components/student/student-payments";
+import { ensureStudentFeeRows, listFeeTransactions } from "@/lib/payments/service";
 import { stripeConfigured } from "@/lib/payments/stripe";
 import {
   publicActionMessage,
@@ -28,16 +28,19 @@ export default async function StudentPaymentsPage({ searchParams }: PageProps) {
   const cardReady = stripeConfigured();
 
   let payments: Awaited<ReturnType<typeof ensureStudentFeeRows>> = [];
+  let transactions: Awaited<ReturnType<typeof listFeeTransactions>> = [];
   let reference = "—";
   let referenceCompact = "—";
   let loadError: string | null = null;
   try {
     const supabase = await createServerSupabaseClient();
-    const [enrolment, feeRows] = await Promise.all([
+    const [enrolment, feeRows, feeTransactions] = await Promise.all([
       getStudentEnrolment(profile.id),
       ensureStudentFeeRows(supabase, profile.id),
+      listFeeTransactions(supabase, profile.id),
     ]);
     payments = feeRows;
+    transactions = feeTransactions;
     reference = enrolment?.reference ?? "—";
     referenceCompact = enrolment?.reference_compact ?? "—";
   } catch (error) {
@@ -77,19 +80,22 @@ export default async function StudentPaymentsPage({ searchParams }: PageProps) {
   }
 
   return (
-    <StudentPaymentsBoard
-      payments={payments}
-      reference={reference}
-      referenceCompact={referenceCompact}
-      flash={flash}
-      loadError={loadError}
-      cardReady={cardReady}
-      passportUploaded={Boolean(profile.passport_path)}
-      passportUrl={passportUrl}
-      graduationSelfieUploaded={Boolean(profile.graduation_selfie_path)}
-      graduationSelfieUrl={graduationSelfieUrl}
-      graduationSelfieTakenDown={graduationTakenDown}
-      graduationSelfieNote={profile.selfie_moderation_note ?? null}
-    />
+    <StudentPaymentsRefresh>
+      <StudentPaymentsBoard
+        payments={payments}
+        transactions={transactions}
+        reference={reference}
+        referenceCompact={referenceCompact}
+        flash={flash}
+        loadError={loadError}
+        cardReady={cardReady}
+        passportUploaded={Boolean(profile.passport_path)}
+        passportUrl={passportUrl}
+        graduationSelfieUploaded={Boolean(profile.graduation_selfie_path)}
+        graduationSelfieUrl={graduationSelfieUrl}
+        graduationSelfieTakenDown={graduationTakenDown}
+        graduationSelfieNote={profile.selfie_moderation_note ?? null}
+      />
+    </StudentPaymentsRefresh>
   );
 }

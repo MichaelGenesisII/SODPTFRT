@@ -120,11 +120,11 @@ export function CommunityManager({
   useEffect(() => {
     if (!pendingHide) return;
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setPendingHide(null);
+      if (event.key === "Escape" && !busy) setPendingHide(null);
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [pendingHide]);
+  }, [pendingHide, busy]);
 
   function run(
     action: () => Promise<CommunityAdminActionResult>,
@@ -165,7 +165,7 @@ export function CommunityManager({
 
   return (
     <div className="space-y-3">
-      <div className="relative" aria-busy={busy}>
+      <div className="relative" data-tour="community-room" aria-busy={busy}>
         <DeskLoaderOverlay
           active={busy && !pendingHide}
           label={busyLabel ?? "Working…"}
@@ -173,43 +173,47 @@ export function CommunityManager({
         <SupportChatPane
           heightClass="min-h-[28rem] max-h-[min(78vh,44rem)]"
           footer={
-            national ? (
-              <div>
-                <SupportChatComposer
-                  value={draft}
-                  onChange={setDraft}
-                  onSubmit={onSubmit}
-                  pending={busy}
-                  maxLength={COMMUNITY_BODY_MAX}
-                  placeholder="Post as Listening Desk…"
-                  submitLabel="Post"
-                  enableEmojiPicker
-                  enterToSend
-                />
-                <p className="border-t border-stone/60 px-4 py-2 text-center text-[0.7rem] text-ink/45">
-                  Press and hold a message to hide it from students. Right-click
-                  also works on desktop.
-                </p>
-              </div>
-            ) : (
-              <div className="px-4 py-4 text-center text-sm text-ink/55">
-                National desk posts and moderates this room.
-              </div>
-            )
+            <div data-tour="community-composer">
+              {national ? (
+                <div>
+                  <SupportChatComposer
+                    value={draft}
+                    onChange={setDraft}
+                    onSubmit={onSubmit}
+                    pending={busy}
+                    maxLength={COMMUNITY_BODY_MAX}
+                    placeholder="Post as Listening Desk…"
+                    submitLabel="Post"
+                    enableEmojiPicker
+                    enterToSend
+                  />
+                  <p className="border-t border-stone/60 px-4 py-2 text-center text-[0.7rem] text-ink/45">
+                    Press and hold a message to hide it from students. Right-click
+                    also works on desktop.
+                  </p>
+                </div>
+              ) : (
+                <div className="px-4 py-4 text-center text-sm text-ink/55">
+                  National desk posts and moderates this room.
+                </div>
+              )}
+            </div>
           }
         >
-          <SupportChatTranscript
-            messages={visible}
-            emptyLabel="No messages yet"
-            emptyHint="Students will appear here when they post."
-            onLongPressMessage={
-              national
-                ? (message) => {
-                    if (!busy) setPendingHide(message);
-                  }
-                : undefined
-            }
-          />
+          <div data-tour="community-transcript">
+            <SupportChatTranscript
+              messages={visible}
+              emptyLabel="No messages yet"
+              emptyHint="Students will appear here when they post."
+              onLongPressMessage={
+                national
+                  ? (message) => {
+                      if (!busy) setPendingHide(message);
+                    }
+                  : undefined
+              }
+            />
+          </div>
         </SupportChatPane>
       </div>
 
@@ -239,16 +243,16 @@ export function CommunityManager({
               active={busy}
               label={busyLabel ?? "Hiding message…"}
             />
-            <p className="text-[0.65rem] font-medium uppercase tracking-[0.14em] text-celadon">
-              Moderate
+            <p className="text-[0.65rem] font-medium uppercase tracking-[0.16em] text-red-800/80">
+              Hide message
             </p>
             <h2
               id="community-hide-title"
-              className="mt-2 font-display text-xl text-pine"
+              className="mt-3 font-display text-2xl tracking-[-0.02em] text-pine"
             >
               Hide this message?
             </h2>
-            <p className="mt-2 text-sm leading-relaxed text-ink/70">
+            <p className="mt-3 text-sm leading-relaxed text-ink/70">
               Students will no longer see it in Community. Desk posts appear as{" "}
               {LISTENING_DESK_LABEL}.
             </p>
@@ -262,12 +266,12 @@ export function CommunityManager({
                   : pendingHide.author}
               </footer>
             </blockquote>
-            <div className="mt-5 flex flex-wrap justify-end gap-2">
+            <div className="mt-7 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
               <button
                 type="button"
                 disabled={busy}
                 onClick={() => setPendingHide(null)}
-                className="border border-stone px-4 py-2.5 text-sm font-medium text-ink/70 hover:border-pine/40 disabled:opacity-50"
+                className="border border-pine/25 px-4 py-2.5 text-sm font-medium text-pine transition-colors hover:border-pine disabled:opacity-60"
               >
                 Cancel
               </button>
@@ -275,7 +279,7 @@ export function CommunityManager({
                 type="button"
                 disabled={busy}
                 onClick={confirmHide}
-                className="inline-flex min-h-[2.5rem] min-w-[7.5rem] items-center justify-center bg-[#5c2a2a] px-4 py-2.5 text-sm font-medium text-mist hover:bg-red-900 disabled:opacity-60"
+                className="inline-flex min-h-[2.5rem] min-w-[9rem] items-center justify-center bg-[#5c2a2a] px-4 py-2.5 text-sm font-medium text-mist transition-colors hover:bg-red-900 disabled:opacity-60"
               >
                 {busy ? (
                   <DeskLoader label="Hiding…" tone="mist" />

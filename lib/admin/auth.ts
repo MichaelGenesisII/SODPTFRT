@@ -1,5 +1,6 @@
 import { cache } from "react";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
+import { isStaleRefreshAuthError } from "@/lib/supabase/auth-errors";
 import {
   isNationalAdmin,
   type AdminProfile,
@@ -13,8 +14,13 @@ export const getSessionAdmin = cache(async (): Promise<AdminProfile | null> => {
   const supabase = await createServerSupabaseClient();
   const {
     data: { user },
+    error: authError,
   } = await supabase.auth.getUser();
 
+  if (authError && isStaleRefreshAuthError(authError)) {
+    await supabase.auth.signOut({ scope: "local" }).catch(() => undefined);
+    return null;
+  }
   if (!user) return null;
 
   const { data, error } = await supabase

@@ -7,30 +7,25 @@ import {
   useTransition,
   type FormEvent,
 } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   createZoomClass,
-  deleteZoomClass,
-  getClassAttendance,
-  markManualAttendance,
   previewClassInvite,
-  regenerateClassAttendanceCode,
-  searchClassStudents,
-  setZoomClassStatus,
-  syncZoomClassAttendance,
   type ClassActionResult,
   type ClassInvitePreview,
 } from "@/app/admin/classes/actions";
-import { ClassWorkspace, ClassesInsight } from "@/components/admin/class-workspace";
+import { ClassesInsight } from "@/components/admin/class-workspace";
 import { DeskLoader, DeskLoaderOverlay } from "@/components/ui/desk-loader";
 import { useToast } from "@/components/ui/toast";
 import { isNationalAdmin, type AdminProfile } from "@/lib/admin/profile";
 import {
   audienceLabel,
   DEFAULT_ATTENDANCE_THRESHOLD,
+  DEFAULT_CLASS_DURATION_MINUTES,
+  formatClassScheduleRange,
   type ClassAudience,
   type ZoomClass,
-  type ZoomClassAttendance,
 } from "@/lib/classes/types";
 import { formatBatchLabel, type Batch, type Parish } from "@/lib/parishes";
 import { formatCohortLabel, type Cohort } from "@/lib/cohorts";
@@ -39,9 +34,7 @@ import { DeskPagination } from "@/lib/ui/desk-pagination";
 const fieldClass =
   "w-full border border-stone bg-white/70 px-3 py-2 text-sm outline-none focus:border-pine";
 
-const PAGE_SIZE = 8;
-
-type MobileSurface = "directory" | "workspace";
+const PAGE_SIZE = 12;
 
 type Props = {
   profile: AdminProfile;
@@ -50,7 +43,6 @@ type Props = {
   batches: Batch[];
   cohorts: Cohort[];
   zoomReady: boolean;
-  meetingSdkReady: boolean;
 };
 
 export function ClassesManager({
@@ -60,7 +52,6 @@ export function ClassesManager({
   batches,
   cohorts,
   zoomReady,
-  meetingSdkReady,
 }: Props) {
   const router = useRouter();
   const { success, error } = useToast();
@@ -69,14 +60,8 @@ export function ClassesManager({
   const busy = pending || Boolean(busyLabel);
   const national = isNationalAdmin(profile);
   const [creating, setCreating] = useState(false);
-  const [selectedId, setSelectedId] = useState<string | null>(
-    classes[0]?.id ?? null,
-  );
-  const [mobileSurface, setMobileSurface] =
-    useState<MobileSurface>("directory");
   const [page, setPage] = useState(1);
   const [query, setQuery] = useState("");
-  const [roster, setRoster] = useState<ZoomClassAttendance[]>([]);
   const [pageView, setPageView] = useState<"desk" | "insight">("desk");
 
   const filtered = useMemo(() => {
@@ -103,55 +88,22 @@ export function ClassesManager({
   const currentPage = Math.min(page, totalPages);
   const pageStart = (currentPage - 1) * PAGE_SIZE;
   const pageClasses = filtered.slice(pageStart, pageStart + PAGE_SIZE);
-
-  const directoryClass =
-    mobileSurface === "directory" ? "block" : "hidden lg:block";
-  const workspaceClass =
-    mobileSurface === "workspace" ? "block" : "hidden lg:block";
+  const rangeFrom = filtered.length === 0 ? 0 : pageStart + 1;
+  const rangeTo = Math.min(pageStart + PAGE_SIZE, filtered.length);
 
   useEffect(() => {
     setPage(1);
-    setMobileSurface("directory");
   }, [query]);
 
-  useEffect(() => {
-    if (selectedId && classes.some((c) => c.id === selectedId)) return;
-    if (selectedId && filtered.some((c) => c.id === selectedId)) return;
-    setSelectedId(filtered[0]?.id ?? classes[0]?.id ?? null);
-  }, [filtered, classes, selectedId]);
-
-  const selected =
-    filtered.find((c) => c.id === selectedId) ??
-    classes.find((c) => c.id === selectedId) ??
-    null;
-
-  function reloadRoster(id: string) {
-    if (!classes.some((c) => c.id === id)) {
-      setRoster([]);
-      return;
-    }
-    void getClassAttendance(id)
-      .then(setRoster)
-      .catch(() => setRoster([]));
+  function classDetailHref(classId: string) {
+    const params = new URLSearchParams();
+    if (query.trim()) params.set("q", query.trim());
+    if (page > 1) params.set("page", String(page));
+    const from = params.toString();
+    return from
+      ? `/admin/classes/${classId}?from=${encodeURIComponent(from)}`
+      : `/admin/classes/${classId}`;
   }
-
-  useEffect(() => {
-    if (!selectedId || creating || !classes.some((c) => c.id === selectedId)) {
-      setRoster([]);
-      return;
-    }
-    let cancelled = false;
-    void getClassAttendance(selectedId)
-      .then((rows) => {
-        if (!cancelled) setRoster(rows);
-      })
-      .catch(() => {
-        if (!cancelled) setRoster([]);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [selectedId, creating, classes]);
 
   function run(
     action: () => Promise<ClassActionResult>,
@@ -167,13 +119,20 @@ export function ClassesManager({
           then?.();
           router.refresh();
           if (next.classId) {
-            setSelectedId(next.classId);
             setCreating(false);
-            setMobileSurface("workspace");
+            router.push(classDetailHref(next.classId));
           }
         } else {
           error(next.message, "Classes");
         }
+      } catch (err) {
+        console.error("[classes/ui]", err);
+        error(
+          err instanceof Error && err.message
+            ? err.message
+            : "Could not save the class. Please try again.",
+          "Classes",
+        );
       } finally {
         setBusyLabel(null);
       }
@@ -183,6 +142,7 @@ export function ClassesManager({
   return (
     <div className="space-y-3 sm:space-y-4">
       <nav
+        data-tour="classes-tabs"
         className="flex gap-1 overflow-x-auto border-b border-stone pb-px [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
         aria-label="Classes page"
       >
@@ -227,87 +187,136 @@ export function ClassesManager({
             </p>
           ) : null}
 
-          <section className="grid grid-cols-2 gap-2 sm:grid-cols-4 sm:gap-3">
-            <Stat label="Classes" value={classes.length} hint="On the books" />
-            <Stat
+          <section
+            data-tour="classes-stats"
+            className="grid grid-cols-2 gap-2 sm:grid-cols-4 sm:gap-3.5"
+          >
+            <ClassStatTile
+              label="Classes"
+              value={classes.length}
+              hint="On the books"
+            />
+            <ClassStatTile
               label="Upcoming"
               value={classes.filter((c) => c.status === "scheduled").length}
               hint="Not yet ended"
             />
-            <Stat
+            <ClassStatTile
               label="With codes"
+              shortLabel="Codes"
               value={classes.filter((c) => c.attendance_code).length}
               hint="Physical check-in"
             />
-            <Stat
+            <ClassStatTile
               label="Present marks"
-              short="Present"
+              shortLabel="Present"
               value={classes.reduce((n, c) => n + (c.present_count ?? 0), 0)}
-              hint="On roster / Records"
+              hint="Across all rosters"
             />
           </section>
 
-          <div className="grid gap-3 lg:grid-cols-[minmax(0,20rem)_minmax(0,1fr)] xl:grid-cols-[minmax(0,22rem)_minmax(0,1fr)]">
-            <aside className={`${directoryClass} border border-stone bg-mist/50`}>
-              <div className="space-y-2 border-b border-stone px-3 py-2.5">
-                <div className="flex items-center justify-between gap-2">
-                  <p className="text-[0.55rem] font-medium uppercase tracking-[0.14em] text-ink/45">
-                    Hall directory
-                  </p>
-                  <p className="text-[0.65rem] tabular-nums text-ink/40">
-                    {filtered.length
-                      ? `${pageStart + 1}–${Math.min(pageStart + PAGE_SIZE, filtered.length)}/${filtered.length}`
-                      : "0"}
+          {creating ? (
+            <section className="relative border border-stone bg-mist/30">
+              <DeskLoaderOverlay active={busy} label={busyLabel ?? "Working…"} />
+              <CreateClassForm
+                profile={profile}
+                parishes={parishes}
+                batches={batches}
+                cohorts={cohorts}
+                national={national}
+                zoomReady={zoomReady}
+                pending={busy}
+                busyLabel={busyLabel}
+                onBack={() => setCreating(false)}
+                onSubmit={(values) =>
+                  run(
+                    () => createZoomClass(values),
+                    undefined,
+                    values.send_email
+                      ? "Saving class & sending…"
+                      : "Saving class…",
+                  )
+                }
+              />
+            </section>
+          ) : (
+            <>
+              <div
+                data-tour="classes-schedule"
+                className="border border-stone bg-mist/40 px-3 py-3 sm:px-4"
+              >
+                <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+                  <div className="min-w-0">
+                    <p className="text-[0.65rem] font-medium uppercase tracking-[0.14em] text-celadon">
+                      Hall directory
+                    </p>
+                    <p className="mt-1 text-sm text-ink/60">
+                      View only — open a row for the class file
+                    </p>
+                  </div>
+                  <div className="flex w-full flex-col gap-2 sm:flex-row sm:items-center lg:max-w-md">
+                    <label className="block min-w-0 flex-1 text-sm">
+                      <span className="sr-only">Search classes</span>
+                      <input
+                        value={query}
+                        onChange={(e) => setQuery(e.target.value)}
+                        placeholder="Search title, audience, status…"
+                        className={fieldClass}
+                      />
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => setCreating(true)}
+                      className="shrink-0 border border-pine/35 px-3 py-2 text-sm font-medium text-pine hover:border-pine"
+                    >
+                      + Schedule
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <section className="border border-stone bg-mist/30">
+                <div className="flex flex-wrap items-center justify-between gap-2 border-b border-stone px-3 py-2.5 text-sm text-ink/55 sm:px-4 sm:py-3">
+                  <p>
+                    {filtered.length === 0
+                      ? "No classes match."
+                      : `Showing ${rangeFrom}–${rangeTo} of ${filtered.length}`}
                   </p>
                 </div>
-                <input
-                  value={query}
-                  onChange={(e) => setQuery(e.target.value)}
-                  placeholder="Search classes…"
-                  className={fieldClass}
-                />
-                <button
-                  type="button"
-                  onClick={() => {
-                    setCreating(true);
-                    setSelectedId(null);
-                    setMobileSurface("workspace");
-                  }}
-                  className="w-full border border-pine/30 px-2 py-1.5 text-sm font-medium text-pine hover:border-pine"
-                >
-                  + Schedule class
-                </button>
-              </div>
-              <ul className="max-h-[min(62vh,36rem)] divide-y divide-stone overflow-y-auto lg:max-h-[min(70vh,40rem)]">
-                {pageClasses.length === 0 ? (
-                  <li className="px-3 py-8 text-center text-sm text-ink/50">
-                    No classes yet.
-                  </li>
-                ) : (
-                  pageClasses.map((item) => {
-                    const active = item.id === selectedId && !creating;
-                    return (
-                      <li key={item.id}>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setCreating(false);
-                            setSelectedId(item.id);
-                            setMobileSurface("workspace");
-                          }}
-                          className={`flex w-full flex-col gap-0.5 px-3 py-2.5 text-left ${
-                            active ? "bg-pine text-mist" : "hover:bg-white/60"
-                          }`}
-                        >
-                          <span className="truncate text-sm font-medium">
+
+                <div className="hidden border-b border-stone bg-white/50 px-4 py-2 text-[0.65rem] font-medium uppercase tracking-[0.12em] text-ink/45 md:grid md:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)_5rem_5rem_2rem] md:gap-3">
+                  <span>Class</span>
+                  <span>When · audience</span>
+                  <span>Status</span>
+                  <span>Present</span>
+                  <span />
+                </div>
+
+                <ul className="divide-y divide-stone">
+                  {pageClasses.map((item) => (
+                    <li key={item.id}>
+                      <Link
+                        href={classDetailHref(item.id)}
+                        className="group grid items-center gap-3 px-3 py-3 transition-colors hover:bg-white/70 sm:px-4 md:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)_5rem_5rem_2rem]"
+                      >
+                        <span className="min-w-0">
+                          <span className="block truncate font-medium text-ink group-hover:text-pine">
                             {item.title}
                           </span>
-                          <span
-                            className={`text-[0.65rem] uppercase tracking-[0.1em] ${
-                              active ? "text-mist/65" : "text-ink/45"
-                            }`}
-                          >
-                            {item.status} ·{" "}
+                          {item.attendance_code ? (
+                            <span className="mt-0.5 block font-mono text-xs text-ink/45">
+                              Code {item.attendance_code}
+                            </span>
+                          ) : null}
+                        </span>
+                        <span className="hidden min-w-0 md:block">
+                          <span className="block truncate text-sm text-ink/70">
+                            {formatClassScheduleRange(
+                              item.scheduled_start,
+                              item.scheduled_end,
+                            )}
+                          </span>
+                          <span className="block truncate text-xs text-ink/45">
                             {audienceLabel(
                               item.audience,
                               item.parish_name,
@@ -315,163 +324,75 @@ export function ClassesManager({
                               item.cohort_name,
                               item.year,
                             )}
-                            {item.present_count != null
-                              ? ` · ${item.present_count} present`
-                              : ""}
                           </span>
-                        </button>
-                      </li>
-                    );
-                  })
-                )}
-              </ul>
-              <DeskPagination
-                page={currentPage}
-                totalItems={filtered.length}
-                pageSize={PAGE_SIZE}
-                onPageChange={setPage}
-                className="px-2 pb-2"
-                itemLabel="classes"
-              />
-            </aside>
+                        </span>
+                        <span className="hidden text-xs uppercase tracking-[0.08em] text-ink/55 md:block">
+                          {item.status}
+                        </span>
+                        <span className="hidden tabular-nums text-sm text-ink/60 md:block">
+                          {item.present_count ?? 0}
+                        </span>
+                        <span className="hidden justify-self-end text-pine/40 group-hover:text-pine md:flex">
+                          →
+                        </span>
+                      </Link>
+                    </li>
+                  ))}
+                </ul>
 
-            <section
-              className={`${workspaceClass} relative min-h-[16rem] border border-stone bg-mist sm:min-h-[22rem]`}
-              aria-busy={busy}
-            >
-              <DeskLoaderOverlay
-                active={busy}
-                label={busyLabel ?? "Working…"}
-              />
-              {creating ? (
-                <CreateClassForm
-                  profile={profile}
-                  parishes={parishes}
-                  batches={batches}
-                  cohorts={cohorts}
-                  national={national}
-                  zoomReady={zoomReady}
-                  pending={busy}
-                  busyLabel={busyLabel}
-                  onBack={() => {
-                    setCreating(false);
-                    setMobileSurface("directory");
-                  }}
-                  onSubmit={(values) =>
-                    run(
-                      () => createZoomClass(values),
-                      undefined,
-                      values.send_email
-                        ? "Saving class & sending…"
-                        : "Saving class…",
-                    )
-                  }
+                {pageClasses.length === 0 ? (
+                  <div className="px-4 py-16 text-center">
+                    <p className="font-display text-lg text-pine">
+                      {classes.length === 0
+                        ? "Schedule the first class"
+                        : "No classes match"}
+                    </p>
+                    <p className="mt-2 text-sm text-ink/55">
+                      {classes.length === 0
+                        ? "Create a session, share the check-in code, and track attendance on the class file."
+                        : "Try a different search."}
+                    </p>
+                  </div>
+                ) : null}
+
+                <DeskPagination
+                  page={currentPage}
+                  totalItems={filtered.length}
+                  pageSize={PAGE_SIZE}
+                  onPageChange={setPage}
+                  className="px-3 pb-2.5 sm:px-4 sm:pb-3"
+                  itemLabel="classes"
                 />
-              ) : !selected ? (
-                <div className="flex min-h-[16rem] flex-col items-center justify-center px-5 py-12 text-center sm:min-h-[22rem]">
-                  <p className="font-display text-xl text-pine">Open the hall</p>
-                  <p className="mt-2 max-w-sm text-sm text-ink/55">
-                    Schedule for everyone, a parish, or a batch. Share a check-in
-                    code, host Zoom in the portal, or sync after the meeting.
-                  </p>
-                </div>
-              ) : (
-                <ClassWorkspace
-                  item={selected}
-                  roster={roster}
-                  pending={busy}
-                  busyLabel={busyLabel}
-                  zoomReady={zoomReady}
-                  meetingSdkReady={meetingSdkReady}
-                  onBack={() => setMobileSurface("directory")}
-                  onSync={() =>
-                    run(
-                      () => syncZoomClassAttendance(selected.id),
-                      () => {
-                        reloadRoster(selected.id);
-                      },
-                      "Syncing Zoom…",
-                    )
-                  }
-                  onRegenCode={() =>
-                    run(
-                      () => regenerateClassAttendanceCode(selected.id),
-                      undefined,
-                      "Updating check-in code…",
-                    )
-                  }
-                  onManual={(userId, present) =>
-                    run(
-                      () =>
-                        markManualAttendance({
-                          classId: selected.id,
-                          userId,
-                          present,
-                        }),
-                      () => reloadRoster(selected.id),
-                      "Updating attendance…",
-                    )
-                  }
-                  onSearchStudents={(q) => searchClassStudents(selected.id, q)}
-                  onStatus={(status) =>
-                    run(
-                      () => setZoomClassStatus(selected.id, status),
-                      undefined,
-                      "Updating status…",
-                    )
-                  }
-                  onDelete={() => {
-                    if (
-                      !window.confirm(
-                        "Remove this class and its attendance rows?",
-                      )
-                    ) {
-                      return;
-                    }
-                    run(
-                      () => deleteZoomClass(selected.id),
-                      () => {
-                        setSelectedId(null);
-                        setMobileSurface("directory");
-                      },
-                      "Removing class…",
-                    );
-                  }}
-                />
-              )}
-            </section>
-          </div>
+              </section>
+            </>
+          )}
         </>
       )}
     </div>
   );
 }
 
-function Stat({
+function ClassStatTile({
   label,
-  short,
+  shortLabel,
   value,
   hint,
 }: {
   label: string;
-  short?: string;
+  shortLabel?: string;
   value: number;
   hint: string;
 }) {
   return (
-    <div className="flex min-w-0 flex-col items-center gap-1.5 rounded-2xl border border-stone/50 bg-white px-2 py-2.5 text-center sm:flex-row sm:items-center sm:gap-3 sm:px-3.5 sm:py-3 sm:text-left">
-      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-pine sm:h-11 sm:w-11">
-        <span className="font-display text-xl text-mist tabular-nums">{value}</span>
-      </div>
-      <div className="min-w-0 sm:border-l sm:border-stone/70 sm:pl-3">
-        <p className="truncate text-[0.7rem] font-medium text-pine sm:text-sm">
-          <span className="sm:hidden">{short ?? label}</span>
-          <span className="hidden sm:inline">{label}</span>
-        </p>
-        <p className="mt-0.5 hidden truncate text-xs text-ink/50 sm:block">
-          {hint}
-        </p>
-      </div>
+    <div className="border border-stone bg-mist/90 px-3 py-3.5 sm:px-4 sm:py-4">
+      <p className="truncate text-[0.58rem] font-medium uppercase tracking-[0.12em] text-ink/40 sm:text-[0.65rem] sm:tracking-[0.16em]">
+        <span className="sm:hidden">{shortLabel ?? label}</span>
+        <span className="hidden sm:inline">{label}</span>
+      </p>
+      <p className="mt-1 font-display text-2xl tabular-nums text-pine sm:text-3xl">
+        {value}
+      </p>
+      <p className="mt-1 truncate text-[0.65rem] text-ink/45">{hint}</p>
     </div>
   );
 }
@@ -514,6 +435,7 @@ function CreateClassForm({
     zoom_join_url?: string;
     zoom_passcode?: string;
     generate_code?: boolean;
+    show_checkin_code_to_students?: boolean;
     send_email?: boolean;
     email_notes?: string;
   }) => void;
@@ -530,17 +452,32 @@ function CreateClassForm({
   const [programmeMonth, setProgrammeMonth] = useState("");
   const [startLocal, setStartLocal] = useState("");
   const [endLocal, setEndLocal] = useState("");
-  const [duration, setDuration] = useState(90);
-  const [createZoom, setCreateZoom] = useState(false);
+  const [duration, setDuration] = useState(DEFAULT_CLASS_DURATION_MINUTES);
+  const [createZoom, setCreateZoom] = useState(zoomReady);
   const [meetingId, setMeetingId] = useState("");
   const [joinUrl, setJoinUrl] = useState("");
   const [passcode, setPasscode] = useState("");
   const [generateCode, setGenerateCode] = useState(true);
+  const [showCodeOnPortal, setShowCodeOnPortal] = useState(false);
   const [sendEmail, setSendEmail] = useState(false);
   const [emailNotes, setEmailNotes] = useState("");
   const [verifyOpen, setVerifyOpen] = useState(false);
   const [preview, setPreview] = useState<ClassInvitePreview | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
+  const { error: toastError } = useToast();
+
+  useEffect(() => {
+    if (!verifyOpen) return;
+    function onKey(event: KeyboardEvent) {
+      if (event.key === "Escape" && !pending) setVerifyOpen(false);
+    }
+    document.addEventListener("keydown", onKey);
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.body.style.overflow = "";
+    };
+  }, [verifyOpen, pending]);
 
   const parishBatches = batches.filter((b) =>
     parishId ? b.parish_id === parishId : true,
@@ -548,6 +485,19 @@ function CreateClassForm({
   const programmeYears = [
     ...new Set(cohorts.map((cohort) => cohort.year_start)),
   ].sort((a, b) => b - a);
+
+  function toLocalInputValue(date: Date) {
+    const pad = (n: number) => String(n).padStart(2, "0");
+    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+  }
+
+  function syncEndFromStart(nextStart: string, minutes = duration) {
+    if (!nextStart) return;
+    const start = new Date(nextStart);
+    if (Number.isNaN(start.getTime())) return;
+    const end = new Date(start.getTime() + Math.max(15, minutes) * 60_000);
+    setEndLocal(toLocalInputValue(end));
+  }
 
   function buildPayload() {
     return {
@@ -567,6 +517,7 @@ function CreateClassForm({
       zoom_join_url: joinUrl || undefined,
       zoom_passcode: passcode || undefined,
       generate_code: generateCode,
+      show_checkin_code_to_students: generateCode && showCodeOnPortal,
       send_email: sendEmail,
       email_notes: emailNotes.trim() || undefined,
     };
@@ -574,7 +525,36 @@ function CreateClassForm({
 
   function submit(event: FormEvent) {
     event.preventDefault();
-    if (!startLocal || !endLocal) return;
+    if (!startLocal || !endLocal) {
+      toastError("Choose start and end times for the class.", "Classes");
+      return;
+    }
+    const start = new Date(startLocal);
+    const end = new Date(endLocal);
+    if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
+      toastError("Those schedule times are not valid.", "Classes");
+      return;
+    }
+    if (end <= start) {
+      toastError("End must be after start.", "Classes");
+      return;
+    }
+    if (audience === "parish" && !parishId && national) {
+      toastError("Choose a parish for this class.", "Classes");
+      return;
+    }
+    if (audience === "batch" && !batchId) {
+      toastError("Choose a batch for this class.", "Classes");
+      return;
+    }
+    if (audience === "cohort" && !cohortId) {
+      toastError("Choose a cohort for this class.", "Classes");
+      return;
+    }
+    if (audience === "year" && !programmeYear) {
+      toastError("Choose a programme year for this class.", "Classes");
+      return;
+    }
     if (!sendEmail) {
       onSubmit(buildPayload());
       return;
@@ -845,7 +825,11 @@ function CreateClassForm({
             required
             type="datetime-local"
             value={startLocal}
-            onChange={(e) => setStartLocal(e.target.value)}
+            onChange={(e) => {
+              const next = e.target.value;
+              setStartLocal(next);
+              syncEndFromStart(next);
+            }}
             className={`mt-1 ${fieldClass}`}
           />
         </label>
@@ -868,7 +852,11 @@ function CreateClassForm({
           min={15}
           max={480}
           value={duration}
-          onChange={(e) => setDuration(Number(e.target.value) || 90)}
+          onChange={(e) => {
+            const next = Number(e.target.value) || DEFAULT_CLASS_DURATION_MINUTES;
+            setDuration(next);
+            if (startLocal) syncEndFromStart(startLocal, next);
+          }}
           className={`mt-1 ${fieldClass}`}
         />
         <span className="mt-1 block text-xs text-ink/45">
@@ -883,17 +871,38 @@ function CreateClassForm({
         <input
           type="checkbox"
           checked={generateCode}
-          onChange={(e) => setGenerateCode(e.target.checked)}
+          onChange={(e) => {
+            setGenerateCode(e.target.checked);
+            if (!e.target.checked) setShowCodeOnPortal(false);
+          }}
           className="mt-1"
         />
         <span>
           Generate check-in code
           <span className="mt-0.5 block text-xs text-ink/50">
-            Students enter the code to mark themselves present (physical or
-            hybrid).
+            Students enter the code under Classes to mark present (physical or
+            hybrid). Share in the room by default — not on the portal.
           </span>
         </span>
       </label>
+
+      {generateCode ? (
+        <label className="ml-6 flex items-start gap-2 text-sm text-ink/75">
+          <input
+            type="checkbox"
+            checked={showCodeOnPortal}
+            onChange={(e) => setShowCodeOnPortal(e.target.checked)}
+            className="mt-1"
+          />
+          <span>
+            Show check-in code on student portal
+            <span className="mt-0.5 block text-xs text-ink/50">
+              Off by default. Only enable if you accept students may check in
+              without attending in person.
+            </span>
+          </span>
+        </label>
+      ) : null}
 
       <label className="flex items-start gap-2 text-sm">
         <input
@@ -935,7 +944,8 @@ function CreateClassForm({
           <span>
             Create Zoom meeting via API
             <span className="mt-0.5 block text-xs text-ink/50">
-              Optional — skip for in-person-only classes.
+              On by default when Zoom is configured. Untick for in-person-only
+              or if you will paste a join link below.
             </span>
           </span>
         </label>
@@ -1002,23 +1012,32 @@ function CreateClassForm({
 
     {verifyOpen ? (
       <div
-        className="fixed inset-0 z-50 flex items-end justify-center bg-ink/40 p-3 sm:items-center"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="class-email-verify-title"
+        className="fixed inset-0 z-[90] flex items-end justify-center bg-ink/45 p-4 sm:items-center"
+        role="presentation"
+        onClick={() => !pending && setVerifyOpen(false)}
       >
-        <div className="max-h-[90vh] w-full max-w-lg overflow-y-auto border border-stone bg-mist shadow-lg">
-          <div className="border-b border-stone px-4 py-3 sm:px-5">
-            <p className="text-[0.6rem] font-medium uppercase tracking-[0.14em] text-celadon">
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="class-email-verify-title"
+          className="relative max-h-[90vh] w-full max-w-lg overflow-y-auto border border-stone bg-mist text-ink shadow-[0_16px_48px_rgba(20,53,44,0.2)]"
+          onClick={(event) => event.stopPropagation()}
+        >
+          <DeskLoaderOverlay
+            active={pending}
+            label={busyLabel ?? "Sending…"}
+          />
+          <div className="border-b border-stone px-4 py-4 sm:px-5">
+            <p className="text-[0.65rem] font-medium uppercase tracking-[0.16em] text-celadon">
               Confirm before send
             </p>
             <h3
               id="class-email-verify-title"
-              className="mt-1 font-display text-xl text-pine"
+              className="mt-3 font-display text-2xl tracking-[-0.02em] text-pine"
             >
               Verify class email
             </h3>
-            <p className="mt-1 text-sm text-ink/60">
+            <p className="mt-3 text-sm leading-relaxed text-ink/70">
               Check these details. Emails go out only after you confirm.
             </p>
           </div>
@@ -1070,7 +1089,8 @@ function CreateClassForm({
             ) : (
               <p className="text-xs text-ink/55">
                 No Zoom link yet — email will point students to Classes in the
-                portal. Share the check-in code in the room if you generated one.
+                portal. Share the check-in code in the room unless you enable portal
+                visibility on the class file.
               </p>
             )}
             {emailNotes.trim() || description.trim() ? (
@@ -1081,15 +1101,22 @@ function CreateClassForm({
               </div>
             ) : null}
           </div>
-          <div className="flex flex-wrap gap-2 border-t border-stone px-4 py-3 sm:px-5">
+          <div className="flex flex-col-reverse gap-3 border-t border-stone px-4 py-4 sm:flex-row sm:justify-end sm:px-5">
+            <button
+              type="button"
+              disabled={pending}
+              onClick={() => setVerifyOpen(false)}
+              className="border border-pine/25 px-4 py-2.5 text-sm font-medium text-pine transition-colors hover:border-pine disabled:opacity-60"
+            >
+              Back to edit
+            </button>
             <button
               type="button"
               disabled={pending || previewLoading}
               onClick={() => {
-                setVerifyOpen(false);
                 onSubmit(buildPayload());
               }}
-              className="inline-flex min-h-[2.5rem] min-w-[11rem] items-center justify-center bg-pine px-4 py-2.5 text-sm font-medium text-mist disabled:opacity-60"
+              className="inline-flex min-h-[2.5rem] min-w-[11rem] items-center justify-center bg-pine px-4 py-2.5 text-sm font-medium text-mist transition-colors hover:bg-celadon disabled:opacity-60"
             >
               {pending ? (
                 <DeskLoader
@@ -1099,14 +1126,6 @@ function CreateClassForm({
               ) : (
                 "Confirm & send emails"
               )}
-            </button>
-            <button
-              type="button"
-              disabled={pending}
-              onClick={() => setVerifyOpen(false)}
-              className="border border-stone px-4 py-2.5 text-sm text-ink/70 disabled:opacity-60"
-            >
-              Back to edit
             </button>
           </div>
         </div>

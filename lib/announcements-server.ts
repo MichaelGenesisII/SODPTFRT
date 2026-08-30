@@ -7,7 +7,9 @@ import {
 } from "@/lib/announcements";
 import { signedNoticeAttachmentUrls } from "@/app/admin/desk-attachments/actions";
 import type { NoticeAttachmentAccess } from "@/lib/desk-attachments";
+import { getSupabase } from "@/lib/supabase";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
+import type { SupabaseClient } from "@supabase/supabase-js";
 
 type AdminAnnouncementRow = {
   id: string;
@@ -32,6 +34,17 @@ function normalizeAccess(value: unknown): NoticeAttachmentAccess {
   return "both";
 }
 
+async function announcementsClient(
+  audience: AnnouncementAudience,
+): Promise<SupabaseClient | null> {
+  // Public home must not touch cookie sessions — stale refresh tokens were
+  // spamming AuthApiError on every GET /.
+  if (audience === "general") {
+    return getSupabase();
+  }
+  return createServerSupabaseClient();
+}
+
 /**
  * Published notices for a lane, with signed attachment URLs.
  * Keep this in a server-only module — do not import from Client Components.
@@ -41,7 +54,8 @@ export async function fetchPublishedAnnouncements(
   limit: number,
 ): Promise<Announcement[]> {
   try {
-    const supabase = await createServerSupabaseClient();
+    const supabase = await announcementsClient(audience);
+    if (!supabase) return [];
     const { data, error } = await supabase
       .from("announcements")
       .select(
