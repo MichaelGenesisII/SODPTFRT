@@ -7,7 +7,7 @@ const SECRETISH =
   /password|passwd|secret|api[_-]?key|bearer\s+[a-z0-9._-]+|service_role|jwt|authorization|postgres:\/\/|mysql:\/\/|mongodb(\+srv)?:\/\/|smtp:\/\/|EMAIL_[A-Z_]+|RESEND_[A-Z_]+|private[_-]?key|-----BEGIN/i;
 
 const TECHNICAL =
-  /ECONNREFUSED|ENOTFOUND|ETIMEDOUT|ECONNRESET|socket hang up|getaddrinfo|SMTP|nodemailer|Resend|resend\.com|Postgrest|PGRST|supabase\.co|supabase\/|relation ["']|column ["'].*does not exist|violates (foreign key|unique|check)|permission denied for|stack trace|at\s+\S+\s+\(|\.sql\b|row level security|\brls\b|service[_ ]?role|security definer|postgres|uuid_generate|could not find the table|schema cache/i;
+  /ECONNREFUSED|ENOTFOUND|ETIMEDOUT|ECONNRESET|socket hang up|getaddrinfo|SMTP|nodemailer|Resend|resend\.com|Postgrest|PGRST|supabase\.co|supabase\/|relation ["']|column ["'].*does not exist|violates (foreign key|unique|check)|permission denied for|stack trace|at\s+\S+\s+\(|\.sql\b|row level security|\brls\b|service[_ ]?role|security definer|postgres|uuid_generate|could not find the table|schema cache|zoom api|api\.zoom\.us|"code":\d{4}/i;
 
 const EMAIL_TECHNICAL =
   /smtp|nodemailer|resend|ECONN|ENOTFOUND|authentication failed|invalid login|relay|outbox|EMAIL_|RESEND_/i;

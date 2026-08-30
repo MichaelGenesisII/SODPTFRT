@@ -48,6 +48,7 @@ import {
   endClassZoomMeetingCandidates,
   fetchMeetingParticipants,
   getZoomMeeting,
+  isZoomHostPersonalMeeting,
   listLiveHostMeetings,
   normalizeZoomMeetingNumber,
   parseMeetingIdFromJoinUrl,
@@ -560,6 +561,16 @@ export async function getInPortalHostSession(
     let meetingOk = forceRefresh
       ? null
       : await resolveZoomMeetingForClass(klass);
+
+    if (meetingOk) {
+      if (await isZoomHostPersonalMeeting(meetingOk.id)) {
+        console.warn(
+          "[classes host session] class pointed at host personal Zoom room; recreating scheduled meeting",
+          { classId: klass.id, pmi: meetingOk.id },
+        );
+        meetingOk = null;
+      }
+    }
 
     if (meetingOk) {
       const storedNorm = normalizeZoomMeetingNumber(klass.zoom_meeting_id);
@@ -1652,6 +1663,9 @@ export async function deleteZoomClass(
       klass.zoom_meeting_uuid?.trim(),
   );
 
+  let zoomRemovalStatus: "removed" | "already_gone" | "pmi_skipped" | null =
+    null;
+
   if (hasZoomLink && zoomConfigured()) {
     const removed = await removeZoomMeetingsFromHost({
       meetingId: klass.zoom_meeting_id,
@@ -1681,6 +1695,8 @@ export async function deleteZoomClass(
         "Could not remove the Zoom meeting from the host calendar. Try End live Zoom first, or delete it once in the Zoom Meetings list.",
       );
     }
+
+    zoomRemovalStatus = removed.status;
   }
 
   const { error } = await supabase
@@ -1691,9 +1707,12 @@ export async function deleteZoomClass(
   revalidateClassPaths(classId);
   return {
     ok: true,
-    message: hasZoomLink
-      ? "Class and Zoom meeting removed."
-      : "Class removed.",
+    message:
+      zoomRemovalStatus === "pmi_skipped"
+        ? "Class removed. The linked number was the host's personal Zoom room, which stays on the account."
+        : hasZoomLink
+          ? "Class and Zoom meeting removed."
+          : "Class removed.",
   };
 }
 

@@ -532,9 +532,10 @@ export async function endZoomMeeting(
  */
 export async function deleteZoomMeeting(
   meetingRef: string,
-): Promise<"deleted" | "already_gone"> {
+): Promise<"deleted" | "already_gone" | "pmi"> {
   const id = await resolveNumericMeetingId(meetingRef);
   if (!id) return "already_gone";
+  if (await isHostPersonalMeetingId(id)) return "pmi";
 
   try {
     await zoomFetch<void>(`/meetings/${encodeURIComponent(id)}`, {
@@ -546,6 +547,7 @@ export async function deleteZoomMeeting(
     if (/\(404\)|not (found|exist)|3001|3610/i.test(message)) {
       return "already_gone";
     }
+    if (isZoomPmiError(error)) return "pmi";
     throw error;
   }
 }
@@ -579,6 +581,51 @@ function sleep(ms: number) {
 function isZoomInProgressError(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
   return /3002|in progress|in-progress|cannot delete this meeting/i.test(message);
+}
+
+function isZoomPmiError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /3018|not allow to delete pmi|delete pmi/i.test(message);
+}
+
+let cachedHostPmi: { value: string | null; expiresAt: number } | null = null;
+
+/** Host personal meeting room number — permanent; Zoom forbids DELETE on it (3018). */
+async function getHostPersonalMeetingId(): Promise<string | null> {
+  if (cachedHostPmi && cachedHostPmi.expiresAt > Date.now()) {
+    return cachedHostPmi.value;
+  }
+
+  const host = process.env.ZOOM_HOST_USER_ID;
+  if (!host) return null;
+
+  try {
+    const data = await zoomFetch<{ pmi?: number | string }>(
+      `/users/${encodeURIComponent(host)}`,
+    );
+    const pmi = normalizeZoomMeetingNumber(String(data.pmi ?? "")) || null;
+    cachedHostPmi = { value: pmi, expiresAt: Date.now() + 300_000 };
+    return pmi;
+  } catch (error) {
+    console.warn("[zoom] load host PMI:", error);
+    return null;
+  }
+}
+
+async function isHostPersonalMeetingId(meetingId: string): Promise<boolean> {
+  const norm = normalizeZoomMeetingNumber(meetingId);
+  if (!norm) return false;
+  const pmi = await getHostPersonalMeetingId();
+  return pmi === norm;
+}
+
+/** True when the meeting number is the host account's permanent personal room. */
+export async function isZoomHostPersonalMeeting(
+  meetingId: string | null | undefined,
+): Promise<boolean> {
+  const norm = normalizeZoomMeetingNumber(meetingId);
+  if (!norm) return false;
+  return isHostPersonalMeetingId(norm);
 }
 
 /** Scheduled meetings on the configured host user (paginated). */
@@ -684,8 +731,9 @@ function collectDeleteCandidates(input: {
 
 async function deleteZoomMeetingWithRetry(
   meetingId: string,
-): Promise<"deleted" | "already_gone" | "in_progress"> {
+): Promise<"deleted" | "already_gone" | "in_progress" | "pmi"> {
   const id = normalizeZoomMeetingNumber(meetingId) || meetingId;
+  if (await isHostPersonalMeetingId(id)) return "pmi";
 
   for (let attempt = 0; attempt < 5; attempt += 1) {
     try {
@@ -694,13 +742,16 @@ async function deleteZoomMeetingWithRetry(
         await sleep(800 + attempt * 700);
       }
       const deleted = await deleteZoomMeeting(id);
+      if (deleted === "pmi") return "pmi";
       if (deleted === "deleted" || deleted === "already_gone") {
         const still = await getZoomMeeting(id);
         if (!still) return deleted;
+        if (await isHostPersonalMeetingId(still.id)) return "pmi";
         // Zoom can lag — treat as deleted if DELETE succeeded once.
         if (deleted === "deleted") return "deleted";
       }
     } catch (error) {
+      if (isZoomPmiError(error)) return "pmi";
       if (isZoomInProgressError(error) && attempt < 4) {
         await sleep(1000 + attempt * 1000);
         continue;
@@ -711,6 +762,7 @@ async function deleteZoomMeetingWithRetry(
 
   const remaining = await getZoomMeeting(id);
   if (!remaining) return "already_gone";
+  if (await isHostPersonalMeetingId(remaining.id)) return "pmi";
   return "in_progress";
 }
 
@@ -725,7 +777,7 @@ async function endMatchingLiveMeetings(ids: Set<string>) {
 }
 
 export type RemoveZoomMeetingResult =
-  | { ok: true; status: "removed" | "already_gone" }
+  | { ok: true; status: "removed" | "already_gone" | "pmi_skipped" }
   | { ok: false; lastError: unknown; reason: "in_progress" | "scope" | "failed" };
 
 function classMeetingRefs(input: {
@@ -780,6 +832,18 @@ export async function removeZoomMeetingsFromHost(input: {
     candidateIds = [resolved.id];
   }
 
+  let pmiSkipped = false;
+  const hostPmi = await getHostPersonalMeetingId();
+  if (hostPmi) {
+    const before = candidateIds.length;
+    candidateIds = candidateIds.filter((id) => id !== hostPmi);
+    if (before > candidateIds.length) pmiSkipped = true;
+  }
+
+  if (!candidateIds.length && pmiSkipped) {
+    return { ok: true, status: "pmi_skipped" };
+  }
+
   const idSet = new Set(candidateIds);
 
   try {
@@ -790,6 +854,7 @@ export async function removeZoomMeetingsFromHost(input: {
     for (const id of candidateIds) {
       const result = await deleteZoomMeetingWithRetry(id);
       if (result === "deleted") removedAny = true;
+      if (result === "pmi") pmiSkipped = true;
       if (result === "in_progress") {
         return {
           ok: false,
@@ -818,8 +883,13 @@ export async function removeZoomMeetingsFromHost(input: {
 
     for (const row of stillScheduled) {
       idSet.add(row.id);
+      if (hostPmi && row.id === hostPmi) {
+        pmiSkipped = true;
+        continue;
+      }
       const result = await deleteZoomMeetingWithRetry(row.id);
       if (result === "deleted") removedAny = true;
+      if (result === "pmi") pmiSkipped = true;
       if (result === "in_progress") {
         return {
           ok: false,
@@ -830,9 +900,13 @@ export async function removeZoomMeetingsFromHost(input: {
     }
 
     let stillExists = await resolveZoomMeetingForClass(classMeetingRefs(input));
-    if (stillExists) {
+    if (stillExists && (await isHostPersonalMeetingId(stillExists.id))) {
+      pmiSkipped = true;
+      stillExists = null;
+    } else if (stillExists) {
       const last = await deleteZoomMeetingWithRetry(stillExists.id);
       if (last === "deleted") removedAny = true;
+      if (last === "pmi") pmiSkipped = true;
       if (last === "in_progress") {
         return {
           ok: false,
@@ -841,6 +915,10 @@ export async function removeZoomMeetingsFromHost(input: {
         };
       }
       stillExists = await resolveZoomMeetingForClass(classMeetingRefs(input));
+      if (stillExists && (await isHostPersonalMeetingId(stillExists.id))) {
+        pmiSkipped = true;
+        stillExists = null;
+      }
     }
 
     if (stillExists) {
@@ -858,7 +936,11 @@ export async function removeZoomMeetingsFromHost(input: {
 
     return {
       ok: true,
-      status: removedAny ? "removed" : "already_gone",
+      status: removedAny
+        ? "removed"
+        : pmiSkipped
+          ? "pmi_skipped"
+          : "already_gone",
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
