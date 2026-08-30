@@ -161,22 +161,13 @@ export function StudentClassesClient({
           className="animate-panel-in border-y border-stone bg-mist sm:-mx-6 sm:border sm:mx-0 lg:-mx-8 xl:-mx-10"
           data-tour="student-classes-live"
         >
-          <div className="flex items-start justify-between gap-3 border-b border-stone bg-mist px-3 py-3 sm:px-4">
-            <div className="min-w-0">
-              <p className="text-[0.6rem] font-medium uppercase tracking-[0.16em] text-celadon">
-                Live now
-              </p>
-              <h2 className="mt-1 font-display text-lg text-pine sm:text-xl">
-                In-portal Zoom
-              </h2>
-            </div>
-            <button
-              type="button"
-              onClick={() => setPortalSession(null)}
-              className="min-h-10 shrink-0 border border-stone px-3 py-2 text-xs text-ink/65 hover:border-pine/40 hover:text-pine"
-            >
-              Hide player
-            </button>
+          <div className="border-b border-stone bg-mist px-3 py-3 sm:px-4">
+            <p className="text-[0.6rem] font-medium uppercase tracking-[0.16em] text-celadon">
+              Live now
+            </p>
+            <h2 className="mt-1 font-display text-lg text-pine sm:text-xl">
+              In-portal Zoom
+            </h2>
           </div>
           <InPortalZoom
             session={portalSession}

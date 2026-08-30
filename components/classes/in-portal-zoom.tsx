@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { DeskConfirmModal } from "@/components/ui/desk-confirm-modal";
 import type { InPortalZoomSession } from "@/lib/zoom/types";
 
 type Props = {
@@ -221,6 +222,8 @@ export function InPortalZoom({ session, onLeave, onMeetingMissing }: Props) {
   const onMeetingMissingRef = useRef(onMeetingMissing);
   const [status, setStatus] = useState<"loading" | "live" | "error">("loading");
   const [fullscreen, setFullscreen] = useState(false);
+  const [confirmLeave, setConfirmLeave] = useState(false);
+  const [leaving, setLeaving] = useState(false);
   const [message, setMessage] = useState(
     session.role === 1
       ? "Starting meeting as host…"
@@ -266,6 +269,20 @@ export function InPortalZoom({ session, onLeave, onMeetingMissing }: Props) {
       return;
     }
     void shell.requestFullscreen?.();
+  }
+
+  function performLeave() {
+    setLeaving(true);
+    if (document.fullscreenElement === shellRef.current) {
+      void document.exitFullscreen();
+    }
+    const client = clientRef.current;
+    clientRef.current = null;
+    void safeLeave(client).finally(() => {
+      setLeaving(false);
+      setConfirmLeave(false);
+      onLeave();
+    });
   }
 
   useEffect(() => {
@@ -401,14 +418,7 @@ export function InPortalZoom({ session, onLeave, onMeetingMissing }: Props) {
           ) : null}
           <button
             type="button"
-            onClick={() => {
-              if (document.fullscreenElement === shellRef.current) {
-                void document.exitFullscreen();
-              }
-              const client = clientRef.current;
-              clientRef.current = null;
-              void safeLeave(client).finally(onLeave);
-            }}
+            onClick={() => setConfirmLeave(true)}
             className="border border-stone px-2.5 py-1 text-xs text-ink/70"
           >
             Leave portal Zoom
@@ -436,6 +446,34 @@ export function InPortalZoom({ session, onLeave, onMeetingMissing }: Props) {
           the class desk.
         </p>
       ) : null}
+      <DeskConfirmModal
+        open={confirmLeave}
+        onClose={() => !leaving && setConfirmLeave(false)}
+        onConfirm={performLeave}
+        eyebrow="In-portal Zoom"
+        title={
+          session.role === 1 ? "Leave the portal player?" : "Leave this class?"
+        }
+        body={
+          session.role === 1 ? (
+            <>
+              You will stop hosting in the browser, but the meeting may still
+              be live on Zoom. When class is over, use{" "}
+              <span className="font-medium text-ink/80">End live Zoom</span> or{" "}
+              <span className="font-medium text-ink/80">Delete</span> on the
+              class desk to clear it from the host calendar.
+            </>
+          ) : (
+            <>
+              You will leave the in-portal player. You can join again from
+              Classes while the session is open.
+            </>
+          )
+        }
+        confirmLabel={session.role === 1 ? "Leave player" : "Leave class"}
+        busy={leaving}
+        busyLabel="Leaving…"
+      />
     </div>
   );
 }

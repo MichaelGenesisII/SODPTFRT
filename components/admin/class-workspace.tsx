@@ -11,6 +11,7 @@ import {
 } from "@/app/admin/classes/actions";
 import { InPortalZoom } from "@/components/classes/in-portal-zoom";
 import { DeskLoader, DeskLoaderOverlay } from "@/components/ui/desk-loader";
+import { DeskConfirmModal } from "@/components/ui/desk-confirm-modal";
 import { useToast } from "@/components/ui/toast";
 import type { ClassAttendanceRollup } from "@/lib/admin/class-roll";
 import { ClassAttendancePanel } from "@/components/admin/class-attendance-panel";
@@ -85,6 +86,7 @@ export function ClassWorkspace({
   const [hosting, setHosting] = useState(false);
   const [endingLive, setEndingLive] = useState(false);
   const [confirmEndLive, setConfirmEndLive] = useState(false);
+  const [confirmSync, setConfirmSync] = useState(false);
   const [zoomLive, setZoomLive] = useState(false);
   const [displayMeetingId, setDisplayMeetingId] = useState(
     () => item.zoom_meeting_id,
@@ -111,9 +113,12 @@ export function ClassWorkspace({
   }, []);
 
   useEffect(() => {
-    if (!confirmEndLive) return;
+    if (!confirmEndLive && !confirmSync) return;
     function onKey(event: KeyboardEvent) {
-      if (event.key === "Escape" && !modalBusy) setConfirmEndLive(false);
+      if (event.key === "Escape" && !modalBusy) {
+        setConfirmEndLive(false);
+        setConfirmSync(false);
+      }
     }
     document.addEventListener("keydown", onKey);
     document.body.style.overflow = "hidden";
@@ -121,7 +126,7 @@ export function ClassWorkspace({
       document.removeEventListener("keydown", onKey);
       document.body.style.overflow = "";
     };
-  }, [confirmEndLive, modalBusy]);
+  }, [confirmEndLive, confirmSync, modalBusy]);
 
   useEffect(() => {
     if (!item.zoom_meeting_id || !zoomReady) {
@@ -447,7 +452,7 @@ export function ClassWorkspace({
             <button
               type="button"
               disabled={pending || !zoomReady}
-              onClick={onSync}
+              onClick={() => setConfirmSync(true)}
               className="inline-flex min-h-[1.85rem] min-w-[5.5rem] items-center justify-center border border-celadon/40 px-3 py-1.5 text-xs font-medium text-pine disabled:opacity-40"
             >
               {pending && busyLabel?.startsWith("Syncing") ? (
@@ -650,63 +655,46 @@ export function ClassWorkspace({
         )}
       </div>
       )}
-      {confirmEndLive ? (
-        <div
-          className="fixed inset-0 z-[90] flex items-end justify-center bg-ink/45 p-4 sm:items-center"
-          role="presentation"
-          onClick={() => !modalBusy && setConfirmEndLive(false)}
-        >
-          <div
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="end-zoom-confirm-title"
-            className="relative w-full max-w-md border border-stone bg-mist p-6 text-ink shadow-[0_16px_48px_rgba(20,53,44,0.2)] sm:p-7"
-            onClick={(event) => event.stopPropagation()}
-          >
-            <DeskLoaderOverlay
-              active={endingLive}
-              label="Ending live Zoom meetings…"
-            />
-            <p className="text-[0.65rem] font-medium uppercase tracking-[0.16em] text-red-800/80">
-              End live Zoom
-            </p>
-            <h3
-              id="end-zoom-confirm-title"
-              className="mt-3 font-display text-2xl tracking-[-0.02em] text-pine"
-            >
-              End live Zoom meetings?
-            </h3>
-            <p className="mt-3 text-sm leading-relaxed text-ink/70">
-              This ends meetings that are <strong>live right now</strong> on the
-              school Zoom host account. Leaving the portal player does not end
-              the meeting. To remove a scheduled class from the Zoom calendar,
-              use <strong>Delete</strong> on this desk.
-            </p>
-            <div className="mt-7 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
-              <button
-                type="button"
-                disabled={endingLive}
-                onClick={() => setConfirmEndLive(false)}
-                className="border border-pine/25 px-4 py-2.5 text-sm font-medium text-pine transition-colors hover:border-pine disabled:opacity-60"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                disabled={endingLive}
-                onClick={() => void endLiveMeetings()}
-                className="inline-flex min-h-[2.5rem] min-w-[9rem] items-center justify-center bg-[#5c2a2a] px-4 py-2.5 text-sm font-medium text-mist transition-colors hover:bg-red-900 disabled:opacity-60"
-              >
-                {endingLive ? (
-                  <DeskLoader label="Ending…" tone="mist" />
-                ) : (
-                  "End meetings"
-                )}
-              </button>
-            </div>
-          </div>
-        </div>
-      ) : null}
+      <DeskConfirmModal
+        open={confirmSync}
+        onClose={() => !pending && setConfirmSync(false)}
+        onConfirm={() => {
+          setConfirmSync(false);
+          onSync();
+        }}
+        eyebrow="Sync Zoom"
+        title="Sync attendance from Zoom?"
+        body={
+          <>
+            The meeting must have fully ended on Zoom first. Students count as
+            present when they stayed for at least{" "}
+            {item.attendance_threshold_percent}% of the class length (
+            {formatDurationMinutes(item.duration_minutes)} scheduled).
+          </>
+        }
+        confirmLabel="Sync now"
+        busy={pending && Boolean(busyLabel?.startsWith("Syncing"))}
+        busyLabel={busyLabel ?? "Syncing Zoom…"}
+      />
+      <DeskConfirmModal
+        open={confirmEndLive}
+        onClose={() => !endingLive && setConfirmEndLive(false)}
+        onConfirm={() => void endLiveMeetings()}
+        eyebrow="End live Zoom"
+        title="End live Zoom meetings?"
+        body={
+          <>
+            This ends meetings that are <strong>live right now</strong> on the
+            school Zoom host account. Leaving the portal player does not end the
+            meeting. To remove a scheduled class from the Zoom calendar, use{" "}
+            <strong>Delete</strong> on this desk.
+          </>
+        }
+        confirmLabel="End meetings"
+        destructive
+        busy={endingLive}
+        busyLabel="Ending live Zoom meetings…"
+      />
     </div>
   );
 }
