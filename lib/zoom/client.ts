@@ -300,13 +300,10 @@ export async function createZoomMeeting(input: {
  * Returns null when Zoom reports not found (deleted / never existed).
  */
 export async function getZoomMeeting(
-  meetingId: string,
+  meetingRef: string,
 ): Promise<ZoomMeetingCreated | null> {
-  const raw = String(meetingId ?? "").trim();
+  const raw = String(meetingRef ?? "").trim();
   if (!raw) return null;
-
-  const numeric = normalizeZoomMeetingNumber(raw);
-  const pathId = numeric || raw;
 
   try {
     const data = await zoomFetch<{
@@ -315,7 +312,7 @@ export async function getZoomMeeting(
       join_url: string;
       start_url: string;
       password?: string;
-    }>(`/meetings/${encodeURIComponent(pathId)}`);
+    }>(`/meetings/${encodeMeetingRefForApi(raw)}`);
     return mapZoomMeetingPayload(data);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -376,6 +373,19 @@ function encodeMeetingUuid(uuid: string): string {
     return encodeURIComponent(encodeURIComponent(trimmed));
   }
   return encodeURIComponent(trimmed);
+}
+
+/** Path segment for `/meetings/{ref}` — numeric id or UUID (Zoom encoding rules). */
+function encodeMeetingRefForApi(ref: string): string {
+  const trimmed = String(ref ?? "").trim();
+  if (!trimmed) throw new Error("Missing Zoom meeting ref.");
+
+  const numeric = normalizeZoomMeetingNumber(trimmed);
+  if (numeric && /^\d+$/.test(numeric)) {
+    return encodeURIComponent(numeric);
+  }
+
+  return encodeMeetingUuid(trimmed);
 }
 
 /**
@@ -478,11 +488,22 @@ export async function listLiveHostMeetings(): Promise<LiveZoomMeeting[]> {
  * Returns whether Zoom confirmed an end — not found / already ended is
  * "already_clear" so callers do not toast a false "ended" success.
  */
+async function resolveNumericMeetingId(meetingRef: string): Promise<string | null> {
+  const raw = String(meetingRef ?? "").trim();
+  if (!raw) return null;
+
+  const numeric = normalizeZoomMeetingNumber(raw);
+  if (numeric && /^\d+$/.test(numeric)) return numeric;
+
+  const meeting = await getZoomMeeting(raw);
+  return meeting?.id ?? null;
+}
+
 export async function endZoomMeeting(
-  meetingId: string,
+  meetingRef: string,
 ): Promise<"ended" | "already_clear"> {
-  const id = normalizeZoomMeetingNumber(meetingId) || String(meetingId).trim();
-  if (!id) throw new Error("Missing Zoom meeting id.");
+  const id = await resolveNumericMeetingId(meetingRef);
+  if (!id) return "already_clear";
 
   try {
     await zoomFetch<void>(`/meetings/${encodeURIComponent(id)}/status`, {
@@ -510,10 +531,10 @@ export async function endZoomMeeting(
  * should be ended first when possible — Zoom may reject delete while live.
  */
 export async function deleteZoomMeeting(
-  meetingId: string,
+  meetingRef: string,
 ): Promise<"deleted" | "already_gone"> {
-  const id = normalizeZoomMeetingNumber(meetingId) || String(meetingId).trim();
-  if (!id) throw new Error("Missing Zoom meeting id.");
+  const id = await resolveNumericMeetingId(meetingRef);
+  if (!id) return "already_gone";
 
   try {
     await zoomFetch<void>(`/meetings/${encodeURIComponent(id)}`, {
@@ -544,39 +565,308 @@ export function zoomMeetingIdCandidates(input: {
   return out;
 }
 
-export type RemoveZoomMeetingResult =
-  | { ok: true; status: "removed" | "already_gone" }
-  | { ok: false; lastError: unknown };
+export type ScheduledHostMeeting = {
+  id: string;
+  uuid: string;
+  topic: string;
+  start_time: string;
+};
 
-/** End (if live) and delete scheduled meetings for a class desk row. */
-export async function removeZoomMeetingsFromHost(input: {
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isZoomInProgressError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /3002|in progress|in-progress|cannot delete this meeting/i.test(message);
+}
+
+/** Scheduled meetings on the configured host user (paginated). */
+export async function listScheduledHostMeetings(): Promise<ScheduledHostMeeting[]> {
+  const host = process.env.ZOOM_HOST_USER_ID;
+  if (!host) {
+    throw new Error("ZOOM_HOST_USER_ID is not set.");
+  }
+
+  const encodedHost = encodeURIComponent(host);
+  const aggregated: ScheduledHostMeeting[] = [];
+  let nextPageToken = "";
+
+  do {
+    const qs = new URLSearchParams({ type: "scheduled", page_size: "300" });
+    if (nextPageToken) qs.set("next_page_token", nextPageToken);
+    const { rawText } = await zoomFetchRaw(
+      `/users/${encodedHost}/meetings?${qs.toString()}`,
+    );
+    const page = JSON.parse(
+      rawText.replace(/"id"\s*:\s*(\d+)/g, '"id":"$1"'),
+    ) as {
+      meetings?: {
+        id?: number | string;
+        uuid?: string;
+        topic?: string;
+        start_time?: string;
+      }[];
+      next_page_token?: string;
+    };
+
+    for (const row of page.meetings ?? []) {
+      const id = normalizeZoomMeetingNumber(String(row.id ?? "")) || "";
+      if (!id) continue;
+      aggregated.push({
+        id,
+        uuid: String(row.uuid ?? "").trim(),
+        topic: (row.topic ?? "").trim(),
+        start_time: String(row.start_time ?? "").trim(),
+      });
+    }
+    nextPageToken = page.next_page_token ?? "";
+  } while (nextPageToken);
+
+  return aggregated;
+}
+
+function parseClassStartMs(value: string): number | null {
+  const t = new Date(value.trim()).getTime();
+  return Number.isNaN(t) ? null : t;
+}
+
+function meetingStartMatches(a: string | null | undefined, b: string | null | undefined) {
+  if (!a || !b) return false;
+  const ta = parseClassStartMs(a);
+  const tb = parseClassStartMs(b);
+  if (ta === null || tb === null) return false;
+  return Math.abs(ta - tb) <= 90_000;
+}
+
+function collectDeleteCandidates(input: {
   meetingId?: string | null;
   joinUrl?: string | null;
-}): Promise<RemoveZoomMeetingResult> {
-  const ids = zoomMeetingIdCandidates(input);
-  if (!ids.length) return { ok: true, status: "already_gone" };
+  meetingUuid?: string | null;
+  topic?: string | null;
+  scheduledStart?: string | null;
+  resolvedId?: string | null;
+  scheduled?: ScheduledHostMeeting[];
+}): string[] {
+  const ids = new Set<string>();
+  const push = (value?: string | null) => {
+    const norm = normalizeZoomMeetingNumber(value) || String(value ?? "").trim();
+    if (norm && /^\d+$/.test(norm)) ids.add(norm);
+  };
 
-  let removedAny = false;
-  let goneAny = false;
-  let lastError: unknown = null;
+  push(input.resolvedId);
+  push(input.meetingId);
+  push(parseMeetingIdFromJoinUrl(input.joinUrl));
 
-  for (const id of ids) {
-    try {
-      await endZoomMeeting(id);
-      const deleted = await deleteZoomMeeting(id);
-      if (deleted === "deleted") removedAny = true;
-      if (deleted === "already_gone") goneAny = true;
-    } catch (error) {
-      console.error("[zoom] remove meeting candidate failed", { id, error });
-      lastError = error;
+  for (const row of input.scheduled ?? []) {
+    const rowNorm = normalizeZoomMeetingNumber(row.id) || row.id;
+    const uuid = String(input.meetingUuid ?? "").trim();
+    if (uuid && row.uuid && row.uuid === uuid) {
+      push(row.id);
+    }
+    if (
+      input.topic &&
+      row.topic === input.topic.trim() &&
+      meetingStartMatches(input.scheduledStart, row.start_time)
+    ) {
+      push(row.id);
+    }
+    if (
+      input.meetingId &&
+      rowNorm === (normalizeZoomMeetingNumber(input.meetingId) || input.meetingId)
+    ) {
+      push(row.id);
     }
   }
 
-  if (removedAny || goneAny) {
-    return { ok: true, status: removedAny ? "removed" : "already_gone" };
+  return [...ids];
+}
+
+async function deleteZoomMeetingWithRetry(
+  meetingId: string,
+): Promise<"deleted" | "already_gone" | "in_progress"> {
+  const id = normalizeZoomMeetingNumber(meetingId) || meetingId;
+
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    try {
+      await endZoomMeeting(id);
+      if (attempt > 0) {
+        await sleep(800 + attempt * 700);
+      }
+      const deleted = await deleteZoomMeeting(id);
+      if (deleted === "deleted" || deleted === "already_gone") {
+        const still = await getZoomMeeting(id);
+        if (!still) return deleted;
+        // Zoom can lag — treat as deleted if DELETE succeeded once.
+        if (deleted === "deleted") return "deleted";
+      }
+    } catch (error) {
+      if (isZoomInProgressError(error) && attempt < 4) {
+        await sleep(1000 + attempt * 1000);
+        continue;
+      }
+      throw error;
+    }
   }
-  if (lastError) return { ok: false, lastError };
-  return { ok: true, status: "already_gone" };
+
+  const remaining = await getZoomMeeting(id);
+  if (!remaining) return "already_gone";
+  return "in_progress";
+}
+
+async function endMatchingLiveMeetings(ids: Set<string>) {
+  const live = await listLiveHostMeetings();
+  for (const row of live) {
+    const norm = normalizeZoomMeetingNumber(row.id) || row.id;
+    if (ids.has(norm)) {
+      await endZoomMeeting(row.id);
+    }
+  }
+}
+
+export type RemoveZoomMeetingResult =
+  | { ok: true; status: "removed" | "already_gone" }
+  | { ok: false; lastError: unknown; reason: "in_progress" | "scope" | "failed" };
+
+function classMeetingRefs(input: {
+  meetingId?: string | null;
+  joinUrl?: string | null;
+  meetingUuid?: string | null;
+}) {
+  return {
+    zoom_meeting_id: input.meetingId,
+    zoom_meeting_uuid: input.meetingUuid,
+    zoom_join_url: input.joinUrl,
+  };
+}
+
+/** End (if live), delete scheduled meetings, and verify they leave the host calendar. */
+export async function removeZoomMeetingsFromHost(input: {
+  meetingId?: string | null;
+  joinUrl?: string | null;
+  meetingUuid?: string | null;
+  topic?: string | null;
+  scheduledStart?: string | null;
+}): Promise<RemoveZoomMeetingResult> {
+  const hasIdentifiers = Boolean(
+    String(input.meetingId ?? "").trim() ||
+      String(input.joinUrl ?? "").trim() ||
+      String(input.meetingUuid ?? "").trim(),
+  );
+
+  let resolved: ZoomMeetingCreated | null = null;
+  try {
+    resolved = await resolveZoomMeetingForClass(classMeetingRefs(input));
+  } catch (error) {
+    console.error("[zoom] resolve meeting for delete:", error);
+  }
+
+  let scheduled: ScheduledHostMeeting[] = [];
+  try {
+    scheduled = await listScheduledHostMeetings();
+  } catch (error) {
+    console.error("[zoom] list scheduled meetings:", error);
+  }
+
+  let candidateIds = collectDeleteCandidates({
+    ...input,
+    scheduled,
+    resolvedId: resolved?.id ?? null,
+  });
+
+  if (!candidateIds.length) {
+    if (!hasIdentifiers) return { ok: true, status: "already_gone" };
+    if (!resolved) return { ok: true, status: "already_gone" };
+    candidateIds = [resolved.id];
+  }
+
+  const idSet = new Set(candidateIds);
+
+  try {
+    await endMatchingLiveMeetings(idSet);
+    await sleep(500);
+
+    let removedAny = false;
+    for (const id of candidateIds) {
+      const result = await deleteZoomMeetingWithRetry(id);
+      if (result === "deleted") removedAny = true;
+      if (result === "in_progress") {
+        return {
+          ok: false,
+          lastError: new Error("Meeting is still live on Zoom."),
+          reason: "in_progress",
+        };
+      }
+    }
+
+    // Re-list scheduled — catch id mismatches and orphan rows.
+    const afterScheduled = await listScheduledHostMeetings();
+    const stillScheduled = afterScheduled.filter((row) => {
+      const norm = normalizeZoomMeetingNumber(row.id) || row.id;
+      if (idSet.has(norm)) return true;
+      const uuid = String(input.meetingUuid ?? "").trim();
+      if (uuid && row.uuid === uuid) return true;
+      if (
+        input.topic &&
+        row.topic === input.topic.trim() &&
+        meetingStartMatches(input.scheduledStart, row.start_time)
+      ) {
+        return true;
+      }
+      return false;
+    });
+
+    for (const row of stillScheduled) {
+      idSet.add(row.id);
+      const result = await deleteZoomMeetingWithRetry(row.id);
+      if (result === "deleted") removedAny = true;
+      if (result === "in_progress") {
+        return {
+          ok: false,
+          lastError: new Error("Meeting is still live on Zoom."),
+          reason: "in_progress",
+        };
+      }
+    }
+
+    let stillExists = await resolveZoomMeetingForClass(classMeetingRefs(input));
+    if (stillExists) {
+      const last = await deleteZoomMeetingWithRetry(stillExists.id);
+      if (last === "deleted") removedAny = true;
+      if (last === "in_progress") {
+        return {
+          ok: false,
+          lastError: new Error("Meeting is still live on Zoom."),
+          reason: "in_progress",
+        };
+      }
+      stillExists = await resolveZoomMeetingForClass(classMeetingRefs(input));
+    }
+
+    if (stillExists) {
+      console.error("[zoom] meeting still exists after delete", {
+        id: stillExists.id,
+        uuid: stillExists.uuid,
+        join_url: stillExists.join_url,
+      });
+      return {
+        ok: false,
+        lastError: new Error("Zoom still lists this class meeting."),
+        reason: "failed",
+      };
+    }
+
+    return {
+      ok: true,
+      status: removedAny ? "removed" : "already_gone",
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const reason =
+      /scopes|4711/i.test(message) ? "scope" : ("failed" as const);
+    console.error("[zoom] remove meetings from host:", error);
+    return { ok: false, lastError: error, reason };
+  }
 }
 
 /** End a class meeting by id even when list-live omits it (id mismatch). */

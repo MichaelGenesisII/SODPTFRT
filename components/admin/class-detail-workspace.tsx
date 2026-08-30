@@ -92,11 +92,11 @@ export function ClassDetailWorkspace({
       try {
         const next = await action();
         if (next.ok) {
+          // Navigate away before closing modal so delete never leaves the
+          // details desk stuck on a removed class.
+          if (options?.skipReload) then?.();
           success(next.message, "Classes");
           setPendingConfirm(null);
-          then?.();
-          // After delete we navigate away — reloading a removed class hangs
-          // the details desk on "Removing class…".
           if (!options?.skipReload) await reload();
         } else {
           error(next.message, "Classes");
@@ -116,7 +116,7 @@ export function ClassDetailWorkspace({
       case "delete":
         run(
           () => deleteZoomClass(item.id),
-          () => router.push(backHref),
+          () => router.replace(backHref),
           "Removing class…",
           { skipReload: true },
         );

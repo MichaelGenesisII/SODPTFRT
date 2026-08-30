@@ -1646,18 +1646,40 @@ export async function deleteZoomClass(
   if (!access.ok) return { ok: false, message: access.message };
 
   const { supabase, klass } = access;
-  const meetingId = klass.zoom_meeting_id?.trim() || null;
-  let zoomCalendarNote = "";
+  const hasZoomLink = Boolean(
+    klass.zoom_meeting_id?.trim() ||
+      klass.zoom_join_url?.trim() ||
+      klass.zoom_meeting_uuid?.trim(),
+  );
 
-  if (meetingId && zoomConfigured()) {
+  if (hasZoomLink && zoomConfigured()) {
     const removed = await removeZoomMeetingsFromHost({
       meetingId: klass.zoom_meeting_id,
       joinUrl: klass.zoom_join_url,
+      meetingUuid: klass.zoom_meeting_uuid,
+      topic: klass.title,
+      scheduledStart: klass.scheduled_start,
     });
+
     if (!removed.ok) {
       console.error("classes delete zoom meeting:", removed.lastError);
-      zoomCalendarNote =
-        " If it still appears in Zoom, delete it once from the host Meetings list.";
+      if (removed.reason === "in_progress") {
+        return {
+          ok: false,
+          message:
+            "This Zoom meeting is still live. Click End live Zoom, wait a few seconds, then delete the class again.",
+        };
+      }
+      if (removed.reason === "scope") {
+        return fail(
+          removed.lastError,
+          "Could not remove the Zoom meeting. Ask a national admin to add meeting delete permission on the Zoom API app, then Activate.",
+        );
+      }
+      return fail(
+        removed.lastError,
+        "Could not remove the Zoom meeting from the host calendar. Try End live Zoom first, or delete it once in the Zoom Meetings list.",
+      );
     }
   }
 
@@ -1669,8 +1691,8 @@ export async function deleteZoomClass(
   revalidateClassPaths(classId);
   return {
     ok: true,
-    message: meetingId
-      ? `Class removed.${zoomCalendarNote}`
+    message: hasZoomLink
+      ? "Class and Zoom meeting removed."
       : "Class removed.",
   };
 }
