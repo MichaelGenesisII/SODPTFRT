@@ -44,7 +44,9 @@ import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { createServiceSupabaseClient } from "@/lib/supabase/service";
 import {
   createZoomMeeting,
+  deleteZoomMeeting,
   endAllLiveHostMeetings,
+  endZoomMeeting,
   fetchMeetingParticipants,
   getZoomMeeting,
   listLiveHostMeetings,
@@ -479,9 +481,22 @@ export async function getInPortalHostSession(
   }
 
   try {
+    const sdkKey = process.env.ZOOM_MEETING_SDK_KEY?.trim() ?? "";
+    const s2sClientId = process.env.ZOOM_CLIENT_ID?.trim() ?? "";
+    if (sdkKey && s2sClientId && sdkKey === s2sClientId) {
+      console.error(
+        "[classes host session] ZOOM_MEETING_SDK_KEY matches ZOOM_CLIENT_ID — App B and App A credentials were mixed.",
+      );
+      return {
+        ok: false,
+        message:
+          "In-portal Zoom credentials look mixed with the API app. Use Host in Zoom app for now, and ask a national admin to set App B’s Meeting SDK Client ID/Secret (not App A’s) on the server.",
+      };
+    }
+
     // Meeting SDK always calls join(); hosting is role 1 + host ZAK.
-    // 3610 "Meeting does not exist" means the stored id is gone on Zoom or
-    // the Meeting SDK app cannot see it — recreate when missing / forced.
+    // 3610 "Meeting does not exist" means the stored id is gone on Zoom —
+    // recreate when missing / forced, then verify before signing the JWT.
     let meetingOk =
       !forceRefresh && meetingNumber
         ? await getZoomMeeting(meetingNumber)
@@ -528,11 +543,26 @@ export async function getInPortalHostSession(
       meetingRefreshed = true;
       revalidatePath("/admin/classes");
       revalidatePath(`/admin/classes/${klass.id}`);
-    } else {
-      meetingNumber = normalizeZoomMeetingNumber(meetingOk.id) || meetingNumber;
-      if (meetingOk.password != null && meetingOk.password !== "") {
-        password = meetingOk.password;
+
+      // Zoom can lag a moment before Meeting SDK accepts a brand-new id.
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+      meetingOk = meetingNumber ? await getZoomMeeting(meetingNumber) : null;
+      if (!meetingOk) {
+        console.error(
+          "[classes host session] meeting created but GET still empty",
+          { classId: klass.id, meetingNumber },
+        );
+        return {
+          ok: false,
+          message:
+            "Zoom created the meeting, but it is not ready to open in the browser yet. Wait a few seconds and try Host in portal again, or use Host in Zoom app.",
+        };
       }
+    }
+
+    meetingNumber = normalizeZoomMeetingNumber(meetingOk.id) || meetingNumber;
+    if (meetingOk.password != null) {
+      password = meetingOk.password;
     }
 
     if (!meetingNumber) {
@@ -541,6 +571,14 @@ export async function getInPortalHostSession(
         message: "This class has no Zoom meeting number.",
       };
     }
+
+    console.info("[classes host session] starting", {
+      classId: klass.id,
+      meetingNumber,
+      hasPassword: Boolean(password),
+      meetingRefreshed,
+      sdkKeyPrefix: sdkKey.slice(0, 4),
+    });
 
     const zak = await fetchHostZakToken();
     const signature = createMeetingSdkSignature({
@@ -553,7 +591,7 @@ export async function getInPortalHostSession(
       meetingRefreshed,
       session: {
         signature,
-        sdkKey: process.env.ZOOM_MEETING_SDK_KEY!,
+        sdkKey,
         meetingNumber,
         password,
         userName: actor.full_name || actor.email || "Host",
@@ -1495,13 +1533,36 @@ export async function deleteZoomClass(
   const access = await requireAccessibleClass(classId);
   if (!access.ok) return { ok: false, message: access.message };
 
-  const { error } = await access.supabase
+  const { supabase, klass } = access;
+  const meetingId = klass.zoom_meeting_id?.trim() || null;
+
+  // Remove the Zoom calendar entry first so "End" / "Delete" on the desk
+  // does not leave orphan scheduled meetings on the host account.
+  if (meetingId && zoomConfigured()) {
+    try {
+      await endZoomMeeting(meetingId);
+      await deleteZoomMeeting(meetingId);
+    } catch (error) {
+      console.error("classes delete zoom meeting:", error);
+      return fail(
+        error,
+        "Could not remove the Zoom meeting. Please try again.",
+      );
+    }
+  }
+
+  const { error } = await supabase
     .from("zoom_classes")
     .delete()
     .eq("id", classId);
   if (error) return fail(error);
   revalidateClassPaths(classId);
-  return { ok: true, message: "Class removed." };
+  return {
+    ok: true,
+    message: meetingId
+      ? "Class and Zoom meeting removed."
+      : "Class removed.",
+  };
 }
 
 export async function syncZoomClassAttendance(

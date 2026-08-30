@@ -22,8 +22,8 @@ export function createMeetingSdkSignature(input: {
   meetingNumber: string;
   role: 0 | 1;
 }): string {
-  const sdkKey = process.env.ZOOM_MEETING_SDK_KEY;
-  const sdkSecret = process.env.ZOOM_MEETING_SDK_SECRET;
+  const sdkKey = process.env.ZOOM_MEETING_SDK_KEY?.trim();
+  const sdkSecret = process.env.ZOOM_MEETING_SDK_SECRET?.trim();
   if (!sdkKey || !sdkSecret) {
     throw new Error(
       "Meeting SDK is not configured. Set ZOOM_MEETING_SDK_KEY and ZOOM_MEETING_SDK_SECRET.",
@@ -35,13 +35,14 @@ export function createMeetingSdkSignature(input: {
   if (!meetingNumber) {
     throw new Error("Missing Zoom meeting number for Meeting SDK signature.");
   }
-  const iat = Math.round(Date.now() / 1000) - 30;
+
+  // Zoom requires exp/tokenExp at least 1800s after iat.
+  const iat = Math.floor(Date.now() / 1000) - 30;
   const exp = iat + 60 * 60 * 2;
   const header = base64UrlJson({ alg: "HS256", typ: "JWT" });
-  // Include both appKey and sdkKey (same value) for web + cross-platform JWT docs.
+  // Official web JWT uses appKey only (Client ID). Do not mix in App A OAuth ids.
   const payload = base64UrlJson({
     appKey: sdkKey,
-    sdkKey,
     mn: meetingNumber,
     role: input.role,
     iat,

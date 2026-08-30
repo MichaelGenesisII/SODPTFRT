@@ -275,7 +275,7 @@ export function InPortalZoom({ session, onLeave, onMeetingMissing }: Props) {
           /already has other meetings/i.test(detail)
             ? "Another Zoom session is still open in this browser. Leave it or close other portal Zoom tabs, then try again — or use Host / Join in the Zoom app."
             : missingMeeting
-              ? "This Zoom meeting is no longer available. Try Host in portal again (it can refresh the meeting), or use Host in Zoom app."
+              ? "This meeting could not be opened in the browser. Try Host in Zoom app (that confirms the meeting exists). If the app works but the portal does not, App B needs Production Meeting SDK credentials and this site’s hostname on Zoom’s domain allow list."
               : `${detail} You can use the Zoom app link instead.`,
         );
       }

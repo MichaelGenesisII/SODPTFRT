@@ -85,6 +85,7 @@ export function ClassDetailWorkspace({
     action: () => Promise<ClassActionResult>,
     then?: () => void,
     label = "Working…",
+    options?: { skipReload?: boolean },
   ) {
     setBusyLabel(label);
     startTransition(async () => {
@@ -94,7 +95,9 @@ export function ClassDetailWorkspace({
           success(next.message, "Classes");
           setPendingConfirm(null);
           then?.();
-          await reload();
+          // After delete we navigate away — reloading a removed class hangs
+          // the details desk on "Removing class…".
+          if (!options?.skipReload) await reload();
         } else {
           error(next.message, "Classes");
         }
@@ -115,6 +118,7 @@ export function ClassDetailWorkspace({
           () => deleteZoomClass(item.id),
           () => router.push(backHref),
           "Removing class…",
+          { skipReload: true },
         );
         return;
       case "regen":
@@ -229,7 +233,11 @@ export function ClassDetailWorkspace({
                       body: (
                         <>
                           “{item.title}” and its attendance rows will be
-                          permanently deleted. This cannot be undone.
+                          permanently deleted
+                          {item.zoom_meeting_id
+                            ? ", including the scheduled Zoom meeting on the host account"
+                            : ""}
+                          . This cannot be undone.
                         </>
                       ),
                       confirmLabel: "Delete permanently",

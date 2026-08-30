@@ -178,7 +178,7 @@ export function ClassWorkspace({
   async function retryHostAfterMissingMeeting() {
     if (hostRefreshAttempted) {
       toastError(
-        "Zoom still cannot open this meeting in the browser. Use Host in Zoom app, or check that App B (Meeting SDK) is on the same Zoom account as App A.",
+        "The meeting exists on Zoom, but the browser SDK still cannot open it. Use Host in Zoom app. On the live site, App B must use Production Client ID/Secret, Meeting SDK turned on, and portal.schoolofdisciples.org on the domain allow list — then redeploy.",
         "In-portal Zoom",
       );
       setPortalSession(null);

@@ -369,6 +369,31 @@ export async function endZoomMeeting(
 }
 
 /**
+ * Delete a scheduled (or ended) meeting from the Zoom account calendar.
+ * Returns "deleted" or "already_gone" (404 / not found). Live meetings
+ * should be ended first when possible — Zoom may reject delete while live.
+ */
+export async function deleteZoomMeeting(
+  meetingId: string,
+): Promise<"deleted" | "already_gone"> {
+  const id = normalizeZoomMeetingNumber(meetingId) || String(meetingId).trim();
+  if (!id) throw new Error("Missing Zoom meeting id.");
+
+  try {
+    await zoomFetch<void>(`/meetings/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+    });
+    return "deleted";
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (/\(404\)|not (found|exist)|3001|3610/i.test(message)) {
+      return "already_gone";
+    }
+    throw error;
+  }
+}
+
+/**
  * End every live meeting on the host account.
  * Only meetings Zoom lists as **live** are ended — a scheduled (not started)
  * class meeting id is never treated as a successful end.
