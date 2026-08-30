@@ -29,6 +29,16 @@ type ZoomEmbeddedClient = {
     zoomAppRoot: HTMLElement;
     language: string;
     patchJsMedia?: boolean;
+    maximumVideosInGalleryView?: number;
+    customize?: {
+      video?: {
+        isResizable?: boolean;
+        viewSizes?: {
+          default?: { width: number; height: number };
+          ribbon?: { width: number; height: number };
+        };
+      };
+    };
   }) => Promise<void>;
   join: (opts: {
     signature: string;
@@ -37,6 +47,12 @@ type ZoomEmbeddedClient = {
     userName: string;
     userEmail: string;
     zak?: string;
+  }) => Promise<void>;
+  updateVideoOptions?: (opts: {
+    viewSizes?: {
+      default?: { width: number; height: number };
+      ribbon?: { width: number; height: number };
+    };
   }) => Promise<void>;
   leaveMeeting?: () => void | Promise<void>;
   destroy?: () => void | Promise<void>;
@@ -158,6 +174,37 @@ async function safeLeave(client: ZoomEmbeddedClient | null) {
   }
 }
 
+/** Zoom caps component-view canvas size (see Meeting SDK resizing docs). */
+function videoViewSizesForContainer(container: HTMLElement): {
+  default: { width: number; height: number };
+  ribbon: { width: number; height: number };
+} {
+  const rect = container.getBoundingClientRect();
+  const width = Math.max(720, Math.min(Math.floor(rect.width || 960), 1440));
+  const height = Math.max(411, Math.min(Math.floor(rect.height || 540), 810));
+  return {
+    default: { width, height },
+    ribbon: {
+      width: Math.min(316, width),
+      height: Math.min(720, height),
+    },
+  };
+}
+
+async function syncVideoSize(
+  client: ZoomEmbeddedClient | null,
+  container: HTMLElement | null,
+) {
+  if (!client?.updateVideoOptions || !container) return;
+  try {
+    await client.updateVideoOptions({
+      viewSizes: videoViewSizesForContainer(container),
+    });
+  } catch {
+    // Non-fatal — user can still drag-resize when isResizable is on.
+  }
+}
+
 /**
  * Embeds Zoom Meeting SDK (component view) via Zoom's CDN + vendor scripts.
  * npm `@zoom/meetingsdk` peers React 18 and conflicts with this app's React 19,
@@ -167,11 +214,13 @@ async function safeLeave(client: ZoomEmbeddedClient | null) {
  * not a separate "create host" call.
  */
 export function InPortalZoom({ session, onLeave, onMeetingMissing }: Props) {
+  const shellRef = useRef<HTMLDivElement>(null);
   const rootRef = useRef<HTMLDivElement>(null);
   const clientRef = useRef<ZoomEmbeddedClient | null>(null);
   const missingNotifiedRef = useRef(false);
   const onMeetingMissingRef = useRef(onMeetingMissing);
   const [status, setStatus] = useState<"loading" | "live" | "error">("loading");
+  const [fullscreen, setFullscreen] = useState(false);
   const [message, setMessage] = useState(
     session.role === 1
       ? "Starting meeting as host…"
@@ -187,16 +236,57 @@ export function InPortalZoom({ session, onLeave, onMeetingMissing }: Props) {
   }, [session.meetingNumber, session.signature]);
 
   useEffect(() => {
+    function onFullscreenChange() {
+      const active = document.fullscreenElement === shellRef.current;
+      setFullscreen(active);
+      void syncVideoSize(clientRef.current, rootRef.current);
+    }
+    document.addEventListener("fullscreenchange", onFullscreenChange);
+    return () =>
+      document.removeEventListener("fullscreenchange", onFullscreenChange);
+  }, []);
+
+  useEffect(() => {
+    if (status !== "live") return;
+    const container = rootRef.current;
+    if (!container || typeof ResizeObserver === "undefined") return;
+
+    const observer = new ResizeObserver(() => {
+      void syncVideoSize(clientRef.current, container);
+    });
+    observer.observe(container);
+    return () => observer.disconnect();
+  }, [status]);
+
+  function toggleFullscreen() {
+    const shell = shellRef.current;
+    if (!shell) return;
+    if (document.fullscreenElement === shell) {
+      void document.exitFullscreen();
+      return;
+    }
+    void shell.requestFullscreen?.();
+  }
+
+  useEffect(() => {
     let cancelled = false;
 
     async function joinWithClient(
       client: ZoomEmbeddedClient,
       root: HTMLElement,
     ) {
+      const viewSizes = videoViewSizesForContainer(root);
       await client.init({
         zoomAppRoot: root,
         language: "en-US",
         patchJsMedia: true,
+        maximumVideosInGalleryView: 25,
+        customize: {
+          video: {
+            isResizable: true,
+            viewSizes,
+          },
+        },
       });
 
       if (session.role === 1 && !session.zak) {
@@ -252,9 +342,10 @@ export function InPortalZoom({ session, onLeave, onMeetingMissing }: Props) {
           setStatus("live");
           setMessage(
             session.role === 1
-              ? "You are hosting in the portal."
-              : "You have joined in the portal.",
+              ? "You are hosting in the portal. Drag the corner to resize, or use Expand."
+              : "You have joined in the portal. Drag the corner to resize, or use Expand.",
           );
+          await syncVideoSize(clientRef.current, rootRef.current);
         }
       } catch (error) {
         if (cancelled) return;
@@ -292,29 +383,59 @@ export function InPortalZoom({ session, onLeave, onMeetingMissing }: Props) {
   }, [session]);
 
   return (
-    <div className="border border-stone bg-ink/5">
+    <div
+      ref={shellRef}
+      className={`border border-stone bg-ink/5 ${fullscreen ? "bg-black" : ""}`}
+    >
       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-stone bg-mist px-3 py-2">
-        <p className="text-xs text-ink/60">{message}</p>
-        <button
-          type="button"
-          onClick={() => {
-            const client = clientRef.current;
-            clientRef.current = null;
-            void safeLeave(client).finally(onLeave);
-          }}
-          className="border border-stone px-2.5 py-1 text-xs text-ink/70"
-        >
-          Leave portal Zoom
-        </button>
+        <p className="max-w-[min(100%,40rem)] text-xs text-ink/60">{message}</p>
+        <div className="flex flex-wrap items-center gap-2">
+          {status === "live" ? (
+            <button
+              type="button"
+              onClick={toggleFullscreen}
+              className="border border-stone px-2.5 py-1 text-xs text-ink/70"
+            >
+              {fullscreen ? "Exit expand" : "Expand"}
+            </button>
+          ) : null}
+          <button
+            type="button"
+            onClick={() => {
+              if (document.fullscreenElement === shellRef.current) {
+                void document.exitFullscreen();
+              }
+              const client = clientRef.current;
+              clientRef.current = null;
+              void safeLeave(client).finally(onLeave);
+            }}
+            className="border border-stone px-2.5 py-1 text-xs text-ink/70"
+          >
+            Leave portal Zoom
+          </button>
+        </div>
       </div>
       {status === "error" ? (
         <p className="px-4 py-8 text-center text-sm text-red-900">{message}</p>
       ) : (
         <div
           ref={rootRef}
-          className="min-h-[min(70vh,32rem)] w-full bg-black/90"
+          className={`w-full bg-black/90 ${
+            fullscreen
+              ? "h-[calc(100vh-3rem)] min-h-[calc(100vh-3rem)]"
+              : "min-h-[min(80vh,54rem)] h-[min(80vh,54rem)]"
+          }`}
         />
       )}
+      {status === "live" && !fullscreen ? (
+        <p className="border-t border-stone bg-mist/60 px-3 py-2 text-[0.65rem] leading-relaxed text-ink/50">
+          In-portal Zoom is a simplified embed — not the full Zoom desktop app.
+          For breakout rooms, full host controls, recording, and gallery layout,
+          use{" "}
+          <span className="font-medium text-ink/65">Host in Zoom app</span> on
+          the class desk.
+        </p>
+      ) : null}
     </div>
   );
 }

@@ -84,11 +84,12 @@ export function requiredSecondsForClass(
   return Math.ceil((mins * 60 * pct) / 100);
 }
 
+/** Present when a student stayed for at least threshold% of class duration. */
 export function isPresentByDuration(
   durationSeconds: number,
   requiredSeconds: number,
 ): boolean {
-  return durationSeconds >= requiredSeconds;
+  return Math.max(0, durationSeconds) >= Math.max(0, requiredSeconds);
 }
 
 export function formatDuration(seconds: number): string {

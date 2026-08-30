@@ -529,6 +529,73 @@ export async function deleteZoomMeeting(
   }
 }
 
+/** Stored id and join URL can disagree — try every candidate. */
+export function zoomMeetingIdCandidates(input: {
+  meetingId?: string | null;
+  joinUrl?: string | null;
+}): string[] {
+  const out: string[] = [];
+  const push = (value?: string | null) => {
+    const norm = normalizeZoomMeetingNumber(value) || String(value ?? "").trim();
+    if (norm && !out.includes(norm)) out.push(norm);
+  };
+  push(input.meetingId);
+  push(parseMeetingIdFromJoinUrl(input.joinUrl));
+  return out;
+}
+
+export type RemoveZoomMeetingResult =
+  | { ok: true; status: "removed" | "already_gone" }
+  | { ok: false; lastError: unknown };
+
+/** End (if live) and delete scheduled meetings for a class desk row. */
+export async function removeZoomMeetingsFromHost(input: {
+  meetingId?: string | null;
+  joinUrl?: string | null;
+}): Promise<RemoveZoomMeetingResult> {
+  const ids = zoomMeetingIdCandidates(input);
+  if (!ids.length) return { ok: true, status: "already_gone" };
+
+  let removedAny = false;
+  let goneAny = false;
+  let lastError: unknown = null;
+
+  for (const id of ids) {
+    try {
+      await endZoomMeeting(id);
+      const deleted = await deleteZoomMeeting(id);
+      if (deleted === "deleted") removedAny = true;
+      if (deleted === "already_gone") goneAny = true;
+    } catch (error) {
+      console.error("[zoom] remove meeting candidate failed", { id, error });
+      lastError = error;
+    }
+  }
+
+  if (removedAny || goneAny) {
+    return { ok: true, status: removedAny ? "removed" : "already_gone" };
+  }
+  if (lastError) return { ok: false, lastError };
+  return { ok: true, status: "already_gone" };
+}
+
+/** End a class meeting by id even when list-live omits it (id mismatch). */
+export async function endClassZoomMeetingCandidates(input: {
+  meetingId?: string | null;
+  joinUrl?: string | null;
+}): Promise<string[]> {
+  const endedIds: string[] = [];
+  for (const id of zoomMeetingIdCandidates(input)) {
+    try {
+      const result = await endZoomMeeting(id);
+      if (result === "ended") endedIds.push(id);
+    } catch (error) {
+      console.warn("[zoom] end class meeting candidate failed", { id, error });
+    }
+  }
+  return endedIds;
+}
+
 /**
  * End every live meeting on the host account.
  * Only meetings Zoom lists as **live** are ended — a scheduled (not started)

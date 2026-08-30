@@ -44,14 +44,14 @@ import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { createServiceSupabaseClient } from "@/lib/supabase/service";
 import {
   createZoomMeeting,
-  deleteZoomMeeting,
   endAllLiveHostMeetings,
-  endZoomMeeting,
+  endClassZoomMeetingCandidates,
   fetchMeetingParticipants,
   getZoomMeeting,
   listLiveHostMeetings,
   normalizeZoomMeetingNumber,
   parseMeetingIdFromJoinUrl,
+  removeZoomMeetingsFromHost,
   resolveZoomMeetingForClass,
   zoomConfigured,
   type ZoomMeetingCreated,
@@ -132,14 +132,7 @@ async function persistClassZoomMeeting(
 }
 
 async function removeStaleZoomMeeting(meetingId: string | null | undefined) {
-  const id = normalizeZoomMeetingNumber(meetingId) || String(meetingId ?? "").trim();
-  if (!id) return;
-  try {
-    await endZoomMeeting(id);
-    await deleteZoomMeeting(id);
-  } catch (error) {
-    console.warn("[classes] could not remove stale Zoom meeting", { id, error });
-  }
+  await removeZoomMeetingsFromHost({ meetingId });
 }
 
 function unauthorized(): { ok: false; message: string } {
@@ -752,9 +745,11 @@ export async function endActiveZoomMeetings(input?: {
     }
 
     let alsoMeetingId: string | null = null;
+    let klass: ClassRow | null = null;
     if (input?.classId) {
       const access = await requireAccessibleClass(input.classId);
       if (!access.ok) return { ok: false, message: access.message };
+      klass = access.klass;
       alsoMeetingId = access.klass.zoom_meeting_id;
     }
 
@@ -762,13 +757,31 @@ export async function endActiveZoomMeetings(input?: {
       alsoMeetingId,
     });
 
+    const endedSet = new Set(
+      endedIds.map((id) => normalizeZoomMeetingNumber(id) || id),
+    );
+    if (klass) {
+      const directEnded = await endClassZoomMeetingCandidates({
+        meetingId: klass.zoom_meeting_id,
+        joinUrl: klass.zoom_join_url,
+      });
+      for (const id of directEnded) {
+        const norm = normalizeZoomMeetingNumber(id) || id;
+        if (endedSet.has(norm)) continue;
+        endedIds.push(id);
+        topics.push(klass.title);
+        endedSet.add(norm);
+      }
+    }
+
     revalidatePath("/admin/classes");
+    if (input?.classId) revalidatePath(`/admin/classes/${input.classId}`);
 
     if (!endedIds.length) {
       return {
         ok: true,
         message: skippedIdleId
-          ? "No live Zoom meeting is running. This class’s meeting is still only scheduled — use Host in portal or Host in Zoom app to start it."
+          ? "No live meeting is running. The scheduled Zoom entry is still on the host calendar — use Delete class to remove it from Zoom, or delete it once in the Zoom Meetings list."
           : "No live Zoom meetings were found on the host account.",
         endedCount: 0,
       };
@@ -1634,19 +1647,17 @@ export async function deleteZoomClass(
 
   const { supabase, klass } = access;
   const meetingId = klass.zoom_meeting_id?.trim() || null;
+  let zoomCalendarNote = "";
 
-  // Remove the Zoom calendar entry first so "End" / "Delete" on the desk
-  // does not leave orphan scheduled meetings on the host account.
   if (meetingId && zoomConfigured()) {
-    try {
-      await endZoomMeeting(meetingId);
-      await deleteZoomMeeting(meetingId);
-    } catch (error) {
-      console.error("classes delete zoom meeting:", error);
-      return fail(
-        error,
-        "Could not remove the Zoom meeting. Please try again.",
-      );
+    const removed = await removeZoomMeetingsFromHost({
+      meetingId: klass.zoom_meeting_id,
+      joinUrl: klass.zoom_join_url,
+    });
+    if (!removed.ok) {
+      console.error("classes delete zoom meeting:", removed.lastError);
+      zoomCalendarNote =
+        " If it still appears in Zoom, delete it once from the host Meetings list.";
     }
   }
 
@@ -1659,7 +1670,7 @@ export async function deleteZoomClass(
   return {
     ok: true,
     message: meetingId
-      ? "Class and Zoom meeting removed."
+      ? `Class removed.${zoomCalendarNote}`
       : "Class removed.",
   };
 }
@@ -1750,6 +1761,9 @@ export async function syncZoomClassAttendance(
     Number(klass.duration_minutes),
     Number(klass.attendance_threshold_percent) || DEFAULT_ATTENDANCE_THRESHOLD,
   );
+  const thresholdPct =
+    Number(klass.attendance_threshold_percent) || DEFAULT_ATTENDANCE_THRESHOLD;
+  const requiredMinutes = Math.ceil(required / 60);
 
   const sessionDate = sessionDateFromStart(klass.scheduled_start);
   const label = klass.title;
@@ -1854,7 +1868,7 @@ export async function syncZoomClassAttendance(
 
   return {
     ok: true,
-    message: `Synced ${synced} participant${synced === 1 ? "" : "s"} · ${presentCount} present (≥${klass.attendance_threshold_percent}%) · ${unmatched} unmatched${audienceNote}.`,
+    message: `Synced ${synced} participant${synced === 1 ? "" : "s"} · ${presentCount} present (≥${thresholdPct}% = ${requiredMinutes} min of ${klass.duration_minutes} min) · ${unmatched} unmatched${audienceNote}.`,
     classId,
     synced,
     present: presentCount,

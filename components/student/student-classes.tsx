@@ -157,8 +157,11 @@ export function StudentClassesClient({
     <div className="relative space-y-4 sm:space-y-5" aria-busy={busy}>
       <DeskLoaderOverlay active={busy} label={busyLabel ?? "Working…"} />
       {portalSession ? (
-        <section className="animate-panel-in border border-stone bg-mist">
-          <div className="flex items-start justify-between gap-3 border-b border-stone px-3 py-3 sm:px-5">
+        <section
+          className="animate-panel-in border-y border-stone bg-mist sm:-mx-6 sm:border sm:mx-0 lg:-mx-8 xl:-mx-10"
+          data-tour="student-classes-live"
+        >
+          <div className="flex items-start justify-between gap-3 border-b border-stone bg-mist px-3 py-3 sm:px-4">
             <div className="min-w-0">
               <p className="text-[0.6rem] font-medium uppercase tracking-[0.16em] text-celadon">
                 Live now
@@ -175,12 +178,10 @@ export function StudentClassesClient({
               Hide player
             </button>
           </div>
-          <div className="p-2 sm:p-4">
-            <InPortalZoom
-              session={portalSession}
-              onLeave={() => setPortalSession(null)}
-            />
-          </div>
+          <InPortalZoom
+            session={portalSession}
+            onLeave={() => setPortalSession(null)}
+          />
         </section>
       ) : null}
 

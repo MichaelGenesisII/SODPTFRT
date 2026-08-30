@@ -229,6 +229,14 @@ export function ClassWorkspace({
     }
   }
 
+  function leavePortalZoom() {
+    setPortalSession(null);
+    setHostRefreshAttempted(false);
+    void getClassZoomLiveStatus(item.id).then((next) => {
+      if (next.ok) setZoomLive(next.live);
+    });
+  }
+
   return (
     <div
       className="relative animate-panel-in"
@@ -514,7 +522,7 @@ export function ClassWorkspace({
         <div className="border-b border-stone px-3 py-3 sm:px-6">
           <InPortalZoom
             session={portalSession}
-            onLeave={() => setPortalSession(null)}
+            onLeave={leavePortalZoom}
             onMeetingMissing={() => {
               void retryHostAfterMissingMeeting();
             }}
@@ -669,8 +677,10 @@ export function ClassWorkspace({
               End live Zoom meetings?
             </h3>
             <p className="mt-3 text-sm leading-relaxed text-ink/70">
-              This ends live meetings on the school Zoom host account. Everyone
-              still in those meetings will be disconnected.
+              This ends meetings that are <strong>live right now</strong> on the
+              school Zoom host account. Leaving the portal player does not end
+              the meeting. To remove a scheduled class from the Zoom calendar,
+              use <strong>Delete</strong> on this desk.
             </p>
             <div className="mt-7 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
               <button

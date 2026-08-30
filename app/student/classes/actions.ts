@@ -23,6 +23,10 @@ import {
   createMeetingSdkSignature,
   meetingSdkConfigured,
 } from "@/lib/zoom/sdk";
+import {
+  normalizeZoomMeetingNumber,
+  parseMeetingIdFromJoinUrl,
+} from "@/lib/zoom/client";
 import type { InPortalZoomSession } from "@/lib/zoom/types";
 
 export type StudentClassActionResult = {
@@ -414,7 +418,7 @@ export async function getInPortalJoinSession(
   const { data: klass, error } = await service
     .from("zoom_classes")
     .select(
-      "id, title, audience, parish_id, batch_id, cohort_id, year, status, zoom_meeting_id, zoom_passcode",
+      "id, title, audience, parish_id, batch_id, cohort_id, year, status, zoom_meeting_id, zoom_join_url, zoom_passcode",
     )
     .eq("id", classId)
     .maybeSingle();
@@ -448,7 +452,10 @@ export async function getInPortalJoinSession(
       .filter(Boolean)
       .join(" ")
       .trim();
-    const meetingNumber = String(klass.zoom_meeting_id).replace(/\D/g, "");
+    const meetingNumber =
+      normalizeZoomMeetingNumber(klass.zoom_meeting_id) ||
+      parseMeetingIdFromJoinUrl(klass.zoom_join_url) ||
+      "";
     if (!meetingNumber) {
       return {
         ok: false,
