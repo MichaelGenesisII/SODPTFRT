@@ -92,7 +92,7 @@ export function OverviewWalkthroughTrigger({
           Portal tour
         </span>
         <span className="block text-sm font-medium text-pine">
-          Tour Command with {ASSISTANT_NAME}
+          Walkthrough Guide with {ASSISTANT_NAME}
         </span>
       </span>
     </button>

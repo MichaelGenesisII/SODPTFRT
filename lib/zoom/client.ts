@@ -337,9 +337,15 @@ export async function listLiveHostMeetings(): Promise<LiveZoomMeeting[]> {
     .filter((row) => Boolean(row.id));
 }
 
-/** End one live meeting (kicks all participants). Idempotent if already ended. */
-export async function endZoomMeeting(meetingId: string): Promise<void> {
-  const id = String(meetingId).replace(/\s+/g, "");
+/**
+ * End one live meeting (kicks all participants).
+ * Returns whether Zoom confirmed an end — not found / already ended is
+ * "already_clear" so callers do not toast a false "ended" success.
+ */
+export async function endZoomMeeting(
+  meetingId: string,
+): Promise<"ended" | "already_clear"> {
+  const id = normalizeZoomMeetingNumber(meetingId) || String(meetingId).trim();
   if (!id) throw new Error("Missing Zoom meeting id.");
 
   try {
@@ -347,11 +353,16 @@ export async function endZoomMeeting(meetingId: string): Promise<void> {
       method: "PUT",
       body: JSON.stringify({ action: "end" }),
     });
+    return "ended";
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    // Already ended / not found — treat as cleared.
-    if (/\(404\)|\(400\).*not (found|exist)|already/i.test(message)) {
-      return;
+    // Not live / already ended / gone — nothing to clear.
+    if (
+      /\(404\)|\(400\)|not (found|exist)|already|not in progress|3001|3610/i.test(
+        message,
+      )
+    ) {
+      return "already_clear";
     }
     throw error;
   }
@@ -359,27 +370,44 @@ export async function endZoomMeeting(meetingId: string): Promise<void> {
 
 /**
  * End every live meeting on the host account.
- * Optionally also force-end a known meeting id (this class) even if Zoom
- * did not list it as live yet.
+ * Only meetings Zoom lists as **live** are ended — a scheduled (not started)
+ * class meeting id is never treated as a successful end.
  */
 export async function endAllLiveHostMeetings(options?: {
   alsoMeetingId?: string | null;
-}): Promise<{ endedIds: string[]; topics: string[] }> {
+}): Promise<{ endedIds: string[]; topics: string[]; skippedIdleId: string | null }> {
   const live = await listLiveHostMeetings();
-  const ids = new Set(live.map((m) => m.id));
-  const topics = new Map(live.map((m) => [m.id, m.topic]));
+  const liveByNorm = new Map(
+    live.map((m) => [normalizeZoomMeetingNumber(m.id) || m.id, m]),
+  );
 
-  const also = options?.alsoMeetingId?.replace(/\s+/g, "") || "";
-  if (also) ids.add(also);
+  const alsoNorm = normalizeZoomMeetingNumber(options?.alsoMeetingId) || "";
+  const idsToEnd = new Set(liveByNorm.keys());
+
+  // If this class's meeting is live (possibly under a different string form),
+  // ensure it is included. Do **not** end idle scheduled meetings — Zoom's
+  // status/end on a non-live id is a no-op / error and used to produce a
+  // false "Ended live meeting" toast.
+  if (alsoNorm && liveByNorm.has(alsoNorm)) {
+    idsToEnd.add(alsoNorm);
+  }
 
   const endedIds: string[] = [];
-  for (const id of ids) {
-    await endZoomMeeting(id);
-    endedIds.push(id);
+  const topics: string[] = [];
+  for (const normId of idsToEnd) {
+    const row = liveByNorm.get(normId);
+    const rawId = row?.id ?? normId;
+    const result = await endZoomMeeting(rawId);
+    if (result === "ended") {
+      endedIds.push(rawId);
+      topics.push(row?.topic ?? rawId);
+    }
   }
 
   return {
     endedIds,
-    topics: endedIds.map((id) => topics.get(id) ?? id),
+    topics,
+    skippedIdleId:
+      alsoNorm && !liveByNorm.has(alsoNorm) ? alsoNorm : null,
   };
 }

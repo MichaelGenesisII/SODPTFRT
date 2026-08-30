@@ -440,6 +440,7 @@ export async function previewClassInvite(input: {
 
 export async function getInPortalHostSession(
   classId: string,
+  options?: { forceRefreshMeeting?: boolean },
 ): Promise<
   | { ok: true; session: InPortalZoomSession; meetingRefreshed?: boolean }
   | { ok: false; message: string }
@@ -468,8 +469,9 @@ export async function getInPortalHostSession(
   let meetingNumber = normalizeZoomMeetingNumber(klass.zoom_meeting_id);
   let password = klass.zoom_passcode ?? "";
   let meetingRefreshed = false;
+  const forceRefresh = options?.forceRefreshMeeting === true;
 
-  if (!meetingNumber && !klass.zoom_meeting_id) {
+  if (!meetingNumber && !klass.zoom_meeting_id && !forceRefresh) {
     return {
       ok: false,
       message: "This class has no Zoom meeting number.",
@@ -478,18 +480,20 @@ export async function getInPortalHostSession(
 
   try {
     // Meeting SDK always calls join(); hosting is role 1 + host ZAK.
-    // 3610 "Meeting does not exist" means the stored id is gone on Zoom —
-    // recreate so Host in portal can start as host.
-    let meetingOk = meetingNumber
-      ? await getZoomMeeting(meetingNumber)
-      : null;
+    // 3610 "Meeting does not exist" means the stored id is gone on Zoom or
+    // the Meeting SDK app cannot see it — recreate when missing / forced.
+    let meetingOk =
+      !forceRefresh && meetingNumber
+        ? await getZoomMeeting(meetingNumber)
+        : null;
 
     if (!meetingOk) {
       console.warn(
-        "[classes host session] Zoom meeting missing; recreating",
+        "[classes host session] Zoom meeting missing or force-refresh; recreating",
         {
           classId: klass.id,
           priorMeetingId: klass.zoom_meeting_id,
+          forceRefresh,
         },
       );
       const created = await createZoomMeeting({
@@ -523,6 +527,7 @@ export async function getInPortalHostSession(
       password = created.password ?? "";
       meetingRefreshed = true;
       revalidatePath("/admin/classes");
+      revalidatePath(`/admin/classes/${klass.id}`);
     } else {
       meetingNumber = normalizeZoomMeetingNumber(meetingOk.id) || meetingNumber;
       if (meetingOk.password != null && meetingOk.password !== "") {
@@ -616,7 +621,7 @@ export async function endActiveZoomMeetings(input?: {
       alsoMeetingId = access.klass.zoom_meeting_id;
     }
 
-    const { endedIds, topics } = await endAllLiveHostMeetings({
+    const { endedIds, topics, skippedIdleId } = await endAllLiveHostMeetings({
       alsoMeetingId,
     });
 
@@ -625,7 +630,9 @@ export async function endActiveZoomMeetings(input?: {
     if (!endedIds.length) {
       return {
         ok: true,
-        message: "No live Zoom meetings were found on the host account.",
+        message: skippedIdleId
+          ? "No live Zoom meeting is running. This class’s meeting is still only scheduled — use Host in portal or Host in Zoom app to start it."
+          : "No live Zoom meetings were found on the host account.",
         endedCount: 0,
       };
     }

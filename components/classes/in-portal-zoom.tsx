@@ -6,6 +6,8 @@ import type { InPortalZoomSession } from "@/lib/zoom/types";
 type Props = {
   session: InPortalZoomSession;
   onLeave: () => void;
+  /** Called once when Zoom reports the meeting id is gone (3610 / 3001). */
+  onMeetingMissing?: () => void;
 };
 
 /** Keep in sync with Zoom Meeting SDK web releases. */
@@ -164,15 +166,25 @@ async function safeLeave(client: ZoomEmbeddedClient | null) {
  * Note: Zoom's API is always `client.join(...)`. Hosting is JWT role 1 + host ZAK,
  * not a separate "create host" call.
  */
-export function InPortalZoom({ session, onLeave }: Props) {
+export function InPortalZoom({ session, onLeave, onMeetingMissing }: Props) {
   const rootRef = useRef<HTMLDivElement>(null);
   const clientRef = useRef<ZoomEmbeddedClient | null>(null);
+  const missingNotifiedRef = useRef(false);
+  const onMeetingMissingRef = useRef(onMeetingMissing);
   const [status, setStatus] = useState<"loading" | "live" | "error">("loading");
   const [message, setMessage] = useState(
     session.role === 1
       ? "Starting meeting as host…"
       : "Joining the meeting…",
   );
+
+  useEffect(() => {
+    onMeetingMissingRef.current = onMeetingMissing;
+  }, [onMeetingMissing]);
+
+  useEffect(() => {
+    missingNotifiedRef.current = false;
+  }, [session.meetingNumber, session.signature]);
 
   useEffect(() => {
     let cancelled = false;
@@ -251,6 +263,14 @@ export function InPortalZoom({ session, onLeave }: Props) {
         setStatus("error");
         const missingMeeting =
           /meeting does not exist|3610|3001/i.test(detail);
+        if (
+          missingMeeting &&
+          onMeetingMissingRef.current &&
+          !missingNotifiedRef.current
+        ) {
+          missingNotifiedRef.current = true;
+          onMeetingMissingRef.current();
+        }
         setMessage(
           /already has other meetings/i.test(detail)
             ? "Another Zoom session is still open in this browser. Leave it or close other portal Zoom tabs, then try again — or use Host / Join in the Zoom app."

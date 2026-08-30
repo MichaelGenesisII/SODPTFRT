@@ -74,6 +74,7 @@ export function ClassWorkspace({
   const [searching, setSearching] = useState(false);
   const [portalSession, setPortalSession] =
     useState<InPortalZoomSession | null>(null);
+  const [hostRefreshAttempted, setHostRefreshAttempted] = useState(false);
   const [hosting, setHosting] = useState(false);
   const [endingLive, setEndingLive] = useState(false);
   const [confirmEndLive, setConfirmEndLive] = useState(false);
@@ -148,25 +149,43 @@ export function ClassWorkspace({
 
   const hasZoom = Boolean(item.zoom_meeting_id || item.zoom_join_url);
 
-  async function startInPortalHost() {
+  async function startInPortalHost(forceRefreshMeeting = false) {
     setHosting(true);
-    const next = await getInPortalHostSession(item.id);
+    setPortalSession(null);
+    const next = await getInPortalHostSession(item.id, {
+      forceRefreshMeeting,
+    });
     setHosting(false);
     if (!next.ok) {
       toastError(next.message, "In-portal Zoom");
       return;
     }
     if (next.meetingRefreshed) {
+      setHostRefreshAttempted(true);
       success(
-        "The Zoom meeting was refreshed so you can host in the portal.",
+        "A fresh Zoom meeting was created for this class. Starting host…",
         "In-portal Zoom",
       );
+      onRefresh?.();
     }
     setPortalSession(next.session);
     if (item.zoom_meeting_id && zoomReady) {
       const live = await getClassZoomLiveStatus(item.id);
       if (live.ok) setZoomLive(live.live);
     }
+  }
+
+  async function retryHostAfterMissingMeeting() {
+    if (hostRefreshAttempted) {
+      toastError(
+        "Zoom still cannot open this meeting in the browser. Use Host in Zoom app, or check that App B (Meeting SDK) is on the same Zoom account as App A.",
+        "In-portal Zoom",
+      );
+      setPortalSession(null);
+      return;
+    }
+    setHostRefreshAttempted(true);
+    await startInPortalHost(true);
   }
 
   async function endLiveMeetings() {
@@ -354,7 +373,10 @@ export function ClassWorkspace({
             <button
               type="button"
               disabled={pending || hosting || !meetingSdkReady}
-              onClick={() => void startInPortalHost()}
+              onClick={() => {
+                setHostRefreshAttempted(false);
+                void startInPortalHost(false);
+              }}
               className="inline-flex min-h-[1.85rem] min-w-[7.5rem] items-center justify-center bg-pine px-3 py-1.5 text-xs font-medium text-mist disabled:opacity-40"
               title={
                 meetingSdkReady
@@ -437,6 +459,14 @@ export function ClassWorkspace({
             Delete
           </button>
         </div>
+        {item.zoom_meeting_id ? (
+          <p className="mt-2 text-xs text-ink/50">
+            Zoom meeting ID{" "}
+            <span className="font-mono text-ink/70">{item.zoom_meeting_id}</span>
+            {" · "}
+            Check it under Meetings on the Zoom host account dashboard.
+          </p>
+        ) : null}
         {item.last_synced_at ? (
           <p className="mt-2 text-xs text-ink/45">
             Last Zoom sync{" "}
@@ -450,6 +480,9 @@ export function ClassWorkspace({
           <InPortalZoom
             session={portalSession}
             onLeave={() => setPortalSession(null)}
+            onMeetingMissing={() => {
+              void retryHostAfterMissingMeeting();
+            }}
           />
         </div>
       ) : null}
