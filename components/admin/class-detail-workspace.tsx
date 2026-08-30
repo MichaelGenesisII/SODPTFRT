@@ -204,6 +204,16 @@ export function ClassDetailWorkspace({
             );
           }}
           onDelete={() => setPendingConfirm({ kind: "delete" })}
+          onClassZoomUpdated={(zoom) =>
+            setItem((prev) => ({
+              ...prev,
+              zoom_meeting_id: zoom.zoom_meeting_id,
+              zoom_meeting_uuid: zoom.zoom_meeting_uuid,
+              zoom_join_url: zoom.zoom_join_url,
+              zoom_start_url: zoom.zoom_start_url,
+              zoom_passcode: zoom.zoom_passcode,
+            }))
+          }
         />
       </section>
 

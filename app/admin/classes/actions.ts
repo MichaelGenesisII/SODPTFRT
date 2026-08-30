@@ -51,7 +51,10 @@ import {
   getZoomMeeting,
   listLiveHostMeetings,
   normalizeZoomMeetingNumber,
+  parseMeetingIdFromJoinUrl,
+  resolveZoomMeetingForClass,
   zoomConfigured,
+  type ZoomMeetingCreated,
 } from "@/lib/zoom/client";
 import {
   createMeetingSdkSignature,
@@ -85,6 +88,59 @@ export type ClassStudentOption = {
   parish_id: string | null;
   batch_id: string | null;
 };
+
+export type ClassZoomSnapshot = {
+  zoom_meeting_id: string;
+  zoom_meeting_uuid: string;
+  zoom_join_url: string;
+  zoom_start_url: string;
+  zoom_passcode: string | null;
+};
+
+function classZoomSnapshot(meeting: ZoomMeetingCreated): ClassZoomSnapshot {
+  return {
+    zoom_meeting_id: meeting.id,
+    zoom_meeting_uuid: meeting.uuid,
+    zoom_join_url: meeting.join_url,
+    zoom_start_url: meeting.start_url,
+    zoom_passcode: meeting.password,
+  };
+}
+
+async function persistClassZoomMeeting(
+  supabase: Supabase,
+  classId: string,
+  meeting: ZoomMeetingCreated,
+): Promise<{ ok: false; message: string } | null> {
+  const { error } = await supabase
+    .from("zoom_classes")
+    .update({
+      zoom_meeting_id: meeting.id,
+      zoom_meeting_uuid: meeting.uuid,
+      zoom_join_url: meeting.join_url,
+      zoom_start_url: meeting.start_url,
+      zoom_passcode: meeting.password,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", classId);
+  if (error) {
+    console.error("classes persist zoom meeting:", error);
+    return fail(error, "Could not save Zoom meeting details.");
+  }
+  revalidateClassPaths(classId);
+  return null;
+}
+
+async function removeStaleZoomMeeting(meetingId: string | null | undefined) {
+  const id = normalizeZoomMeetingNumber(meetingId) || String(meetingId ?? "").trim();
+  if (!id) return;
+  try {
+    await endZoomMeeting(id);
+    await deleteZoomMeeting(id);
+  } catch (error) {
+    console.warn("[classes] could not remove stale Zoom meeting", { id, error });
+  }
+}
 
 function unauthorized(): { ok: false; message: string } {
   return { ok: false, message: "Unauthorized." };
@@ -444,7 +500,12 @@ export async function getInPortalHostSession(
   classId: string,
   options?: { forceRefreshMeeting?: boolean },
 ): Promise<
-  | { ok: true; session: InPortalZoomSession; meetingRefreshed?: boolean }
+  | {
+      ok: true;
+      session: InPortalZoomSession;
+      meetingRefreshed?: boolean;
+      classZoom?: ClassZoomSnapshot;
+    }
   | { ok: false; message: string }
 > {
   const access = await requireAccessibleClass(classId);
@@ -471,9 +532,16 @@ export async function getInPortalHostSession(
   let meetingNumber = normalizeZoomMeetingNumber(klass.zoom_meeting_id);
   let password = klass.zoom_passcode ?? "";
   let meetingRefreshed = false;
+  let classZoom: ClassZoomSnapshot | undefined;
   const forceRefresh = options?.forceRefreshMeeting === true;
+  const joinUrlId = parseMeetingIdFromJoinUrl(klass.zoom_join_url);
 
-  if (!meetingNumber && !klass.zoom_meeting_id && !forceRefresh) {
+  if (
+    !meetingNumber &&
+    !klass.zoom_meeting_id &&
+    !joinUrlId &&
+    !forceRefresh
+  ) {
     return {
       ok: false,
       message: "This class has no Zoom meeting number.",
@@ -495,19 +563,40 @@ export async function getInPortalHostSession(
     }
 
     // Meeting SDK always calls join(); hosting is role 1 + host ZAK.
-    // 3610 "Meeting does not exist" means the stored id is gone on Zoom —
-    // recreate when missing / forced, then verify before signing the JWT.
-    let meetingOk =
-      !forceRefresh && meetingNumber
-        ? await getZoomMeeting(meetingNumber)
-        : null;
+    // Resolve via stored id, join URL, then UUID before creating duplicates.
+    let meetingOk = forceRefresh
+      ? null
+      : await resolveZoomMeetingForClass(klass);
+
+    if (meetingOk) {
+      const storedNorm = normalizeZoomMeetingNumber(klass.zoom_meeting_id);
+      const resolvedNorm = normalizeZoomMeetingNumber(meetingOk.id);
+      if (storedNorm !== resolvedNorm) {
+        console.warn("[classes host session] syncing corrected meeting id", {
+          classId: klass.id,
+          stored: klass.zoom_meeting_id,
+          resolved: meetingOk.id,
+          joinUrlId,
+        });
+        const persistError = await persistClassZoomMeeting(
+          supabase,
+          klass.id,
+          meetingOk,
+        );
+        if (persistError) return persistError;
+        meetingRefreshed = true;
+        classZoom = classZoomSnapshot(meetingOk);
+      }
+    }
 
     if (!meetingOk) {
+      const priorMeetingId = klass.zoom_meeting_id;
       console.warn(
         "[classes host session] Zoom meeting missing or force-refresh; recreating",
         {
           classId: klass.id,
-          priorMeetingId: klass.zoom_meeting_id,
+          priorMeetingId,
+          joinUrlId,
           forceRefresh,
         },
       );
@@ -520,34 +609,29 @@ export async function getInPortalHostSession(
         ),
         agenda: klass.description ?? undefined,
       });
-      const { error: updateError } = await supabase
-        .from("zoom_classes")
-        .update({
-          zoom_meeting_id: created.id,
-          zoom_meeting_uuid: created.uuid,
-          zoom_join_url: created.join_url,
-          zoom_start_url: created.start_url,
-          zoom_passcode: created.password,
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", klass.id);
-      if (updateError) {
-        console.error("classes host session recreate save:", updateError);
-        return fail(
-          updateError,
-          "Could not refresh the Zoom meeting for hosting.",
-        );
+      const persistError = await persistClassZoomMeeting(
+        supabase,
+        klass.id,
+        created,
+      );
+      if (persistError) return persistError;
+
+      const priorNorm = normalizeZoomMeetingNumber(priorMeetingId);
+      const createdNorm = normalizeZoomMeetingNumber(created.id);
+      if (priorNorm && priorNorm !== createdNorm) {
+        await removeStaleZoomMeeting(priorMeetingId);
       }
+
+      meetingOk = created;
       meetingNumber = normalizeZoomMeetingNumber(created.id);
       password = created.password ?? "";
       meetingRefreshed = true;
-      revalidatePath("/admin/classes");
-      revalidatePath(`/admin/classes/${klass.id}`);
+      classZoom = classZoomSnapshot(created);
 
       // Zoom can lag a moment before Meeting SDK accepts a brand-new id.
       await new Promise((resolve) => setTimeout(resolve, 1500));
-      meetingOk = meetingNumber ? await getZoomMeeting(meetingNumber) : null;
-      if (!meetingOk) {
+      const verified = meetingNumber ? await getZoomMeeting(meetingNumber) : null;
+      if (!verified) {
         console.error(
           "[classes host session] meeting created but GET still empty",
           { classId: klass.id, meetingNumber },
@@ -558,11 +642,24 @@ export async function getInPortalHostSession(
             "Zoom created the meeting, but it is not ready to open in the browser yet. Wait a few seconds and try Host in portal again, or use Host in Zoom app.",
         };
       }
+      meetingOk = verified;
+      if (verified.id !== created.id || verified.password !== created.password) {
+        const syncError = await persistClassZoomMeeting(
+          supabase,
+          klass.id,
+          verified,
+        );
+        if (syncError) return syncError;
+        classZoom = classZoomSnapshot(verified);
+      }
     }
 
     meetingNumber = normalizeZoomMeetingNumber(meetingOk.id) || meetingNumber;
     if (meetingOk.password != null) {
       password = meetingOk.password;
+    }
+    if (!classZoom && meetingRefreshed) {
+      classZoom = classZoomSnapshot(meetingOk);
     }
 
     if (!meetingNumber) {
@@ -575,6 +672,7 @@ export async function getInPortalHostSession(
     console.info("[classes host session] starting", {
       classId: klass.id,
       meetingNumber,
+      joinUrlId: parseMeetingIdFromJoinUrl(meetingOk.join_url),
       hasPassword: Boolean(password),
       meetingRefreshed,
       sdkKeyPrefix: sdkKey.slice(0, 4),
@@ -589,6 +687,7 @@ export async function getInPortalHostSession(
     return {
       ok: true,
       meetingRefreshed,
+      classZoom,
       session: {
         signature,
         sdkKey,

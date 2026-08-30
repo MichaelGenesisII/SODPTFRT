@@ -7,6 +7,7 @@ import {
   getClassZoomLiveStatus,
   getInPortalHostSession,
   type ClassStudentOption,
+  type ClassZoomSnapshot,
 } from "@/app/admin/classes/actions";
 import { InPortalZoom } from "@/components/classes/in-portal-zoom";
 import { DeskLoader, DeskLoaderOverlay } from "@/components/ui/desk-loader";
@@ -29,6 +30,10 @@ import type { InPortalZoomSession } from "@/lib/zoom/types";
 const fieldClass =
   "w-full border border-stone bg-white/70 px-3 py-2 text-sm outline-none focus:border-pine";
 
+function normalizeDisplayId(value: string | null | undefined) {
+  return String(value ?? "").replace(/\D/g, "");
+}
+
 export function ClassWorkspace({
   item,
   roster,
@@ -48,6 +53,7 @@ export function ClassWorkspace({
   onSearchStudents,
   onStatus,
   onDelete,
+  onClassZoomUpdated,
 }: {
   item: ZoomClass;
   roster: ZoomClassAttendance[];
@@ -67,6 +73,7 @@ export function ClassWorkspace({
   onSearchStudents: (query: string) => Promise<ClassStudentOption[]>;
   onStatus: (status: ZoomClass["status"]) => void;
   onDelete: () => void;
+  onClassZoomUpdated?: (zoom: ClassZoomSnapshot) => void;
 }) {
   const { success, error: toastError } = useToast();
   const [studentQuery, setStudentQuery] = useState("");
@@ -79,7 +86,19 @@ export function ClassWorkspace({
   const [endingLive, setEndingLive] = useState(false);
   const [confirmEndLive, setConfirmEndLive] = useState(false);
   const [zoomLive, setZoomLive] = useState(false);
+  const [displayMeetingId, setDisplayMeetingId] = useState(
+    () => item.zoom_meeting_id,
+  );
   const [clock, setClock] = useState(() => Date.now());
+
+  useEffect(() => {
+    setDisplayMeetingId(item.zoom_meeting_id);
+  }, [item.zoom_meeting_id]);
+
+  function applyClassZoom(zoom: ClassZoomSnapshot) {
+    setDisplayMeetingId(zoom.zoom_meeting_id);
+    onClassZoomUpdated?.(zoom);
+  }
 
   const sessionPhase = classSessionPhase(item, new Date(clock));
   const inSessionWindow = sessionPhase === "in_window";
@@ -160,10 +179,15 @@ export function ClassWorkspace({
       toastError(next.message, "In-portal Zoom");
       return;
     }
+    if (next.classZoom) {
+      applyClassZoom(next.classZoom);
+    }
     if (next.meetingRefreshed) {
       setHostRefreshAttempted(true);
       success(
-        "A fresh Zoom meeting was created for this class. Starting host…",
+        next.classZoom
+          ? `Zoom meeting ID updated to ${next.classZoom.zoom_meeting_id}. Starting host…`
+          : "A fresh Zoom meeting was created for this class. Starting host…",
         "In-portal Zoom",
       );
       onRefresh?.();
@@ -459,10 +483,21 @@ export function ClassWorkspace({
             Delete
           </button>
         </div>
-        {item.zoom_meeting_id ? (
+        {displayMeetingId ? (
           <p className="mt-2 text-xs text-ink/50">
             Zoom meeting ID{" "}
-            <span className="font-mono text-ink/70">{item.zoom_meeting_id}</span>
+            <span className="font-mono text-ink/70">{displayMeetingId}</span>
+            {portalSession?.meetingNumber &&
+            normalizeDisplayId(portalSession.meetingNumber) !==
+              normalizeDisplayId(displayMeetingId) ? (
+              <>
+                {" "}
+                · hosting as{" "}
+                <span className="font-mono text-ink/70">
+                  {portalSession.meetingNumber}
+                </span>
+              </>
+            ) : null}
             {" · "}
             Check it under Meetings on the Zoom host account dashboard.
           </p>

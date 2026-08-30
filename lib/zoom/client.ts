@@ -34,6 +34,67 @@ export function normalizeZoomMeetingNumber(value: string | null | undefined): st
   return String(value ?? "").replace(/\D/g, "");
 }
 
+/** Parse `/j/{id}` or `/w/{id}` from a Zoom join/start URL. */
+export function parseMeetingIdFromJoinUrl(
+  joinUrl: string | null | undefined,
+): string | null {
+  const raw = String(joinUrl ?? "").trim();
+  if (!raw) return null;
+  try {
+    const url = new URL(raw);
+    const match = url.pathname.match(/\/(?:j|w)\/(\d+)/i);
+    return match?.[1] ?? null;
+  } catch {
+    const loose = raw.match(/\/(?:j|w)\/(\d+)/i);
+    return loose?.[1] ?? null;
+  }
+}
+
+/** Prefer join URL digits — Zoom's JSON `id` can disagree after parsing. */
+export function canonicalZoomMeetingId(input: {
+  id: unknown;
+  join_url?: string | null;
+  start_url?: string | null;
+}): string {
+  const fromJoin =
+    parseMeetingIdFromJoinUrl(input.join_url) ??
+    parseMeetingIdFromJoinUrl(input.start_url);
+  const fromApi = normalizeZoomMeetingNumber(String(input.id ?? ""));
+  if (fromJoin && fromApi && fromJoin !== fromApi) {
+    console.warn("[zoom] meeting id mismatch; using join URL", {
+      apiId: fromApi,
+      joinUrlId: fromJoin,
+    });
+    return fromJoin;
+  }
+  return fromJoin || fromApi;
+}
+
+function extractMeetingIdFromJson(raw: string): string | null {
+  const quoted = raw.match(/"id"\s*:\s*"(\d+)"/);
+  if (quoted?.[1]) return quoted[1];
+  const numeric = raw.match(/"id"\s*:\s*(\d+)/);
+  if (numeric?.[1]) return numeric[1];
+  return null;
+}
+
+function mapZoomMeetingPayload(data: {
+  id: unknown;
+  uuid: string;
+  join_url: string;
+  start_url: string;
+  password?: string;
+}): ZoomMeetingCreated {
+  const id = canonicalZoomMeetingId(data);
+  return {
+    id,
+    uuid: data.uuid,
+    join_url: data.join_url,
+    start_url: data.start_url,
+    password: data.password ?? null,
+  };
+}
+
 let cachedToken: { value: string; expiresAt: number } | null = null;
 
 export function clearZoomAccessTokenCache() {
@@ -128,7 +189,40 @@ async function zoomFetch<T>(
     throw new Error(`Zoom API ${path} failed (${res.status}): ${text.slice(0, 280)}`);
   }
   if (res.status === 204) return undefined as T;
-  return (await res.json()) as T;
+  const rawText = await res.text();
+  if (!rawText) return undefined as T;
+  return JSON.parse(rawText) as T;
+}
+
+async function zoomFetchRaw(
+  path: string,
+  init?: RequestInit,
+): Promise<{ status: number; rawText: string }> {
+  const token = await getAccessToken();
+  const res = await fetch(`https://api.zoom.us/v2${path}`, {
+    ...init,
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+      ...(init?.headers ?? {}),
+    },
+  });
+  const rawText = await res.text();
+  if (!res.ok) {
+    if (isZoomScopeError(res.status, rawText)) {
+      clearZoomAccessTokenCache();
+      const missing = zoomScopeHint(rawText);
+      throw new Error(
+        missing
+          ? `Zoom is missing scopes (${missing}). Add them on App A, Activate, then retry.`
+          : "Zoom App A is missing meeting scopes. Add them, Activate, then retry.",
+      );
+    }
+    throw new Error(
+      `Zoom API ${path} failed (${res.status}): ${rawText.slice(0, 280)}`,
+    );
+  }
+  return { status: res.status, rawText };
 }
 
 export async function createZoomMeeting(input: {
@@ -151,13 +245,7 @@ export async function createZoomMeeting(input: {
   const startLocal = formatZoomLondonLocal(start);
 
   const encodedHost = encodeURIComponent(host);
-  const data = await zoomFetch<{
-    id: number | string;
-    uuid: string;
-    join_url: string;
-    start_url: string;
-    password?: string;
-  }>(`/users/${encodedHost}/meetings`, {
+  const { rawText } = await zoomFetchRaw(`/users/${encodedHost}/meetings`, {
     method: "POST",
     body: JSON.stringify({
       topic: input.topic.slice(0, 200),
@@ -175,13 +263,36 @@ export async function createZoomMeeting(input: {
     }),
   });
 
-  return {
-    id: String(data.id),
-    uuid: data.uuid,
-    join_url: data.join_url,
-    start_url: data.start_url,
-    password: data.password ?? null,
+  const data = JSON.parse(rawText) as {
+    id: unknown;
+    uuid: string;
+    join_url: string;
+    start_url: string;
+    password?: string;
   };
+  const idFromRaw = extractMeetingIdFromJson(rawText);
+  if (idFromRaw) data.id = idFromRaw;
+
+  const created = mapZoomMeetingPayload(data);
+
+  // Confirm Zoom actually registered this id before the desk stores it.
+  let verified: ZoomMeetingCreated | null = null;
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    verified = await getZoomMeeting(created.id);
+    if (verified) break;
+    if (attempt < 3) {
+      await new Promise((resolve) => setTimeout(resolve, 400 + attempt * 400));
+    }
+  }
+  if (!verified) {
+    console.error("[zoom create] meeting not found after create", {
+      id: created.id,
+      join_url: created.join_url,
+    });
+    throw new Error("Zoom did not return a usable meeting id.");
+  }
+
+  return verified;
 }
 
 /**
@@ -191,29 +302,54 @@ export async function createZoomMeeting(input: {
 export async function getZoomMeeting(
   meetingId: string,
 ): Promise<ZoomMeetingCreated | null> {
-  const id = normalizeZoomMeetingNumber(meetingId);
-  if (!id) return null;
+  const raw = String(meetingId ?? "").trim();
+  if (!raw) return null;
+
+  const numeric = normalizeZoomMeetingNumber(raw);
+  const pathId = numeric || raw;
 
   try {
     const data = await zoomFetch<{
-      id: number | string;
+      id: unknown;
       uuid: string;
       join_url: string;
       start_url: string;
       password?: string;
-    }>(`/meetings/${encodeURIComponent(id)}`);
-    return {
-      id: String(data.id),
-      uuid: data.uuid,
-      join_url: data.join_url,
-      start_url: data.start_url,
-      password: data.password ?? null,
-    };
+    }>(`/meetings/${encodeURIComponent(pathId)}`);
+    return mapZoomMeetingPayload(data);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     if (/\(404\)/.test(message)) return null;
     throw error;
   }
+}
+
+/**
+ * Resolve a class row to a live Zoom meeting — tries stored id, join URL id,
+ * then UUID before deciding the meeting is missing.
+ */
+export async function resolveZoomMeetingForClass(input: {
+  zoom_meeting_id?: string | null;
+  zoom_meeting_uuid?: string | null;
+  zoom_join_url?: string | null;
+}): Promise<ZoomMeetingCreated | null> {
+  const candidates: string[] = [];
+  const push = (value: string | null | undefined) => {
+    const raw = String(value ?? "").trim();
+    if (!raw) return;
+    const norm = normalizeZoomMeetingNumber(raw) || raw;
+    if (!candidates.includes(norm)) candidates.push(norm);
+  };
+
+  push(input.zoom_meeting_id);
+  push(parseMeetingIdFromJoinUrl(input.zoom_join_url));
+  push(input.zoom_meeting_uuid);
+
+  for (const candidate of candidates) {
+    const meeting = await getZoomMeeting(candidate);
+    if (meeting) return meeting;
+  }
+  return null;
 }
 
 /** `yyyy-MM-ddTHH:mm:ss` in Europe/London (no offset) — Zoom scheduled meeting format. */
