@@ -856,29 +856,19 @@ export async function removeZoomMeetingsFromHost(input: {
       if (result === "deleted") removedAny = true;
       if (result === "pmi") pmiSkipped = true;
       if (result === "in_progress") {
-        return {
-          ok: false,
-          lastError: new Error("Meeting is still live on Zoom."),
-          reason: "in_progress",
-        };
+        console.warn("[zoom] could not delete live meeting during class delete", {
+          id,
+        });
       }
     }
 
-    // Re-list scheduled — catch id mismatches and orphan rows.
+    // Re-list scheduled — catch id / uuid mismatches only (not topic alone).
     const afterScheduled = await listScheduledHostMeetings();
     const stillScheduled = afterScheduled.filter((row) => {
       const norm = normalizeZoomMeetingNumber(row.id) || row.id;
       if (idSet.has(norm)) return true;
       const uuid = String(input.meetingUuid ?? "").trim();
-      if (uuid && row.uuid === uuid) return true;
-      if (
-        input.topic &&
-        row.topic === input.topic.trim() &&
-        meetingStartMatches(input.scheduledStart, row.start_time)
-      ) {
-        return true;
-      }
-      return false;
+      return Boolean(uuid && row.uuid === uuid);
     });
 
     for (const row of stillScheduled) {
@@ -891,11 +881,9 @@ export async function removeZoomMeetingsFromHost(input: {
       if (result === "deleted") removedAny = true;
       if (result === "pmi") pmiSkipped = true;
       if (result === "in_progress") {
-        return {
-          ok: false,
-          lastError: new Error("Meeting is still live on Zoom."),
-          reason: "in_progress",
-        };
+        console.warn("[zoom] could not delete scheduled orphan during class delete", {
+          id: row.id,
+        });
       }
     }
 
@@ -907,31 +895,26 @@ export async function removeZoomMeetingsFromHost(input: {
       const last = await deleteZoomMeetingWithRetry(stillExists.id);
       if (last === "deleted") removedAny = true;
       if (last === "pmi") pmiSkipped = true;
-      if (last === "in_progress") {
-        return {
-          ok: false,
-          lastError: new Error("Meeting is still live on Zoom."),
-          reason: "in_progress",
-        };
-      }
-      stillExists = await resolveZoomMeetingForClass(classMeetingRefs(input));
-      if (stillExists && (await isHostPersonalMeetingId(stillExists.id))) {
-        pmiSkipped = true;
+      if (last === "already_gone") stillExists = null;
+      else if (last === "in_progress") {
+        console.warn("[zoom] meeting still live during class delete", {
+          id: stillExists.id,
+        });
         stillExists = null;
+      } else {
+        stillExists = await resolveZoomMeetingForClass(classMeetingRefs(input));
+        if (stillExists && (await isHostPersonalMeetingId(stillExists.id))) {
+          pmiSkipped = true;
+          stillExists = null;
+        }
       }
     }
 
     if (stillExists) {
-      console.error("[zoom] meeting still exists after delete", {
+      console.warn("[zoom] meeting may still exist after delete attempt", {
         id: stillExists.id,
         uuid: stillExists.uuid,
-        join_url: stillExists.join_url,
       });
-      return {
-        ok: false,
-        lastError: new Error("Zoom still lists this class meeting."),
-        reason: "failed",
-      };
     }
 
     return {

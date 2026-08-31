@@ -1667,36 +1667,25 @@ export async function deleteZoomClass(
     null;
 
   if (hasZoomLink && zoomConfigured()) {
-    const removed = await removeZoomMeetingsFromHost({
-      meetingId: klass.zoom_meeting_id,
-      joinUrl: klass.zoom_join_url,
-      meetingUuid: klass.zoom_meeting_uuid,
-      topic: klass.title,
-      scheduledStart: klass.scheduled_start,
-    });
+    try {
+      const removed = await removeZoomMeetingsFromHost({
+        meetingId: klass.zoom_meeting_id,
+        joinUrl: klass.zoom_join_url,
+        meetingUuid: klass.zoom_meeting_uuid,
+        topic: klass.title,
+        scheduledStart: klass.scheduled_start,
+      });
 
-    if (!removed.ok) {
-      console.error("classes delete zoom meeting:", removed.lastError);
-      if (removed.reason === "in_progress") {
-        return {
-          ok: false,
-          message:
-            "This Zoom meeting is still live. Click End live Zoom, wait a few seconds, then delete the class again.",
-        };
+      if (removed.ok) {
+        zoomRemovalStatus = removed.status;
+      } else {
+        console.error("classes delete zoom meeting:", removed.lastError);
+        // Portal class removal must not be blocked when Zoom is already gone
+        // or cleanup failed — best-effort only.
       }
-      if (removed.reason === "scope") {
-        return fail(
-          removed.lastError,
-          "Could not remove the Zoom meeting. Ask a national admin to add meeting delete permission on the Zoom API app, then Activate.",
-        );
-      }
-      return fail(
-        removed.lastError,
-        "Could not remove the Zoom meeting from the host calendar. Try End live Zoom first, or delete it once in the Zoom Meetings list.",
-      );
+    } catch (error) {
+      console.error("classes delete zoom meeting:", error);
     }
-
-    zoomRemovalStatus = removed.status;
   }
 
   const { error } = await supabase
@@ -1710,9 +1699,7 @@ export async function deleteZoomClass(
     message:
       zoomRemovalStatus === "pmi_skipped"
         ? "Class removed. The linked number was the host's personal Zoom room, which stays on the account."
-        : hasZoomLink
-          ? "Class and Zoom meeting removed."
-          : "Class removed.",
+        : "Class removed.",
   };
 }
 

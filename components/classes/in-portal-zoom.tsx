@@ -181,13 +181,13 @@ function videoViewSizesForContainer(container: HTMLElement): {
   ribbon: { width: number; height: number };
 } {
   const rect = container.getBoundingClientRect();
-  const width = Math.max(720, Math.min(Math.floor(rect.width || 960), 1440));
-  const height = Math.max(411, Math.min(Math.floor(rect.height || 540), 810));
+  const width = Math.max(640, Math.min(Math.floor(rect.width || 800), 960));
+  const height = Math.max(360, Math.min(Math.floor(rect.height || 420), 480));
   return {
     default: { width, height },
     ribbon: {
-      width: Math.min(316, width),
-      height: Math.min(720, height),
+      width: Math.min(280, width),
+      height: Math.min(360, height),
     },
   };
 }
@@ -433,7 +433,7 @@ export function InPortalZoom({ session, onLeave, onMeetingMissing }: Props) {
           className={`w-full bg-black/90 ${
             fullscreen
               ? "h-[calc(100vh-3rem)] min-h-[calc(100vh-3rem)]"
-              : "min-h-[min(80vh,54rem)] h-[min(80vh,54rem)]"
+              : "h-[28rem] min-h-[22rem] max-h-[32rem]"
           }`}
         />
       )}
