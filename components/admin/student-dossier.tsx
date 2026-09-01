@@ -15,6 +15,7 @@ import {
   updatePaymentStatus,
   type StudentActionResult,
   type StudentPathDetail,
+  type SaturdayCohortOption,
 } from "@/app/admin/students/actions";
 import { DeskLoader } from "@/components/ui/desk-loader";
 import {
@@ -35,6 +36,7 @@ import {
 } from "@/lib/student/account";
 import { formatBatchLabel, formatBatchPlacementLabel, type Batch, type Parish } from "@/lib/parishes";
 import { formatCohortLabel } from "@/lib/cohorts";
+import { allowedSaturdaySlots, type IntakeKey } from "@/lib/cohorts/intake";
 import { SATURDAY_SLOT_LABELS } from "@/lib/cohorts/saturday";
 
 const fieldClass =
@@ -55,6 +57,7 @@ export type StudentPendingConfirm =
       enrolmentId: string;
       parishId: string;
       batchId: string;
+      saturdayCohortId: string | null;
       reason: string;
     };
 
@@ -66,6 +69,7 @@ type Props = {
     Batch,
     "id" | "parish_id" | "name" | "year" | "enrolment_open" | "is_active"
   >[];
+  saturdayOptions?: SaturdayCohortOption[];
   pending: boolean;
   busyLabel: string | null;
   revealedPassword: string | null;
@@ -141,6 +145,7 @@ export function StudentDossier({
   profile,
   parishes,
   batches,
+  saturdayOptions = [],
   pending,
   busyLabel,
   revealedPassword,
@@ -160,15 +165,19 @@ export function StudentDossier({
     enrol?.parish_id ?? profile.parish_id ?? "",
   );
   const [assignBatchId, setAssignBatchId] = useState(enrol?.batch_id ?? "");
+  const [assignSaturdayId, setAssignSaturdayId] = useState(
+    enrol?.saturday_cohort_id ?? "",
+  );
   const [assignReason, setAssignReason] = useState("");
 
   useEffect(() => {
     setTab("profile");
     setAssignParishId(enrol?.parish_id ?? profile.parish_id ?? "");
     setAssignBatchId(enrol?.batch_id ?? "");
+    setAssignSaturdayId(enrol?.saturday_cohort_id ?? "");
     setAssignReason("");
     setPathDetail(null);
-  }, [student.id, enrol?.parish_id, enrol?.batch_id, profile.parish_id]);
+  }, [student.id, enrol?.parish_id, enrol?.batch_id, enrol?.saturday_cohort_id, profile.parish_id]);
 
   useEffect(() => {
     if (tab !== "path") return;
@@ -196,6 +205,17 @@ export function StudentDossier({
       };
       return rank(a) - rank(b) || b.year - a.year || a.name.localeCompare(b.name);
     });
+
+  const selectedBatch = assignBatches.find((b) => b.id === assignBatchId);
+  const programmeYear = selectedBatch?.year ?? enrol?.batch_year ?? 1;
+  const intakeKey = (enrol?.intake_key as IntakeKey | null) ?? "november";
+  const allowedSlots = allowedSaturdaySlots({
+    intakeKey,
+    programmeYear,
+  });
+  const filteredSaturdayOptions = saturdayOptions.filter((option) =>
+    allowedSlots.includes(option.saturday_slot),
+  );
 
   const address = enrol
     ? [
@@ -382,13 +402,16 @@ export function StudentDossier({
             parishes={parishes}
             assignParishId={assignParishId}
             assignBatchId={assignBatchId}
+            assignSaturdayId={assignSaturdayId}
             assignReason={assignReason}
             assignBatches={assignBatches}
+            saturdayOptions={filteredSaturdayOptions}
             onAssignParish={(id) => {
               setAssignParishId(id);
               setAssignBatchId("");
             }}
             onAssignBatch={setAssignBatchId}
+            onAssignSaturday={setAssignSaturdayId}
             onAssignReason={setAssignReason}
             onRun={onRun}
             onRequestConfirm={onRequestConfirm}
@@ -789,10 +812,13 @@ function ManagePane({
   parishes,
   assignParishId,
   assignBatchId,
+  assignSaturdayId,
   assignReason,
   assignBatches,
+  saturdayOptions,
   onAssignParish,
   onAssignBatch,
+  onAssignSaturday,
   onAssignReason,
   onRun,
   onRequestConfirm,
@@ -806,13 +832,16 @@ function ManagePane({
   parishes: Pick<Parish, "id" | "name">[];
   assignParishId: string;
   assignBatchId: string;
+  assignSaturdayId: string;
   assignReason: string;
   assignBatches: Pick<
     Batch,
     "id" | "parish_id" | "name" | "year" | "enrolment_open" | "is_active"
   >[];
+  saturdayOptions: SaturdayCohortOption[];
   onAssignParish: (id: string) => void;
   onAssignBatch: (id: string) => void;
+  onAssignSaturday: (id: string) => void;
   onAssignReason: (value: string) => void;
   onRun: (
     action: () => Promise<StudentActionResult>,
@@ -936,12 +965,13 @@ function ManagePane({
               Placement
             </p>
             <h3 className="mt-1 font-display text-xl text-pine">
-              Reassign parish / batch
+              Reassign parish / batch / Saturday
             </h3>
             <p className="mt-2 text-sm leading-relaxed text-ink/60">
               Closed or retired batches stay available for late placement.
               Previous scorecards are kept when you move year (batch) or Saturday
-              cohort. Students may only switch Saturday temporarily themselves.
+              cohort. Students may only switch Saturday temporarily themselves —
+              admins can set a permanent Saturday here.
             </p>
             <div className="mt-4 flex flex-col gap-3">
               {national ? (
@@ -976,6 +1006,24 @@ function ManagePane({
                   ))}
                 </select>
               </label>
+              {saturdayOptions.length > 0 ? (
+                <label className="block text-sm">
+                  Saturday cohort
+                  <select
+                    value={assignSaturdayId}
+                    onChange={(e) => onAssignSaturday(e.target.value)}
+                    className={`mt-1 ${fieldClass}`}
+                  >
+                    <option value="">Keep current Saturday</option>
+                    {saturdayOptions.map((option) => (
+                      <option key={option.id} value={option.id}>
+                        {option.label ||
+                          SATURDAY_SLOT_LABELS[option.saturday_slot]}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              ) : null}
               <label className="block text-sm">
                 Reason for move
                 <input
@@ -995,6 +1043,7 @@ function ManagePane({
                     enrolmentId: enrol.id,
                     parishId: assignParishId,
                     batchId: assignBatchId,
+                    saturdayCohortId: assignSaturdayId || null,
                     reason: assignReason,
                   });
                 }}

@@ -24,6 +24,10 @@ import { removeStudentStorageFolder } from "@/lib/student/storage-wipe";
 import { signStudentPhotoUrls } from "@/lib/student/photos";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { createServiceSupabaseClient } from "@/lib/supabase/service";
+import {
+  allowedSaturdaySlots,
+  type IntakeKey,
+} from "@/lib/cohorts/intake";
 
 type Supabase = Awaited<ReturnType<typeof createServerSupabaseClient>>;
 
@@ -147,42 +151,97 @@ const ENROLMENT_SELECT = `
   born_again, born_again_date, born_again_where, baptised_holy_spirit,
   holy_spirit_date, holy_spirit_where, baptised_water, water_baptism_date,
   water_baptism_where, schools_attended, occupations, occupation_other,
-  parish_id, batch_id, cohort_id, saturday_cohort_id, legacy_app_com_no, local_church, church_leader, church_activities,
+  parish_id, batch_id, cohort_id, saturday_cohort_id, intake_key, legacy_app_com_no, local_church, church_leader, church_activities,
   declaration_accepted, declared_at, created_at, updated_at
 `;
+
+export type SaturdayCohortOption = {
+  id: string;
+  saturday_slot: 1 | 2 | 3 | 4;
+  label: string;
+};
+
+export async function listSaturdayCohortsForPlacement(
+  programmeCohortId: string,
+): Promise<SaturdayCohortOption[]> {
+  if (!programmeCohortId?.trim()) return [];
+  await requireSessionAdmin();
+  const supabase = await createServerSupabaseClient();
+  const { data, error } = await supabase
+    .from("saturday_cohorts")
+    .select("id, saturday_slot, label")
+    .eq("programme_cohort_id", programmeCohortId)
+    .eq("is_active", true)
+    .order("saturday_slot", { ascending: true });
+
+  if (error) {
+    console.error("[saturday cohorts placement]", error.message);
+    return [];
+  }
+
+  return (data ?? []).map((row) => ({
+    id: row.id as string,
+    saturday_slot: row.saturday_slot as 1 | 2 | 3 | 4,
+    label: row.label as string,
+  }));
+}
 
 export async function listAdminStudents(): Promise<AdminStudentRecord[]> {
   const actor = await requireSessionAdmin();
   const supabase = await createServerSupabaseClient();
 
   // Parish desks: force their parish even if RLS were misconfigured.
-  let enrolQ = supabase
-    .from("enrolments")
-    .select(ENROLMENT_SELECT)
-    .order("created_at", { ascending: false });
-  if (!isNationalAdmin(actor)) {
-    if (!actor.parish_id) return [];
-    enrolQ = enrolQ.eq("parish_id", actor.parish_id);
+  const enrolmentSelectWithIntake = ENROLMENT_SELECT;
+  const enrolmentSelectLegacy = ENROLMENT_SELECT.replace(", intake_key", "");
+
+  async function loadEnrolments(select: string) {
+    let q = supabase
+      .from("enrolments")
+      .select(select)
+      .order("created_at", { ascending: false });
+    if (!isNationalAdmin(actor)) {
+      if (!actor.parish_id) return { data: [] as never[], error: null };
+      q = q.eq("parish_id", actor.parish_id);
+    }
+    return q;
+  }
+
+  let enrolmentsResult = await loadEnrolments(enrolmentSelectWithIntake);
+  if (
+    enrolmentsResult.error &&
+    /intake_key/i.test(enrolmentsResult.error.message)
+  ) {
+    enrolmentsResult = await loadEnrolments(enrolmentSelectLegacy);
   }
 
   const [
-    { data: enrolments, error: enrolError },
     { data: parishes },
     { data: batches },
     { data: cohorts },
     { data: saturdayCohorts },
   ] = await Promise.all([
-    enrolQ,
     supabase.from("parishes").select("id, name, region"),
     supabase.from("batches").select("id, name, year"),
-    supabase.from("cohorts").select("id, name, year_start, year_end").then((r) =>
-      r.error ? { data: [] as never[] } : r,
-    ),
+    supabase
+      .from("cohorts")
+      .select("id, name, year_start, year_end, intake_key")
+      .then(async (r) => {
+        if (r.error && /intake_key/i.test(r.error.message)) {
+          const retry = await supabase
+            .from("cohorts")
+            .select("id, name, year_start, year_end");
+          return retry.error ? { data: [] as never[] } : retry;
+        }
+        return r.error ? { data: [] as never[] } : r;
+      }),
     supabase
       .from("saturday_cohorts")
       .select("id, saturday_slot, label")
       .then((r) => (r.error ? { data: [] as never[] } : r)),
   ]);
+
+  const enrolments = enrolmentsResult.data;
+  const enrolError = enrolmentsResult.error;
 
   if (enrolError) {
     console.error("[admin/students] enrolments", enrolError.message);
@@ -211,6 +270,8 @@ export async function listAdminStudents(): Promise<AdminStudentRecord[]> {
         name: c.name as string,
         year_start: c.year_start as number,
         year_end: c.year_end as number,
+        intake_key: ((c as { intake_key?: string | null }).intake_key ??
+          null) as "november" | "january" | "february" | null,
       },
     ]),
   );
@@ -224,7 +285,7 @@ export async function listAdminStudents(): Promise<AdminStudentRecord[]> {
     ]),
   );
 
-  for (const row of (enrolments ?? []) as AdminEnrolmentRecord[]) {
+  for (const row of (enrolments ?? []) as unknown as AdminEnrolmentRecord[]) {
     if (!latestByUser.has(row.user_id)) {
       const parish = row.parish_id ? parishMeta.get(row.parish_id) : null;
       const meta = row.batch_id ? batchMeta.get(row.batch_id) : null;
@@ -232,8 +293,10 @@ export async function listAdminStudents(): Promise<AdminStudentRecord[]> {
       const saturday = row.saturday_cohort_id
         ? saturdayMeta.get(row.saturday_cohort_id)
         : null;
+      const intakeKey = row.intake_key ?? cohort?.intake_key ?? null;
       latestByUser.set(row.user_id, {
         ...row,
+        intake_key: intakeKey,
         parish_name: parish?.name ?? null,
         parish_region: parish?.region ?? null,
         batch_name: meta?.name ?? null,
@@ -807,7 +870,7 @@ export async function reassignEnrolmentBatch(
     if (saturdayCohortId) {
       const { data: sat } = await access.supabase
         .from("saturday_cohorts")
-        .select("id, programme_cohort_id, is_active")
+        .select("id, programme_cohort_id, is_active, saturday_slot")
         .eq("id", saturdayCohortId)
         .maybeSingle();
       if (!sat?.is_active) {
@@ -818,6 +881,37 @@ export async function reassignEnrolmentBatch(
           ok: false,
           message: "Saturday cohort must belong to the selected year/batch.",
         };
+      }
+
+      const { data: enrolRow } = await access.supabase
+        .from("enrolments")
+        .select("intake_key, cohort_id")
+        .eq("id", enrolmentId)
+        .maybeSingle();
+
+      let intakeKey = (enrolRow?.intake_key as IntakeKey | null) ?? null;
+      if (!intakeKey && cohortId) {
+        const { data: cohortRow } = await access.supabase
+          .from("cohorts")
+          .select("intake_key")
+          .eq("id", cohortId)
+          .maybeSingle();
+        intakeKey = (cohortRow?.intake_key as IntakeKey | null) ?? null;
+      }
+
+      if (intakeKey) {
+        const programmeYear = Number(batch.year) || 1;
+        const allowed = allowedSaturdaySlots({
+          intakeKey,
+          programmeYear,
+        });
+        if (!allowed.includes(sat.saturday_slot as 1 | 2 | 3 | 4)) {
+          return {
+            ok: false,
+            message:
+              "That Saturday is not available for this student's intake and programme year.",
+          };
+        }
       }
     }
 
@@ -1354,6 +1448,219 @@ export async function bulkSetManualsSent(
     return {
       ok: true,
       message: `Marked manuals send 1 of 3 for ${updated} student${updated === 1 ? "" : "s"}. Notification emails were queued.`,
+    };
+  } catch (error) {
+    if (error instanceof Error && error.message === "Unauthorized") {
+      return unauthorized();
+    }
+    return { ok: false, message: publicActionMessage(error) };
+  }
+}
+
+export async function bulkUpdateEnrolmentStatus(
+  studentIds: string[],
+  status: string,
+): Promise<StudentActionResult> {
+  try {
+    if (!studentIds.length) {
+      return { ok: false, message: "Select at least one student." };
+    }
+    if (!isEnrolmentStatus(status)) {
+      return { ok: false, message: "Invalid enrolment status." };
+    }
+
+    const actor = await requireSessionAdmin();
+    let updated = 0;
+    let skipped = 0;
+
+    for (const studentId of studentIds) {
+      const access = await requireAccessibleStudent(studentId);
+      if (!access.ok) {
+        skipped += 1;
+        continue;
+      }
+
+      const { data: enrolment } = await access.supabase
+        .from("enrolments")
+        .select("id, user_id")
+        .eq("user_id", studentId)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (!enrolment) {
+        skipped += 1;
+        continue;
+      }
+
+      if (status === "paid") {
+        await syncTuitionFeePaymentStatus({
+          userId: enrolment.user_id,
+          paymentStatus: "paid",
+          reviewedBy: actor.id,
+        });
+        updated += 1;
+        continue;
+      }
+
+      const { error } = await access.supabase
+        .from("enrolments")
+        .update({
+          status,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", enrolment.id);
+
+      if (error) {
+        console.error("[admin/students] bulk enrolment status", error.message);
+        skipped += 1;
+      } else {
+        updated += 1;
+      }
+    }
+
+    revalidatePath("/admin/students");
+    revalidatePath("/admin/payments");
+    return {
+      ok: true,
+      message: `Enrolment status updated for ${updated} student${updated === 1 ? "" : "s"}${
+        skipped ? ` · ${skipped} skipped` : ""
+      }.`,
+    };
+  } catch (error) {
+    if (error instanceof Error && error.message === "Unauthorized") {
+      return unauthorized();
+    }
+    return { ok: false, message: publicActionMessage(error) };
+  }
+}
+
+export async function bulkUpdatePaymentStatus(
+  studentIds: string[],
+  paymentStatus: string,
+): Promise<StudentActionResult> {
+  try {
+    if (!studentIds.length) {
+      return { ok: false, message: "Select at least one student." };
+    }
+    if (!isPaymentStatus(paymentStatus)) {
+      return { ok: false, message: "Invalid payment status." };
+    }
+
+    const actor = await requireSessionAdmin();
+    let updated = 0;
+    let skipped = 0;
+
+    for (const studentId of studentIds) {
+      const access = await requireAccessibleStudent(studentId);
+      if (!access.ok) {
+        skipped += 1;
+        continue;
+      }
+
+      try {
+        await syncTuitionFeePaymentStatus({
+          userId: studentId,
+          paymentStatus: paymentStatus as "unpaid" | "pending_review" | "paid",
+          reviewedBy: actor.id,
+        });
+        updated += 1;
+      } catch (inner) {
+        console.error("[admin/students] bulk payment status", inner);
+        skipped += 1;
+      }
+    }
+
+    revalidatePath("/admin/students");
+    revalidatePath("/admin/payments");
+    return {
+      ok: true,
+      message: `Payment status updated for ${updated} student${updated === 1 ? "" : "s"}${
+        skipped ? ` · ${skipped} skipped` : ""
+      }.`,
+    };
+  } catch (error) {
+    if (error instanceof Error && error.message === "Unauthorized") {
+      return unauthorized();
+    }
+    return { ok: false, message: publicActionMessage(error) };
+  }
+}
+
+export async function bulkSetStudentsActive(
+  studentIds: string[],
+  isActive: boolean,
+): Promise<StudentActionResult> {
+  try {
+    if (!studentIds.length) {
+      return { ok: false, message: "Select at least one student." };
+    }
+
+    await requireSessionAdmin();
+    let updated = 0;
+    let skipped = 0;
+    let mailFailed = 0;
+
+    for (const studentId of studentIds) {
+      const result = await setStudentActive(studentId, isActive);
+      if (result.ok) {
+        updated += 1;
+        if (/could not send|email/i.test(result.message) && !isActive) {
+          mailFailed += 1;
+        }
+      } else {
+        skipped += 1;
+      }
+    }
+
+    revalidatePath("/admin/students");
+    const verb = isActive ? "Reactivated" : "Paused";
+    return {
+      ok: true,
+      message: `${verb} ${updated} student${updated === 1 ? "" : "s"}${
+        skipped ? ` · ${skipped} skipped` : ""
+      }${mailFailed ? ` · ${mailFailed} email notice failed` : ""}.`,
+    };
+  } catch (error) {
+    if (error instanceof Error && error.message === "Unauthorized") {
+      return unauthorized();
+    }
+    return { ok: false, message: publicActionMessage(error) };
+  }
+}
+
+export async function bulkDeleteStudentAccounts(
+  studentIds: string[],
+): Promise<StudentActionResult> {
+  try {
+    if (!studentIds.length) {
+      return { ok: false, message: "Select at least one student." };
+    }
+
+    await requireSessionAdmin();
+    let removed = 0;
+    let skipped = 0;
+    let mailFailed = 0;
+
+    for (const studentId of studentIds) {
+      const result = await deleteStudentAccount(studentId);
+      if (result.ok) {
+        removed += 1;
+        if (/could not send|email/i.test(result.message)) {
+          mailFailed += 1;
+        }
+      } else {
+        skipped += 1;
+      }
+    }
+
+    revalidatePath("/admin/students");
+    revalidatePath("/admin/payments");
+    return {
+      ok: true,
+      message: `Removed ${removed} student${removed === 1 ? "" : "s"}${
+        skipped ? ` · ${skipped} skipped` : ""
+      }${mailFailed ? ` · ${mailFailed} notice email failed` : ""}.`,
     };
   } catch (error) {
     if (error instanceof Error && error.message === "Unauthorized") {

@@ -1,6 +1,9 @@
 import type { Metadata } from "next";
 import { listActiveParishesForEnrol } from "@/app/admin/parishes/actions";
-import { listSaturdayCohortsForEnrol } from "@/app/enrol/saturday-actions";
+import {
+  getEnrolIntakeContext,
+  listSaturdayCohortsForEnrol,
+} from "@/app/enrol/saturday-actions";
 import { EnrolWizard } from "@/components/enrol/enrol-wizard";
 import { SiteFooter } from "@/components/site-footer";
 import { SiteHeader } from "@/components/site-header";
@@ -12,7 +15,7 @@ export const metadata: Metadata = {
 };
 
 export default async function EnrolPage() {
-  const [parishes, saturdayCohorts] = await Promise.all([
+  const [parishes, saturdayPack] = await Promise.all([
     listActiveParishesForEnrol(),
     listSaturdayCohortsForEnrol(),
   ]);
@@ -42,7 +45,8 @@ export default async function EnrolPage() {
           <div className="mx-auto max-w-3xl">
             <EnrolWizard
               parishes={parishes}
-              saturdayCohorts={saturdayCohorts}
+              saturdayCohorts={saturdayPack.options}
+              intakeContext={saturdayPack.context}
             />
           </div>
         </section>

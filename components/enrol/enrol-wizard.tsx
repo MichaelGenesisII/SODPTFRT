@@ -31,6 +31,7 @@ import {
   SATURDAY_COHORT_HINT,
   type SaturdayCohortOption,
 } from "@/lib/cohorts/saturday";
+import type { EnrolIntakeContext } from "@/app/enrol/saturday-actions";
 import { EnrolAlreadyApplied } from "@/components/enrol/already-enrolled";
 import { EnrolPostSubmit } from "@/components/enrol/post-submit";
 import {
@@ -162,11 +163,13 @@ function SaturdayCohortPicker({
   value,
   onChange,
   error,
+  forced,
 }: {
   cohorts: SaturdayCohortOption[];
   value: string;
   onChange: (id: string) => void;
   error?: string;
+  forced?: boolean;
 }) {
   const fieldId = enrolFieldDomId("saturdayCohortId");
 
@@ -176,6 +179,28 @@ function SaturdayCohortPicker({
         <p className="text-sm text-ink/60">
           Saturday cohorts are not available yet. Please try again later.
         </p>
+        <FieldError message={error} />
+      </div>
+    );
+  }
+
+  if (forced && cohorts.length === 1) {
+    const only = cohorts[0]!;
+    return (
+      <div id={fieldId} tabIndex={-1}>
+        <input type="hidden" name="saturdayCohortId" value={only.id} />
+        <div className="border border-pine/25 bg-mist/60 px-4 py-4">
+          <p className="text-[0.65rem] font-medium uppercase tracking-[0.14em] text-celadon">
+            Your Saturday
+          </p>
+          <p className="mt-1 font-display text-xl text-pine">
+            {only.label}
+          </p>
+          <p className="mt-2 text-sm leading-relaxed text-ink/65">
+            Earlier Saturdays for this intake have already passed. You are
+            joining the class that is still available.
+          </p>
+        </div>
         <FieldError message={error} />
       </div>
     );
@@ -235,9 +260,11 @@ function SaturdayCohortPicker({
 export function EnrolWizard({
   parishes,
   saturdayCohorts: initialSaturdayCohorts,
+  intakeContext,
 }: {
   parishes: EnrolParishOption[];
   saturdayCohorts: SaturdayCohortOption[];
+  intakeContext: EnrolIntakeContext;
 }) {
   const { success, error: toastError } = useToast();
   const [stepIndex, setStepIndex] = useState(0);
@@ -261,6 +288,19 @@ export function EnrolWizard({
   const [addressLookupReady, setAddressLookupReady] = useState<boolean | null>(
     null,
   );
+
+  const saturdayForced =
+    intakeContext.saturdayForced || saturdayCohorts.length === 1;
+
+  useEffect(() => {
+    if (!saturdayForced || saturdayCohorts.length !== 1) return;
+    const onlyId = saturdayCohorts[0]!.id;
+    setData((prev) =>
+      prev.saturdayCohortId === onlyId
+        ? prev
+        : { ...prev, saturdayCohortId: onlyId },
+    );
+  }, [saturdayForced, saturdayCohorts]);
 
   const step = ENROL_STEPS[stepIndex];
 
@@ -986,13 +1026,43 @@ export function EnrolWizard({
                 required
                 hint={SATURDAY_COHORT_HINT}
               >
-                Saturday cohort
+                Your Saturday
               </FieldLabel>
+              <p className="mb-3 text-sm text-ink/65">
+                You have been placed on{" "}
+                <span className="font-medium text-ink">
+                  {intakeContext.intakeLabel}
+                </span>
+                .
+                {saturdayForced ? (
+                  <>
+                    {" "}
+                    Because enrolment is late in Year 1, you join the Saturday
+                    class that is still available.
+                  </>
+                ) : (
+                  <> Choose which Saturday you will attend.</>
+                )}
+                {intakeContext.enrolClosesLabel ? (
+                  <>
+                    {" "}
+                    Enrolment for this intake closes on{" "}
+                    {intakeContext.enrolClosesLabel}.
+                  </>
+                ) : null}
+              </p>
+              {!intakeContext.enrolOpen ? (
+                <p className="mb-3 text-sm text-red-900">
+                  Enrolment for this intake is not open right now. Please try
+                  again when the next intake opens, or contact Support.
+                </p>
+              ) : null}
               <SaturdayCohortPicker
                 cohorts={saturdayCohorts}
                 value={data.saturdayCohortId}
                 onChange={(id) => updateField(setData, "saturdayCohortId", id)}
                 error={errors.saturdayCohortId}
+                forced={saturdayForced}
               />
             </div>
           </>
@@ -1055,7 +1125,8 @@ export function EnrolWizard({
                   .join(", ")}
               />
               <ReviewRow label="Parish" value={parishLabel} />
-              <ReviewRow label="Saturday cohort" value={saturdayCohortLabel} />
+              <ReviewRow label="Intake" value={intakeContext.intakeLabel} />
+              <ReviewRow label="Your Saturday" value={saturdayCohortLabel} />
             </dl>
           </div>
         ) : null}

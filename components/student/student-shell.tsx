@@ -133,6 +133,12 @@ const nav: NavEntry[] = [
         hint: "Chat with the Listening Desk",
       },
       {
+        href: "/student/report-bug",
+        id: "report-bug",
+        label: "Report a bug",
+        hint: "Something not working",
+      },
+      {
         href: "/student/account",
         id: "account",
         label: "Account",

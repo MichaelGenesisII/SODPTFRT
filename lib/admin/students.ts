@@ -60,6 +60,7 @@ export type AdminEnrolmentRecord = {
   cohort_name?: string | null;
   cohort_year_start?: number | null;
   cohort_year_end?: number | null;
+  intake_key?: "november" | "january" | "february" | null;
   saturday_cohort_id?: string | null;
   saturday_slot?: 1 | 2 | 3 | 4 | null;
   saturday_label?: string | null;

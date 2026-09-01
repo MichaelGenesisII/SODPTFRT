@@ -16,11 +16,21 @@ type Prefill = {
   signedInStudent?: boolean;
 };
 
-export function SupportForm({ prefill }: { prefill?: Prefill }) {
+type SupportFormProps = {
+  prefill?: Prefill;
+  defaultTopic?: (typeof SUPPORT_TOPICS)[number];
+  intakeSource?: "public" | "portal";
+};
+
+export function SupportForm({
+  prefill,
+  defaultTopic = "General enquiry",
+  intakeSource = "public",
+}: SupportFormProps) {
   const { success, error } = useToast();
   const [pending, startTransition] = useTransition();
   const [topic, setTopic] = useState<(typeof SUPPORT_TOPICS)[number]>(
-    "General enquiry",
+    defaultTopic,
   );
   const [name, setName] = useState(prefill?.name ?? "");
   const [email, setEmail] = useState(prefill?.email ?? "");
@@ -47,7 +57,7 @@ export function SupportForm({ prefill }: { prefill?: Prefill }) {
         });
         success(result.message, "Note received");
         form.reset();
-        setTopic("General enquiry");
+        setTopic(defaultTopic);
         setName(prefill?.name ?? "");
         setEmail(prefill?.email ?? "");
         setMessageLen(0);
@@ -102,6 +112,7 @@ export function SupportForm({ prefill }: { prefill?: Prefill }) {
 
   return (
     <form className="space-y-5" onSubmit={onSubmit} noValidate>
+      <input type="hidden" name="intake_source" value={intakeSource} />
       {prefill?.signedInStudent ? (
         <p className="border border-pine/15 bg-stone/35 px-4 py-3 text-sm leading-relaxed text-ink/70">
           Signed in as a student — notes sent with your account email appear in{" "}

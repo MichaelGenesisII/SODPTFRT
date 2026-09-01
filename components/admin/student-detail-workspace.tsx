@@ -11,6 +11,7 @@ import {
   setManualsSent,
   setStudentActive,
   upgradeAlumniToStudent,
+  type SaturdayCohortOption,
   type StudentActionResult,
 } from "@/app/admin/students/actions";
 import {
@@ -34,6 +35,7 @@ export function StudentDetailWorkspace({
   profile,
   parishes,
   batches,
+  saturdayOptions = [],
   backHref = "/admin/students",
 }: {
   student: AdminStudentRecord;
@@ -43,6 +45,7 @@ export function StudentDetailWorkspace({
     Batch,
     "id" | "parish_id" | "name" | "year" | "enrolment_open" | "is_active"
   >[];
+  saturdayOptions?: SaturdayCohortOption[];
   backHref?: string;
 }) {
   const router = useRouter();
@@ -156,7 +159,10 @@ export function StudentDetailWorkspace({
               pendingConfirm.enrolmentId,
               pendingConfirm.parishId,
               pendingConfirm.batchId,
-              { reason: pendingConfirm.reason },
+              {
+                reason: pendingConfirm.reason,
+                saturdayCohortId: pendingConfirm.saturdayCohortId,
+              },
             ),
           { label: "Saving placement…" },
         );
@@ -336,6 +342,7 @@ export function StudentDetailWorkspace({
           profile={profile}
           parishes={parishes}
           batches={batches}
+          saturdayOptions={saturdayOptions}
           pending={busy}
           busyLabel={busyLabel}
           revealedPassword={revealedPassword}

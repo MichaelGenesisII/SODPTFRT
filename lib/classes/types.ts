@@ -198,3 +198,10 @@ export function audienceLabel(
   }
   return batchName ? `Batch · ${batchName}` : "Batch";
 }
+
+/** External/pasted Zoom link — not an API-created meeting with a host start URL. */
+export function classUsesExternalJoinLink(
+  klass: Pick<ZoomClass, "zoom_join_url" | "zoom_start_url">,
+): boolean {
+  return Boolean(klass.zoom_join_url?.trim()) && !klass.zoom_start_url?.trim();
+}

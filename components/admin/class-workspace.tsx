@@ -19,6 +19,7 @@ import {
   audienceLabel,
   classSessionPhase,
   classSessionPhaseLabel,
+  classUsesExternalJoinLink,
   formatClassDateTime,
   formatClassScheduleRange,
   formatDuration,
@@ -55,6 +56,7 @@ export function ClassWorkspace({
   onStatus,
   onDelete,
   onClassZoomUpdated,
+  onUpdateJoinLink,
 }: {
   item: ZoomClass;
   roster: ZoomClassAttendance[];
@@ -75,6 +77,11 @@ export function ClassWorkspace({
   onStatus: (status: ZoomClass["status"]) => void;
   onDelete: () => void;
   onClassZoomUpdated?: (zoom: ClassZoomSnapshot) => void;
+  onUpdateJoinLink?: (input: {
+    zoom_join_url: string;
+    zoom_meeting_id?: string;
+    zoom_passcode?: string;
+  }) => void;
 }) {
   const { success, error: toastError } = useToast();
   const [studentQuery, setStudentQuery] = useState("");
@@ -92,10 +99,30 @@ export function ClassWorkspace({
     () => item.zoom_meeting_id,
   );
   const [clock, setClock] = useState(() => Date.now());
+  const [editingJoinLink, setEditingJoinLink] = useState(false);
+  const [joinUrlDraft, setJoinUrlDraft] = useState(item.zoom_join_url ?? "");
+  const [meetingIdDraft, setMeetingIdDraft] = useState(
+    item.zoom_meeting_id ?? "",
+  );
+  const [passcodeDraft, setPasscodeDraft] = useState(item.zoom_passcode ?? "");
+
+  const externalJoinLink = classUsesExternalJoinLink(item);
 
   useEffect(() => {
     setDisplayMeetingId(item.zoom_meeting_id);
   }, [item.zoom_meeting_id]);
+
+  useEffect(() => {
+    if (editingJoinLink) return;
+    setJoinUrlDraft(item.zoom_join_url ?? "");
+    setMeetingIdDraft(item.zoom_meeting_id ?? "");
+    setPasscodeDraft(item.zoom_passcode ?? "");
+  }, [
+    item.zoom_join_url,
+    item.zoom_meeting_id,
+    item.zoom_passcode,
+    editingJoinLink,
+  ]);
 
   function applyClassZoom(zoom: ClassZoomSnapshot) {
     setDisplayMeetingId(zoom.zoom_meeting_id);
@@ -390,6 +417,126 @@ export function ClassWorkspace({
             </label>
           ) : null}
         </div>
+
+        {externalJoinLink ? (
+          <div className="mt-3 border border-stone bg-white/70 px-3 py-2.5">
+            <div className="flex flex-wrap items-start justify-between gap-2">
+              <div className="min-w-0 flex-1">
+                <p className="text-[0.6rem] font-medium uppercase tracking-[0.14em] text-ink/45">
+                  Join link
+                </p>
+                {editingJoinLink ? (
+                  <div className="mt-2 space-y-3">
+                    <label className="block text-sm">
+                      Zoom join URL
+                      <input
+                        required
+                        value={joinUrlDraft}
+                        onChange={(e) => setJoinUrlDraft(e.target.value)}
+                        className={`mt-1 ${fieldClass}`}
+                        placeholder="https://zoom.us/j/…"
+                      />
+                    </label>
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <label className="block text-sm">
+                        Meeting ID
+                        <input
+                          value={meetingIdDraft}
+                          onChange={(e) => setMeetingIdDraft(e.target.value)}
+                          className={`mt-1 ${fieldClass}`}
+                          placeholder="For attendance sync"
+                        />
+                      </label>
+                      <label className="block text-sm">
+                        Passcode
+                        <input
+                          value={passcodeDraft}
+                          onChange={(e) => setPasscodeDraft(e.target.value)}
+                          className={`mt-1 ${fieldClass}`}
+                        />
+                      </label>
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    <p className="mt-1 break-all font-mono text-sm text-ink/80">
+                      {item.zoom_join_url}
+                    </p>
+                    {item.zoom_meeting_id ? (
+                      <p className="mt-1 text-xs text-ink/50">
+                        Meeting ID{" "}
+                        <span className="font-mono text-ink/70">
+                          {item.zoom_meeting_id}
+                        </span>
+                        {item.zoom_passcode ? (
+                          <>
+                            {" "}
+                            · passcode set
+                          </>
+                        ) : null}
+                      </p>
+                    ) : null}
+                  </>
+                )}
+              </div>
+              <div className="flex shrink-0 gap-2">
+                {editingJoinLink ? (
+                  <>
+                    <button
+                      type="button"
+                      disabled={pending}
+                      onClick={() => {
+                        setEditingJoinLink(false);
+                        setJoinUrlDraft(item.zoom_join_url ?? "");
+                        setMeetingIdDraft(item.zoom_meeting_id ?? "");
+                        setPasscodeDraft(item.zoom_passcode ?? "");
+                      }}
+                      className="border border-stone px-3 py-1.5 text-xs text-ink/70"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      disabled={pending || !joinUrlDraft.trim()}
+                      onClick={() => {
+                        const joinUrl = joinUrlDraft.trim();
+                        if (!/^https?:\/\//i.test(joinUrl)) {
+                          toastError(
+                            "Join link must start with http:// or https://.",
+                            "Classes",
+                          );
+                          return;
+                        }
+                        onUpdateJoinLink?.({
+                          zoom_join_url: joinUrl,
+                          zoom_meeting_id: meetingIdDraft.trim() || undefined,
+                          zoom_passcode: passcodeDraft.trim() || undefined,
+                        });
+                        setEditingJoinLink(false);
+                      }}
+                      className="border border-pine bg-pine px-3 py-1.5 text-xs font-medium text-mist disabled:opacity-40"
+                    >
+                      Save link
+                    </button>
+                  </>
+                ) : (
+                  <button
+                    type="button"
+                    disabled={pending}
+                    onClick={() => setEditingJoinLink(true)}
+                    className="border border-stone px-3 py-1.5 text-xs text-ink/70 hover:border-pine hover:text-pine disabled:opacity-40"
+                  >
+                    Change link
+                  </button>
+                )}
+              </div>
+            </div>
+            <p className="mt-2 text-xs text-ink/50">
+              Students open this link to join. Update it here if the host
+              changes the Zoom room.
+            </p>
+          </div>
+        ) : null}
 
         <div className="mt-3 flex flex-wrap gap-2">
           {onRefresh ? (

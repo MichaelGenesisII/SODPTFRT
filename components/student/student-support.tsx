@@ -9,6 +9,7 @@ import {
   useTransition,
   type FormEvent,
 } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   createStudentConversation,
@@ -39,6 +40,7 @@ import {
 } from "@/lib/tickets";
 import type { StudentProfile } from "@/lib/student/types";
 import { studentDisplayName } from "@/lib/student/types";
+import { WhatsAppChatLink } from "@/components/support/whatsapp-chat-link";
 
 type Panel = "inbox" | "compose";
 
@@ -513,6 +515,11 @@ export function StudentSupportDesk({
             <p className="mt-1.5 hidden max-w-xl text-sm leading-relaxed text-ink/65 sm:mt-2 sm:block sm:text-base">
               Chat with the School from inside your portal. Public support notes
               with this email are imported here. Delete any conversation anytime.
+              Something broken?{" "}
+              <Link href="/student/report-bug" className="font-medium text-pine underline">
+                Report a bug
+              </Link>
+              . Prefer WhatsApp? <WhatsAppChatLink className="inline-flex items-center gap-1 font-medium text-pine underline decoration-pine/30 underline-offset-4" />
             </p>
           </div>
           <button

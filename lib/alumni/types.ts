@@ -47,6 +47,7 @@ export type AlumniImportSkipReason =
   | "missing_name"
   | "invalid_email"
   | "duplicate_in_file"
+  | "already_on_register"
   | "junk_sheet";
 
 export type AlumniImportPreview = {
@@ -68,6 +69,9 @@ export type AlumniImportResult = {
   imported: number;
   updated: number;
   skipped: AlumniImportPreview["skipped"];
+  /** Rows that matched an existing register person (updated, not inserted). */
+  matchedExisting: number;
+  previewTotal: number;
 };
 
 export type AlumniLegacyPerson = {

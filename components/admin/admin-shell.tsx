@@ -89,17 +89,12 @@ const nav: NavEntry[] = [
       {
         href: "/admin/students",
         label: "Students",
-        hint: "Applications & seats",
+        hint: "Roster & intakes",
       },
       {
         href: "/admin/alumni",
         label: "Alumni",
         hint: "Import & re-entry",
-      },
-      {
-        href: "/admin/cohorts",
-        label: "Cohorts",
-        hint: "Year & programme groups",
       },
       {
         href: "/admin/payments",
@@ -154,6 +149,11 @@ const nav: NavEntry[] = [
         href: "/admin/tickets",
         label: "Desk",
         hint: "Support inbox",
+      },
+      {
+        href: "/admin/report-bug",
+        label: "Report a bug",
+        hint: "Desk feedback",
       },
       {
         href: "/admin/community",

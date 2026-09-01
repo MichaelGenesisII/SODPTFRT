@@ -44,10 +44,10 @@ export async function listCohortsForAdmin(): Promise<Cohort[]> {
   const { data, error } = await supabase
     .from("cohorts")
     .select(
-      "id, name, slug, year_start, year_end, programme_type, is_active, created_at, updated_at",
+      "id, name, slug, year_start, year_end, programme_type, is_active, intake_key, is_fixed_intake, created_at, updated_at",
     )
-    .order("year_start", { ascending: false })
-    .order("name", { ascending: true });
+    .eq("is_fixed_intake", true)
+    .order("intake_key", { ascending: true });
 
   if (error) {
     console.error("[cohorts list]", error.message);
@@ -74,7 +74,7 @@ export async function listActiveCohortsForEnrol(): Promise<
   return data ?? [];
 }
 
-export async function createCohort(input: {
+export async function createCohort(_input: {
   name: string;
   yearStart: number;
   yearEnd: number;
@@ -84,66 +84,10 @@ export async function createCohort(input: {
     const gate = await requireNational();
     if (gate) return gate;
 
-    const name = input.name.trim();
-    if (name.length < 2) {
-      return { ok: false, message: "Cohort name is required." };
-    }
-    if (input.yearEnd < input.yearStart) {
-      return { ok: false, message: "End year must be on or after start year." };
-    }
-
-    const slug = slugifyCohortName(name);
-    const supabase = await createServerSupabaseClient();
-    const { data, error } = await supabase
-      .from("cohorts")
-      .insert({
-        name,
-        slug,
-        year_start: input.yearStart,
-        year_end: input.yearEnd,
-        programme_type: input.programmeType,
-        is_active: true,
-      })
-      .select("id")
-      .maybeSingle();
-
-    if (error) {
-      if (/duplicate|unique/i.test(error.message)) {
-        return { ok: false, message: "A cohort with that name already exists." };
-      }
-      return { ok: false, message: publicActionMessage(error.message) };
-    }
-
-    if (data?.id) {
-      const service = createServiceSupabaseClient();
-      const slots = [
-        { n: 1, label: "1st Saturday" },
-        { n: 2, label: "2nd Saturday" },
-        { n: 3, label: "3rd Saturday" },
-        { n: 4, label: "4th Saturday" },
-      ];
-      await service.from("saturday_cohorts").upsert(
-        slots.map((s) => ({
-          programme_cohort_id: data.id,
-          saturday_slot: s.n,
-          label: s.label,
-          is_active: true,
-        })),
-        { onConflict: "programme_cohort_id,saturday_slot" },
-      );
-    }
-
-    revalidatePath("/admin/cohorts");
-    revalidatePath("/admin/parishes");
-    revalidatePath("/enrol");
     return {
-      ok: true,
-      message: `Created ${formatCohortLabel({
-        name,
-        year_start: input.yearStart,
-        year_end: input.yearEnd,
-      })} with four Saturday cohorts.`,
-      cohortId: data?.id,
+      ok: false,
+      message:
+        "Programme intakes are fixed (November, January, February). Manage students inside each cohort on the Desk.",
     };
   } catch (error) {
     if (error instanceof Error && error.message === "Unauthorized") {
@@ -196,7 +140,7 @@ export async function updateCohort(
       return { ok: false, message: "Cohort not found." };
     }
 
-    revalidatePath("/admin/cohorts");
+    revalidatePath("/admin/students");
     revalidatePath("/admin/parishes");
     return { ok: true, message: "Cohort updated." };
   } catch (error) {
@@ -234,7 +178,7 @@ export async function assignBatchToCohort(
       return { ok: false, message: "Batch not found." };
     }
 
-    revalidatePath("/admin/cohorts");
+    revalidatePath("/admin/students");
     revalidatePath("/admin/parishes");
     return {
       ok: true,

@@ -40,44 +40,50 @@ export type FeeDefinition = {
 
 
 
-/** Tuition — £300 programme fee. Application to join is free. */
+/** Combined programme fee — £300 tuition + £50 graduation (one payment account). */
+export const PROGRAMME_FEE_TOTAL_GBP = 350;
+export const PROGRAMME_FEE_TUITION_PART_GBP = 300;
+export const PROGRAMME_FEE_GRADUATION_PART_GBP = 50;
 
+/** Student-facing summary of the combined programme fee. */
+export function programmeFeeBreakdownLabel(): string {
+  return `${formatGbp(PROGRAMME_FEE_TOTAL_GBP)} programme fee (${formatGbp(PROGRAMME_FEE_TUITION_PART_GBP)} tuition + ${formatGbp(PROGRAMME_FEE_GRADUATION_PART_GBP)} graduation)`;
+}
+
+export function programmeFeeInstallmentHint(): string {
+  return `Pay in full or in instalments — minimum ${formatGbp(MIN_INSTALLMENT_GBP)} each time (unless you clear the remaining balance).`;
+}
+
+/** Tuition account holds the full programme balance. Application to join is free. */
 export const TUITION_FEE: FeeDefinition = {
-
   type: "tuition",
-
-  label: "Tuition fee",
-
-  amountGbp: 300,
-
-  hint: "Programme tuition — pay in full or in instalments (minimum £30 each time).",
-
+  label: "Programme fee",
+  amountGbp: PROGRAMME_FEE_TOTAL_GBP,
+  hint: `${programmeFeeBreakdownLabel()}. ${programmeFeeInstallmentHint()}`,
 };
 
 
 
-/** Graduation fee — required before completion. */
+/** Graduation portion — tracked internally; included in programme fee. */
 
 export const GRADUATION_FEE: FeeDefinition = {
 
   type: "graduation",
 
-  label: "Graduation fee",
+  label: "Graduation (included)",
 
-  amountGbp: 50,
+  amountGbp: 0,
 
-  hint: "Due before graduation — pay in full or in instalments (minimum £30 each time).",
+  hint: "Included in your programme fee — no separate payment.",
 
 };
 
 
 
-/** @deprecated Use TUITION_FEE */
+/** Rows shown on student/admin payment desks (single combined fee). */
+export const STUDENT_PAYMENT_CATALOGUE: FeeDefinition[] = [TUITION_FEE];
 
-export const APPLICATION_FEE = TUITION_FEE;
-
-
-
+/** Internal fee accounts (tuition balance + graduation tracking). */
 export const FEE_CATALOGUE: FeeDefinition[] = [TUITION_FEE, GRADUATION_FEE];
 
 

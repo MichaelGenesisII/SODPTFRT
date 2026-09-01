@@ -13,6 +13,7 @@ import {
   searchClassStudents,
   setZoomClassStatus,
   syncZoomClassAttendance,
+  updateClassJoinDetails,
   type ClassActionResult,
 } from "@/app/admin/classes/actions";
 import { ClassWorkspace } from "@/components/admin/class-workspace";
@@ -92,12 +93,15 @@ export function ClassDetailWorkspace({
       try {
         const next = await action();
         if (next.ok) {
-          // Navigate away before closing modal so delete never leaves the
-          // details desk stuck on a removed class.
-          if (options?.skipReload) then?.();
+          if (options?.skipReload) {
+            then?.();
+            setPendingConfirm(null);
+            success(next.message, "Classes");
+            return;
+          }
           success(next.message, "Classes");
           setPendingConfirm(null);
-          if (!options?.skipReload) await reload();
+          await reload();
         } else {
           error(next.message, "Classes");
         }
@@ -204,6 +208,13 @@ export function ClassDetailWorkspace({
             );
           }}
           onDelete={() => setPendingConfirm({ kind: "delete" })}
+          onUpdateJoinLink={(details) =>
+            run(
+              () => updateClassJoinDetails(item.id, details),
+              undefined,
+              "Updating join link…",
+            )
+          }
           onClassZoomUpdated={(zoom) =>
             setItem((prev) => ({
               ...prev,

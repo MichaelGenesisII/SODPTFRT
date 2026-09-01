@@ -14,7 +14,7 @@ import { createServerSupabaseClient } from "@/lib/supabase/server";
 export const metadata: Metadata = {
   title: "Payments | Student Portal",
   description:
-    "Pay tuition and graduation fees — in full or by instalment.",
+    "Pay the £350 programme fee (£300 tuition + £50 graduation) in full or by instalment.",
 };
 
 type PageProps = {

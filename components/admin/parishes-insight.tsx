@@ -25,8 +25,8 @@ export function ParishesInsight({ national }: { national: boolean }) {
             {
               step: "1",
               title: "Programme cohort",
-              hint: "Cohorts · Manage",
-              example: "SP 2025/26",
+              hint: "Students · intakes",
+              example: "Cohort 1 · November",
               tone: "pine",
             },
             {
@@ -92,19 +92,18 @@ export function ParishesInsight({ national }: { national: boolean }) {
         </article>
         <article className="bg-white/60 px-4 py-4 sm:px-5">
           <p className="text-[0.65rem] font-medium uppercase tracking-[0.14em] text-celadon">
-            Cohorts · Manage
+            Students
           </p>
-          <h3 className="mt-1 font-display text-lg text-pine">Programme link</h3>
+          <h3 className="mt-1 font-display text-lg text-pine">Programme intakes</h3>
           <p className="mt-2 text-sm leading-relaxed text-ink/65">
-            Batches created here are linked to a programme cohort on the Cohorts
-            desk (or auto-linked at enrolment). Unlinked batches still work locally
-            but won’t roll up to the national programme roster.
+            November, January, and February intakes are filtered on the Students
+            desk. Parish batches here are local placement only.
           </p>
           <Link
-            href="/admin/cohorts"
+            href="/admin/students"
             className="mt-3 inline-block text-xs font-medium text-pine underline decoration-pine/25"
           >
-            Open Cohorts →
+            Open Students →
           </Link>
         </article>
       </div>

@@ -21,16 +21,37 @@ function examAverage(person: AlumniLegacyPerson): number | null {
 export function AlumniListRow({
   person,
   href,
+  checked,
+  onToggle,
+  disabled,
 }: {
   person: AlumniLegacyPerson;
   href: string;
+  checked?: boolean;
+  onToggle?: () => void;
+  disabled?: boolean;
 }) {
   const portalReady = Boolean(person.activated_user_id);
   const avg = examAverage(person);
+  const selectable = typeof onToggle === "function";
 
   return (
     <li>
-      <div className="group grid items-center gap-3 px-3 py-3 transition-colors hover:bg-white/70 sm:px-4 md:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)_5rem_7rem_5rem_2rem]">
+      <div className="group grid items-center gap-3 px-3 py-3 transition-colors hover:bg-white/70 sm:px-4 md:grid-cols-[2rem_minmax(0,1.5fr)_minmax(0,1fr)_5rem_7rem_5rem_2rem]">
+        {selectable ? (
+          <label className="flex items-center justify-center">
+            <span className="sr-only">Select {person.display_name}</span>
+            <input
+              type="checkbox"
+              checked={checked}
+              disabled={disabled}
+              onChange={onToggle}
+              onClick={(event) => event.stopPropagation()}
+              className="size-4 accent-pine"
+            />
+          </label>
+        ) : null}
+
         <Link href={href} className="flex min-w-0 items-start gap-3">
           <span className="mt-0.5 flex size-10 shrink-0 items-center justify-center bg-stone/70 text-xs font-medium text-pine group-hover:bg-pine group-hover:text-mist">
             {initials(person.display_name)}

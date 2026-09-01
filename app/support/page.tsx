@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { SupportForm } from "@/components/support/support-form";
+import { WhatsAppChatLink } from "@/components/support/whatsapp-chat-link";
 import { SiteFooter } from "@/components/site-footer";
 import { SiteHeader } from "@/components/site-header";
 import { getSessionStudent, studentDisplayName } from "@/lib/student/auth";
@@ -111,6 +112,10 @@ export default async function SupportPage() {
               <p className="mt-2 max-w-sm text-sm leading-relaxed text-ink/60">
                 We read every message with care. For urgent enrolment questions,
                 include your full name and preferred programme in the note.
+              </p>
+              <p className="mt-4 text-sm text-ink/60">
+                Prefer WhatsApp?{" "}
+                <WhatsAppChatLink className="inline-flex items-center gap-1.5 font-medium text-pine underline decoration-pine/30 underline-offset-4" />
               </p>
             </div>
           </aside>

@@ -11,11 +11,18 @@ import {
 } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import {
+  bulkDeleteLegacyAlumni,
+  bulkOpenAlumniPortal,
+  bulkSetLegacyAlumniCohort,
+  bulkSetLegacyManualsSent,
+  bulkUpgradeAlumniToStudent,
   commitAlumniImport,
+  listLegacyAlumniIds,
   previewAlumniImport,
   type AlumniActionResult,
 } from "@/app/admin/alumni/actions";
 import { AlumniListRow } from "@/components/admin/alumni-portrait-card";
+import { DeskConfirmModal } from "@/components/ui/desk-confirm-modal";
 import { DeskLoader, DeskLoaderOverlay } from "@/components/ui/desk-loader";
 import { useToast } from "@/components/ui/toast";
 import {
@@ -26,6 +33,7 @@ import {
 import {
   SHEET_COHORT_HINTS,
   type AlumniImportPreview,
+  type AlumniImportResult,
   type AlumniLegacyPerson,
   type AlumniPortalFilter,
 } from "@/lib/alumni/types";
@@ -36,6 +44,66 @@ const fieldClass =
   "w-full min-w-0 border border-stone bg-white/70 px-3 py-2 text-sm outline-none focus:border-pine disabled:opacity-50";
 
 type DeskTab = "register" | "import";
+
+type ImportMetrics = Pick<
+  AlumniImportResult,
+  "imported" | "updated" | "skipped" | "matchedExisting" | "previewTotal" | "message"
+>;
+
+type BulkConfirm =
+  | { kind: "delete" }
+  | { kind: "cohort"; cohortId: string | null }
+  | { kind: "manuals" }
+  | { kind: "portal"; sendMail: boolean }
+  | { kind: "upgrade" };
+
+function downloadAlumniCsv(rows: AlumniLegacyPerson[], filename: string) {
+  const header = [
+    "name",
+    "email",
+    "batch_year",
+    "batch_label",
+    "centre",
+    "student_id",
+    "portal_ready",
+    "tuition_paid",
+    "manuals_sent",
+    "cohort",
+  ];
+  const lines = [
+    header.join(","),
+    ...rows.map((person) => {
+      const cells = [
+        person.display_name,
+        person.email ?? "",
+        person.batch_year,
+        person.batch_label,
+        person.centre ?? "",
+        person.student_id ?? "",
+        person.activated_user_id ? "yes" : "no",
+        person.tuition_covered
+          ? "covered"
+          : person.tuition_paid_gbp > 0
+            ? String(person.tuition_paid_gbp)
+            : "",
+        person.manuals_sent ? "yes" : "no",
+        person.cohort_label ?? "",
+      ];
+      return cells
+        .map((value) => `"${String(value).replaceAll('"', '""')}"`)
+        .join(",");
+    }),
+  ];
+  const blob = new Blob([lines.join("\n")], {
+    type: "text/csv;charset=utf-8",
+  });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.click();
+  URL.revokeObjectURL(url);
+}
 
 type AlumniManagerProps = {
   initialRows: AlumniLegacyPerson[];
@@ -75,6 +143,15 @@ export function AlumniManager({
   const [pending, startTransition] = useTransition();
   const [busyLabel, setBusyLabel] = useState<string | null>(null);
   const [confirmImport, setConfirmImport] = useState(false);
+  const [importMetrics, setImportMetrics] = useState<ImportMetrics | null>(
+    null,
+  );
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [pendingConfirm, setPendingConfirm] = useState<BulkConfirm | null>(
+    null,
+  );
+  const [bulkCohortId, setBulkCohortId] = useState<string>("");
+  const [bulkSendMail, setBulkSendMail] = useState(true);
   const busy = pending || Boolean(busyLabel);
 
   const parsed = parseAlumniListQuery(searchParams.toString());
@@ -97,9 +174,12 @@ export function AlumniManager({
   const skipInitialFetch = useRef(true);
 
   useEffect(() => {
-    if (!confirmImport) return;
+    if (!confirmImport && !importMetrics) return;
     function onKey(event: KeyboardEvent) {
-      if (event.key === "Escape" && !busy) setConfirmImport(false);
+      if (event.key === "Escape" && !busy) {
+        setConfirmImport(false);
+        setImportMetrics(null);
+      }
     }
     document.addEventListener("keydown", onKey);
     document.body.style.overflow = "hidden";
@@ -107,7 +187,21 @@ export function AlumniManager({
       document.removeEventListener("keydown", onKey);
       document.body.style.overflow = "";
     };
-  }, [confirmImport, busy]);
+  }, [confirmImport, importMetrics, busy]);
+
+  const selectedPeople = useMemo(
+    () => rows.filter((person) => selected.has(person.id)),
+    [rows, selected],
+  );
+
+  const pageAllSelected =
+    rows.length > 0 && rows.every((person) => selected.has(person.id));
+  const pageSomeSelected =
+    rows.some((person) => selected.has(person.id)) && !pageAllSelected;
+
+  useEffect(() => {
+    setSelected(new Set());
+  }, [query, batchYear, portal, page]);
 
   const listQuery = useMemo(
     () => alumniListQuery({ query, batchYear, portal, page }),
@@ -131,6 +225,11 @@ export function AlumniManager({
   useEffect(() => {
     if (page > totalPages) setPage(totalPages);
   }, [page, totalPages]);
+
+  useEffect(() => {
+    const parsed = parseAlumniListQuery(searchParams.toString());
+    if (parsed.page !== page) setPage(parsed.page);
+  }, [searchParams, page]);
 
   function refresh(next?: {
     query?: string;
@@ -185,43 +284,36 @@ export function AlumniManager({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [query]);
 
-  function run(
-    action: () => Promise<AlumniActionResult | { ok: boolean; message: string }>,
-    label: string,
-    onOk?: () => void,
-  ) {
-    setBusyLabel(label);
+  function commitImport() {
+    if (!preview || busy) return;
+    setBusyLabel("Importing alumni…");
     startTransition(async () => {
       try {
-        const result = await action();
-        if (result.ok) {
-          success(result.message);
-          setConfirmImport(false);
-          onOk?.();
-        } else {
+        const result = await commitAlumniImport({
+          rows: preview.rows,
+          cohortBySheet,
+        });
+        if (!result.ok) {
           error(result.message);
+          return;
         }
+        setConfirmImport(false);
+        setPreview(null);
+        setImportMetrics({
+          imported: result.imported,
+          updated: result.updated,
+          skipped: result.skipped,
+          matchedExisting: result.matchedExisting,
+          previewTotal: result.previewTotal,
+          message: result.message,
+        });
+        setTab("register");
+        refresh({ page: 1 });
+        router.refresh();
       } finally {
         setBusyLabel(null);
       }
     });
-  }
-
-  function commitImport() {
-    if (!preview || busy) return;
-    run(
-      async () =>
-        commitAlumniImport({
-          rows: preview.rows,
-          cohortBySheet,
-        }),
-      "Importing alumni…",
-      () => {
-        setPreview(null);
-        setTab("register");
-        refresh({ page: 1 });
-      },
-    );
   }
 
   async function parseFile(file: File) {
@@ -267,12 +359,202 @@ export function AlumniManager({
 
   function goToPage(next: number) {
     setPage(Math.min(totalPages, Math.max(1, next)));
+    if (typeof window !== "undefined") {
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    }
   }
+
+  function toggleOne(id: string) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function togglePage() {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (pageAllSelected) {
+        for (const person of rows) next.delete(person.id);
+      } else {
+        for (const person of rows) next.add(person.id);
+      }
+      return next;
+    });
+  }
+
+  function clearSelection() {
+    setSelected(new Set());
+  }
+
+  function selectAllMatching() {
+    setBusyLabel("Selecting matches…");
+    startTransition(async () => {
+      try {
+        const result = await listLegacyAlumniIds({
+          query,
+          batchYear,
+          portal,
+        });
+        if (!result.ok || !("ids" in result)) {
+          error("message" in result ? result.message : "Could not select all.");
+          return;
+        }
+        setSelected(new Set(result.ids));
+        if (result.ids.length < result.total) {
+          info(
+            `Selected ${result.ids.length} of ${result.total} (desk limit). Narrow filters to select more.`,
+            "Alumni",
+          );
+        }
+      } finally {
+        setBusyLabel(null);
+      }
+    });
+  }
+
+  function runBulk(
+    action: () => Promise<AlumniActionResult>,
+    label: string,
+  ) {
+    setBusyLabel(label);
+    startTransition(async () => {
+      try {
+        const result = await action();
+        if (result.ok) {
+          success(result.message, "Alumni");
+          setPendingConfirm(null);
+          clearSelection();
+          refresh();
+          router.refresh();
+        } else {
+          error(result.message, "Alumni");
+        }
+      } finally {
+        setBusyLabel(null);
+      }
+    });
+  }
+
+  function confirmBulk() {
+    if (!pendingConfirm || busy) return;
+    const ids = [...selected];
+    switch (pendingConfirm.kind) {
+      case "delete":
+        runBulk(() => bulkDeleteLegacyAlumni(ids), "Removing rows…");
+        return;
+      case "cohort":
+        runBulk(
+          () =>
+            bulkSetLegacyAlumniCohort(
+              ids,
+              pendingConfirm.cohortId || null,
+            ),
+          "Updating cohort…",
+        );
+        return;
+      case "manuals":
+        runBulk(() => bulkSetLegacyManualsSent(ids, true), "Updating manuals…");
+        return;
+      case "portal":
+        runBulk(
+          () =>
+            bulkOpenAlumniPortal(ids, pendingConfirm.sendMail),
+          "Opening portal access…",
+        );
+        return;
+      case "upgrade":
+        runBulk(
+          () => bulkUpgradeAlumniToStudent(ids),
+          "Upgrading to student…",
+        );
+        return;
+    }
+  }
+
+  const confirmCopy = ((): {
+    eyebrow: string;
+    title: string;
+    body: ReactNode;
+    confirmLabel: string;
+    destructive?: boolean;
+  } | null => {
+    if (!pendingConfirm) return null;
+    const count = selected.size;
+    const who = `${count} alumn${count === 1 ? "us" : "i"}`;
+    switch (pendingConfirm.kind) {
+      case "delete":
+        return {
+          eyebrow: "Remove from register",
+          title: `Delete ${who}?`,
+          body: (
+            <>
+              Removes legacy register rows only. People with portal access are
+              skipped — remove their portal seat from the student file first if
+              needed.
+            </>
+          ),
+          confirmLabel: count === 1 ? "Delete row" : "Delete rows",
+          destructive: true,
+        };
+      case "cohort":
+        return {
+          eyebrow: "Link cohort",
+          title: pendingConfirm.cohortId
+            ? `Set cohort on ${who}?`
+            : `Clear cohort on ${who}?`,
+          body: (
+            <>
+              Updates the programme cohort label on the selected register rows.
+            </>
+          ),
+          confirmLabel: "Update cohort",
+        };
+      case "manuals":
+        return {
+          eyebrow: "Manuals",
+          title: `Mark manuals sent for ${who}?`,
+          body: <>Updates the manuals flag on the selected register rows.</>,
+          confirmLabel: "Mark sent",
+        };
+      case "portal":
+        return {
+          eyebrow: "Portal access",
+          title: `Open alumni portal for ${who}?`,
+          body: (
+            <>
+              Only rows with an email and no portal yet are processed. Others
+              are skipped.
+              {pendingConfirm.sendMail
+                ? " Access details are emailed where possible."
+                : " No access emails will be sent."}
+            </>
+          ),
+          confirmLabel: pendingConfirm.sendMail
+            ? "Open & email access"
+            : "Open portal",
+        };
+      case "upgrade":
+        return {
+          eyebrow: "Upgrade seat",
+          title: `Upgrade ${who} to student portal?`,
+          body: (
+            <>
+              Only rows that already have portal access are upgraded. Others are
+              skipped.
+            </>
+          ),
+          confirmLabel: "Upgrade",
+        };
+    }
+  })();
 
   return (
     <div className="relative space-y-5 sm:space-y-6" aria-busy={busy}>
       <DeskLoaderOverlay
-        active={busy && !confirmImport}
+        active={busy && !confirmImport && !importMetrics && !pendingConfirm}
         label={busyLabel ?? "Working…"}
       />
 
@@ -431,21 +713,175 @@ export function AlumniManager({
                   ? "No alumni match."
                   : `${total} in register`}
               </p>
-              <div className="flex items-center gap-3">
-                <p className="text-[0.65rem] font-medium uppercase tracking-[0.12em] text-ink/40">
-                  View only — open a row to manage portal access
-                </p>
-                <button
-                  type="button"
-                  onClick={() => setTab("import")}
-                  className="text-xs font-medium text-pine underline decoration-pine/25 underline-offset-2"
-                >
-                  Import
-                </button>
-              </div>
+              <p className="text-[0.65rem] font-medium uppercase tracking-[0.12em] text-ink/40">
+                Select rows for bulk actions · open a name for the full file
+              </p>
             </div>
 
-            <div className="hidden border-b border-stone bg-white/50 px-4 py-2 text-[0.65rem] font-medium uppercase tracking-[0.12em] text-ink/45 md:grid md:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)_5rem_7rem_5rem_2rem] md:gap-3">
+            {total > 0 ? (
+              <DeskPagination
+                variant="header"
+                page={page}
+                totalItems={total}
+                pageSize={ALUMNI_PAGE_SIZE}
+                onPageChange={goToPage}
+                className="px-3 sm:px-4"
+                itemLabel="alumni"
+              />
+            ) : null}
+
+            {selected.size > 0 ? (
+              <section className="sticky top-0 z-20 space-y-3 border-b border-pine/25 bg-mist/95 px-3 py-3 shadow-[0_8px_24px_-16px_rgba(20,53,44,0.45)] backdrop-blur-sm sm:px-4">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="text-sm text-ink/70">
+                    <span className="font-medium text-pine">{selected.size}</span>{" "}
+                    selected
+                    {selected.size < total ? (
+                      <>
+                        {" "}
+                        ·{" "}
+                        <button
+                          type="button"
+                          onClick={selectAllMatching}
+                          disabled={busy}
+                          className="font-medium text-pine underline decoration-pine/30 underline-offset-2 disabled:opacity-50"
+                        >
+                          Select all {total} matching
+                        </button>
+                      </>
+                    ) : null}
+                  </p>
+                  <button
+                    type="button"
+                    onClick={clearSelection}
+                    disabled={busy}
+                    className="text-sm text-ink/55 hover:text-pine disabled:opacity-50"
+                  >
+                    Clear
+                  </button>
+                </div>
+
+                <div className="flex flex-col gap-2 lg:flex-row lg:flex-wrap lg:items-end">
+                  <label className="block min-w-[12rem] flex-1 text-xs">
+                    <span className="font-medium uppercase tracking-[0.12em] text-ink/45">
+                      Programme cohort
+                    </span>
+                    <span className="mt-1 flex gap-1">
+                      <select
+                        value={bulkCohortId}
+                        disabled={busy}
+                        onChange={(e) => setBulkCohortId(e.target.value)}
+                        className="min-w-0 flex-1 border border-stone bg-white/80 px-2 py-2 text-sm outline-none focus:border-pine disabled:opacity-50"
+                      >
+                        <option value="">Clear cohort</option>
+                        {cohorts.map((c) => (
+                          <option key={c.id} value={c.id}>
+                            {c.name}
+                          </option>
+                        ))}
+                      </select>
+                      <button
+                        type="button"
+                        disabled={busy}
+                        onClick={() =>
+                          setPendingConfirm({
+                            kind: "cohort",
+                            cohortId: bulkCohortId || null,
+                          })
+                        }
+                        className="shrink-0 border border-pine px-3 py-2 text-sm font-medium text-pine hover:bg-pine hover:text-mist disabled:opacity-50"
+                      >
+                        Apply
+                      </button>
+                    </span>
+                  </label>
+
+                  <div className="flex flex-wrap gap-1.5">
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() => setPendingConfirm({ kind: "manuals" })}
+                      className="border border-stone px-3 py-2 text-sm text-ink/75 hover:border-pine hover:text-pine disabled:opacity-50"
+                    >
+                      Manuals sent
+                    </button>
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() =>
+                        setPendingConfirm({
+                          kind: "portal",
+                          sendMail: bulkSendMail,
+                        })
+                      }
+                      className="border border-stone px-3 py-2 text-sm text-ink/75 hover:border-pine hover:text-pine disabled:opacity-50"
+                    >
+                      Open portal
+                    </button>
+                    <label className="inline-flex items-center gap-1.5 border border-stone px-2 py-2 text-xs text-ink/60">
+                      <input
+                        type="checkbox"
+                        checked={bulkSendMail}
+                        disabled={busy}
+                        onChange={(e) => setBulkSendMail(e.target.checked)}
+                        className="accent-pine"
+                      />
+                      Email access
+                    </label>
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() => setPendingConfirm({ kind: "upgrade" })}
+                      className="border border-stone px-3 py-2 text-sm text-ink/75 hover:border-pine hover:text-pine disabled:opacity-50"
+                    >
+                      Upgrade to student
+                    </button>
+                    <button
+                      type="button"
+                      disabled={busy || selectedPeople.length === 0}
+                      onClick={() => {
+                        downloadAlumniCsv(
+                          selectedPeople,
+                          `sod-alumni-${new Date().toISOString().slice(0, 10)}.csv`,
+                        );
+                        success(
+                          `Exported ${selectedPeople.length} row${selectedPeople.length === 1 ? "" : "s"}.`,
+                          "Alumni",
+                        );
+                      }}
+                      className="border border-stone px-3 py-2 text-sm text-ink/75 hover:border-pine hover:text-pine disabled:opacity-50"
+                    >
+                      Export CSV
+                    </button>
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() => setPendingConfirm({ kind: "delete" })}
+                      className="inline-flex items-center justify-center border border-red-800/35 px-2.5 py-2 text-red-900/85 hover:border-red-800/60 hover:bg-red-50 disabled:opacity-50"
+                      aria-label={`Delete ${selected.size} selected`}
+                      title="Delete selected"
+                    >
+                      <TrashIcon className="h-4 w-4" />
+                    </button>
+                  </div>
+                </div>
+              </section>
+            ) : null}
+
+            <div className="hidden border-b border-stone bg-white/50 px-4 py-2 text-[0.65rem] font-medium uppercase tracking-[0.12em] text-ink/45 md:grid md:grid-cols-[2rem_minmax(0,1.5fr)_minmax(0,1fr)_5rem_7rem_5rem_2rem] md:items-center md:gap-3">
+              <label className="flex items-center justify-center">
+                <span className="sr-only">Select page</span>
+                <input
+                  type="checkbox"
+                  checked={pageAllSelected}
+                  ref={(el) => {
+                    if (el) el.indeterminate = pageSomeSelected;
+                  }}
+                  onChange={togglePage}
+                  disabled={busy || rows.length === 0}
+                  className="size-4 accent-pine"
+                />
+              </label>
               <span>Alumnus</span>
               <span>Centre / batch</span>
               <span>Year</span>
@@ -460,6 +896,9 @@ export function AlumniManager({
                   key={person.id}
                   person={person}
                   href={alumniDetailHref(person.id)}
+                  checked={selected.has(person.id)}
+                  onToggle={() => toggleOne(person.id)}
+                  disabled={busy}
                 />
               ))}
             </ul>
@@ -524,13 +963,14 @@ export function AlumniManager({
               Save {preview.rows.length} to the register?
             </h3>
             <p className="mt-3 text-sm leading-relaxed text-ink/70">
-              This writes the previewed people into the alumni register
+              Existing people (same email, student ID, or name + centre in the
+              batch year) are updated — not duplicated
               {preview.skipped.length
-                ? ` (${preview.skipped.length} preview note${
+                ? ` · ${preview.skipped.length} preview note${
                     preview.skipped.length === 1 ? "" : "s"
-                  } will not be imported)`
+                  } will not be imported`
                 : ""}
-              . You can still assign portal emails afterward.
+              .
             </p>
             <div className="mt-7 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
               <button
@@ -557,7 +997,121 @@ export function AlumniManager({
           </div>
         </div>
       ) : null}
+
+      {importMetrics ? (
+        <div
+          className="fixed inset-0 z-[90] flex items-end justify-center bg-ink/45 p-4 sm:items-center"
+          role="presentation"
+          onClick={() => setImportMetrics(null)}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="alumni-import-metrics-title"
+            className="relative w-full max-w-md border border-stone bg-mist p-6 text-ink shadow-[0_16px_48px_rgba(20,53,44,0.2)] sm:p-7"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <p className="text-[0.65rem] font-medium uppercase tracking-[0.16em] text-celadon">
+              Import complete
+            </p>
+            <h3
+              id="alumni-import-metrics-title"
+              className="mt-3 font-display text-2xl tracking-[-0.02em] text-pine"
+            >
+              Register updated
+            </h3>
+            <p className="mt-2 text-sm leading-relaxed text-ink/65">
+              {importMetrics.message}
+            </p>
+            <dl className="mt-5 grid grid-cols-2 gap-2">
+              {[
+                {
+                  label: "In this file",
+                  value: importMetrics.previewTotal,
+                },
+                {
+                  label: "New",
+                  value: importMetrics.imported,
+                },
+                {
+                  label: "Updated",
+                  value: importMetrics.updated,
+                },
+                {
+                  label: "Skipped",
+                  value: importMetrics.skipped.length,
+                },
+              ].map((item) => (
+                <div
+                  key={item.label}
+                  className="border border-stone bg-white/60 px-3 py-2.5"
+                >
+                  <dt className="text-[0.65rem] font-medium uppercase tracking-[0.12em] text-ink/45">
+                    {item.label}
+                  </dt>
+                  <dd className="mt-1 font-display text-2xl tabular-nums text-pine">
+                    {item.value}
+                  </dd>
+                </div>
+              ))}
+            </dl>
+            {importMetrics.skipped.length > 0 ? (
+              <p className="mt-3 text-xs leading-relaxed text-ink/55">
+                Skipped rows could not be written (already matched awkwardly or
+                blocked). Check the register before re-importing.
+              </p>
+            ) : (
+              <p className="mt-3 text-xs leading-relaxed text-ink/55">
+                No duplicate rows were added. Matches were merged into existing
+                register people.
+              </p>
+            )}
+            <div className="mt-7 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setImportMetrics(null)}
+                className="bg-pine px-4 py-2.5 text-sm font-medium text-mist hover:bg-celadon"
+              >
+                Done
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      <DeskConfirmModal
+        open={Boolean(pendingConfirm && confirmCopy)}
+        onClose={() => !busy && setPendingConfirm(null)}
+        onConfirm={confirmBulk}
+        eyebrow={confirmCopy?.eyebrow}
+        title={confirmCopy?.title ?? ""}
+        body={confirmCopy?.body}
+        confirmLabel={confirmCopy?.confirmLabel ?? "Confirm"}
+        destructive={confirmCopy?.destructive}
+        busy={busy}
+        busyLabel={busyLabel ?? "Working…"}
+      />
     </div>
+  );
+}
+
+function TrashIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" aria-hidden>
+      <path
+        d="M5 7h14M10 7V5a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1v2M8 7v12a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V7"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M10 11v5M14 11v5"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+      />
+    </svg>
   );
 }
 

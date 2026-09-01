@@ -1,12 +1,50 @@
 "use server";
 
 import {
+  resolveIntakeForEnrolment,
+  type IntakeKey,
+} from "@/lib/cohorts/intake";
+import {
   withSaturdayBalance,
   type SaturdayCohort,
   type SaturdayCohortOption,
 } from "@/lib/cohorts/saturday";
 import type { Cohort } from "@/lib/cohorts";
+import { INTAKE_SLUGS } from "@/lib/cohorts/intake";
 import { createServiceSupabaseClient } from "@/lib/supabase/service";
+
+export type EnrolIntakeContext = {
+  intakeKey: IntakeKey;
+  intakeLabel: string;
+  enrolOpen: boolean;
+  enrolClosesLabel: string | null;
+  year1SaturdaySlots: readonly (1 | 2 | 3 | 4)[];
+  saturdayForced: boolean;
+  programmeCohortId: string | null;
+};
+
+export async function getEnrolIntakeContext(
+  asOf: Date = new Date(),
+): Promise<EnrolIntakeContext> {
+  const assignment = resolveIntakeForEnrolment(asOf);
+  const service = createServiceSupabaseClient();
+  const { data: cohortRow } = await service
+    .from("cohorts")
+    .select("id")
+    .eq("is_fixed_intake", true)
+    .eq("intake_key", assignment.intakeKey)
+    .maybeSingle();
+
+  return {
+    intakeKey: assignment.intakeKey,
+    intakeLabel: assignment.label,
+    enrolOpen: assignment.enrolOpen,
+    enrolClosesLabel: assignment.enrolClosesLabel,
+    year1SaturdaySlots: assignment.year1SaturdaySlots,
+    saturdayForced: assignment.saturdayForced,
+    programmeCohortId: cohortRow?.id ?? null,
+  };
+}
 
 export async function listActiveProgrammeYearsForEnrol(): Promise<
   Pick<Cohort, "id" | "name" | "year_start" | "year_end" | "is_active">[]
@@ -15,38 +53,42 @@ export async function listActiveProgrammeYearsForEnrol(): Promise<
   const { data, error } = await service
     .from("cohorts")
     .select("id, name, year_start, year_end, is_active")
+    .eq("is_fixed_intake", true)
     .eq("is_active", true)
-    .order("year_start", { ascending: false });
+    .order("intake_key", { ascending: true });
 
   if (error) {
-    console.error("[enrol] list programme years", error);
+    console.error("[enrol] list fixed intakes", error);
     return [];
   }
   return data ?? [];
 }
 
 export async function listSaturdayCohortsForEnrol(
-  programmeCohortId?: string | null,
-): Promise<SaturdayCohortOption[]> {
+  asOf: Date = new Date(),
+): Promise<{
+  context: EnrolIntakeContext;
+  options: SaturdayCohortOption[];
+}> {
+  const context = await getEnrolIntakeContext(asOf);
   const service = createServiceSupabaseClient();
 
-  let yearId = programmeCohortId?.trim() || null;
-  if (!yearId) {
-    const years = await listActiveProgrammeYearsForEnrol();
-    yearId = years[0]?.id ?? null;
+  if (!context.programmeCohortId) {
+    console.error("[enrol] fixed intake cohort missing", context.intakeKey);
+    return { context, options: [] };
   }
-  if (!yearId) return [];
 
   const { data: rows, error } = await service
     .from("saturday_cohorts")
     .select("id, programme_cohort_id, saturday_slot, label, is_active")
-    .eq("programme_cohort_id", yearId)
+    .eq("programme_cohort_id", context.programmeCohortId)
     .eq("is_active", true)
+    .in("saturday_slot", [...context.year1SaturdaySlots])
     .order("saturday_slot", { ascending: true });
 
   if (error) {
     console.error("[enrol] list saturday cohorts", error);
-    return [];
+    return { context, options: [] };
   }
 
   const cohorts: SaturdayCohort[] = [];
@@ -69,8 +111,27 @@ export async function listSaturdayCohortsForEnrol(
     });
   }
 
-  return withSaturdayBalance(cohorts);
+  return {
+    context,
+    options: withSaturdayBalance(cohorts),
+  };
 }
+
+export async function resolveFixedIntakeCohortId(
+  intakeKey: IntakeKey,
+): Promise<string | null> {
+  const service = createServiceSupabaseClient();
+  const { data } = await service
+    .from("cohorts")
+    .select("id")
+    .eq("is_fixed_intake", true)
+    .eq("intake_key", intakeKey)
+    .maybeSingle();
+  return data?.id ?? null;
+}
+
+/** @deprecated Slugs for migration scripts only. */
+export { INTAKE_SLUGS };
 
 /**
  * Find or create an open parish batch linked to the programme year,
@@ -116,7 +177,6 @@ export async function ensureParishYearBatch(input: {
     .maybeSingle();
 
   if (error || !created) {
-    // Unique (parish_id, name) conflict — fetch again
     const { data: retry } = await service
       .from("batches")
       .select("id")

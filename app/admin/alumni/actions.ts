@@ -1,7 +1,10 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { parseAlumniWorkbook } from "@/lib/alumni/parse-workbook";
+import {
+  alumniPersonIdentityKey,
+  parseAlumniWorkbook,
+} from "@/lib/alumni/parse-workbook";
 import type {
   AlumniExamEntry,
   AlumniImportPreview,
@@ -27,14 +30,60 @@ import { publicActionMessage } from "@/lib/safe-action-message";
 import { SOD_SITE, supportHref } from "@/lib/site-nav";
 import { findAuthUserIdByEmail } from "@/lib/supabase/auth-admin";
 import { createServiceSupabaseClient } from "@/lib/supabase/service";
+import { upgradeAlumniToStudent } from "@/app/admin/students/actions";
 
 export type AlumniActionResult = {
   ok: boolean;
   message: string;
 };
 
+export type AlumniBulkResult = AlumniActionResult & {
+  affected?: number;
+  skipped?: number;
+};
+
 function unauthorized(): AlumniActionResult {
   return { ok: false, message: "Unauthorized." };
+}
+
+function applyLegacyRegisterFilters(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  request: any,
+  input?: {
+    query?: string;
+    batchYear?: number | null;
+    portal?: AlumniPortalFilter;
+  },
+) {
+  let q = request;
+  if (input?.batchYear) {
+    q = q.eq("batch_year", input.batchYear);
+  }
+  if (input?.portal === "awaiting_email") {
+    q = q.is("activated_user_id", null);
+  } else if (input?.portal === "portal_ready") {
+    q = q.not("activated_user_id", "is", null);
+  }
+  const search = (input?.query ?? "").trim();
+  if (search) {
+    const safe = search.replace(/[%_,.()]/g, " ").replace(/\s+/g, " ").trim();
+    if (safe) {
+      const like = `%${safe}%`;
+      q = q.or(
+        [
+          `display_name.ilike.${like}`,
+          `email.ilike.${like}`,
+          `centre.ilike.${like}`,
+          `student_id.ilike.${like}`,
+          `legacy_ref.ilike.${like}`,
+          `mobile.ilike.${like}`,
+          `first_name.ilike.${like}`,
+          `last_name.ilike.${like}`,
+        ].join(","),
+      );
+    }
+  }
+  return q;
 }
 
 function asExams(value: unknown): AlumniExamEntry[] {
@@ -221,42 +270,16 @@ export async function listLegacyAlumni(input?: {
   const pageSize = Math.min(Math.max(input?.pageSize ?? ALUMNI_PAGE_SIZE, 1), 100);
   const page = Math.max(input?.page ?? 1, 1);
   const offset = (page - 1) * pageSize;
-  const q = (input?.query ?? "").trim();
 
-  let request = service
-    .from("alumni_legacy_people")
-    .select("*", { count: "exact" })
-    .order("batch_year", { ascending: false })
-    .order("display_name", { ascending: true })
-    .range(offset, offset + pageSize - 1);
-
-  if (input?.batchYear) {
-    request = request.eq("batch_year", input.batchYear);
-  }
-  if (input?.portal === "awaiting_email") {
-    request = request.is("activated_user_id", null);
-  } else if (input?.portal === "portal_ready") {
-    request = request.not("activated_user_id", "is", null);
-  }
-
-  if (q) {
-    const safe = q.replace(/[%_,.()]/g, " ").replace(/\s+/g, " ").trim();
-    if (safe) {
-      const like = `%${safe}%`;
-      request = request.or(
-        [
-          `display_name.ilike.${like}`,
-          `email.ilike.${like}`,
-          `centre.ilike.${like}`,
-          `student_id.ilike.${like}`,
-          `legacy_ref.ilike.${like}`,
-          `mobile.ilike.${like}`,
-          `first_name.ilike.${like}`,
-          `last_name.ilike.${like}`,
-        ].join(","),
-      );
-    }
-  }
+  const request = applyLegacyRegisterFilters(
+    service
+      .from("alumni_legacy_people")
+      .select("*", { count: "exact" })
+      .order("batch_year", { ascending: false })
+      .order("display_name", { ascending: true })
+      .range(offset, offset + pageSize - 1),
+    input,
+  );
 
   const { data, count, error } = await request;
   if (error) {
@@ -288,7 +311,9 @@ export async function listLegacyAlumni(input?: {
   ].filter((y) => Number.isFinite(y));
 
   return {
-    rows: (data ?? []).map((row) => mapLegacyRow(row as Record<string, unknown>)),
+    rows: ((data ?? []) as Record<string, unknown>[]).map((row) =>
+      mapLegacyRow(row),
+    ),
     total: count ?? 0,
     page,
     pageSize,
@@ -333,6 +358,79 @@ export async function previewAlumniImport(
   }
 }
 
+async function findExistingLegacyPerson(row: ParsedAlumniRow): Promise<{
+  id: string;
+  activated_user_id: string | null;
+  email: string | null;
+  import_fingerprint: string | null;
+} | null> {
+  const service = createServiceSupabaseClient();
+  const select =
+    "id, activated_user_id, email, import_fingerprint, display_name, centre, student_id";
+
+  const { data: byFingerprint } = await service
+    .from("alumni_legacy_people")
+    .select(select)
+    .eq("import_fingerprint", row.importFingerprint)
+    .maybeSingle();
+  if (byFingerprint?.id) return byFingerprint;
+
+  if (row.email) {
+    const email = row.email.trim().toLowerCase();
+    const { data: byEmail } = await service
+      .from("alumni_legacy_people")
+      .select(select)
+      .eq("batch_year", row.batchYear)
+      .ilike("email", email)
+      .limit(8);
+    const match = (byEmail ?? []).find(
+      (r) => String(r.email ?? "").trim().toLowerCase() === email,
+    );
+    if (match?.id) return match;
+  }
+
+  if (row.studentId) {
+    const sid = row.studentId.trim().toLowerCase();
+    const { data: byStudent } = await service
+      .from("alumni_legacy_people")
+      .select(select)
+      .eq("batch_year", row.batchYear)
+      .ilike("student_id", sid)
+      .limit(8);
+    const match = (byStudent ?? []).find(
+      (r) => String(r.student_id ?? "").trim().toLowerCase() === sid,
+    );
+    if (match?.id) return match;
+  }
+
+  const identity = alumniPersonIdentityKey({
+    batchYear: row.batchYear,
+    email: row.email,
+    studentId: row.studentId,
+    displayName: row.displayName,
+    centre: row.centre,
+  });
+
+  const { data: byName } = await service
+    .from("alumni_legacy_people")
+    .select(select)
+    .eq("batch_year", row.batchYear)
+    .ilike("display_name", row.displayName.trim())
+    .limit(25);
+
+  const soft = (byName ?? []).find((r) => {
+    const key = alumniPersonIdentityKey({
+      batchYear: row.batchYear,
+      email: r.email,
+      studentId: r.student_id,
+      displayName: r.display_name,
+      centre: r.centre,
+    });
+    return key === identity;
+  });
+  return soft ?? null;
+}
+
 async function upsertLegacyRow(
   row: ParsedAlumniRow,
   cohortId: string | null,
@@ -372,11 +470,7 @@ async function upsertLegacyRow(
     cohort_id: cohortId,
   };
 
-  const { data: existing } = await service
-    .from("alumni_legacy_people")
-    .select("id, activated_user_id, email")
-    .eq("import_fingerprint", row.importFingerprint)
-    .maybeSingle();
+  const existing = await findExistingLegacyPerson(row);
 
   if (existing?.id) {
     // Never wipe an assigned portal email on re-import.
@@ -385,9 +479,12 @@ async function upsertLegacyRow(
       .update({
         ...payload,
         email: existing.email ?? payload.email,
+        // Keep fingerprint stable for future imports.
+        import_fingerprint: row.importFingerprint,
       })
       .eq("id", existing.id);
     if (error) {
+      // Unique fingerprint clash with another row — treat as skip, not a new insert.
       console.error("[alumni] update legacy", error);
       return "skipped";
     }
@@ -415,6 +512,8 @@ export async function commitAlumniImport(input: {
         imported: 0,
         updated: 0,
         skipped: [],
+        matchedExisting: 0,
+        previewTotal: input.rows.length,
       };
     }
 
@@ -425,6 +524,8 @@ export async function commitAlumniImport(input: {
         imported: 0,
         updated: 0,
         skipped: [],
+        matchedExisting: 0,
+        previewTotal: 0,
       };
     }
 
@@ -441,7 +542,7 @@ export async function commitAlumniImport(input: {
         skipped.push({
           sheet: row.sheet,
           rowNumber: row.rowNumber,
-          reason: "duplicate_in_file",
+          reason: "already_on_register",
           detail: row.displayName,
         });
       }
@@ -457,6 +558,8 @@ export async function commitAlumniImport(input: {
       imported,
       updated,
       skipped,
+      matchedExisting: updated,
+      previewTotal: input.rows.length,
     };
   } catch (error) {
     if (error instanceof Error && error.message === "Unauthorized") {
@@ -466,6 +569,8 @@ export async function commitAlumniImport(input: {
         imported: 0,
         updated: 0,
         skipped: [],
+        matchedExisting: 0,
+        previewTotal: input.rows.length,
       };
     }
     return {
@@ -474,6 +579,8 @@ export async function commitAlumniImport(input: {
       imported: 0,
       updated: 0,
       skipped: [],
+      matchedExisting: 0,
+      previewTotal: input.rows.length,
     };
   }
 }
@@ -783,6 +890,313 @@ export async function assignAlumniEmail(input: {
       return unauthorized();
     }
     console.error("[alumni] assign email", error);
+    return { ok: false, message: publicActionMessage(error) };
+  }
+}
+
+/** All register IDs matching the current desk filters (for bulk select). */
+export async function listLegacyAlumniIds(input?: {
+  query?: string;
+  batchYear?: number | null;
+  portal?: AlumniPortalFilter;
+}): Promise<{ ok: true; ids: string[]; total: number } | AlumniActionResult> {
+  try {
+    const actor = await requireSessionAdmin();
+    if (!isNationalAdmin(actor)) {
+      return { ok: false, message: "National desk only." };
+    }
+
+    const service = createServiceSupabaseClient();
+    const ids: string[] = [];
+    const pageSize = 1000;
+    let offset = 0;
+    let total = 0;
+
+    while (true) {
+      const { data, count, error } = await applyLegacyRegisterFilters(
+        service
+          .from("alumni_legacy_people")
+          .select("id", { count: offset === 0 ? "exact" : undefined })
+          .order("batch_year", { ascending: false })
+          .order("display_name", { ascending: true })
+          .range(offset, offset + pageSize - 1),
+        input,
+      );
+      if (error) {
+        console.error("[alumni] list ids", error);
+        return { ok: false, message: "Could not load alumni selection." };
+      }
+      if (offset === 0) total = count ?? 0;
+      if (!data?.length) break;
+      for (const row of data) ids.push(String(row.id));
+      if (data.length < pageSize) break;
+      offset += pageSize;
+      if (ids.length >= 5000) break;
+    }
+
+    return { ok: true, ids, total };
+  } catch (error) {
+    if (error instanceof Error && error.message === "Unauthorized") {
+      return unauthorized();
+    }
+    return { ok: false, message: publicActionMessage(error) };
+  }
+}
+
+export async function bulkDeleteLegacyAlumni(
+  legacyIds: string[],
+): Promise<AlumniBulkResult> {
+  try {
+    const actor = await requireSessionAdmin();
+    if (!isNationalAdmin(actor)) {
+      return { ok: false, message: "National desk only." };
+    }
+    if (!legacyIds.length) {
+      return { ok: false, message: "Select at least one alumnus." };
+    }
+
+    const service = createServiceSupabaseClient();
+    let deleted = 0;
+    let skipped = 0;
+
+    for (const id of legacyIds) {
+      const { data: row } = await service
+        .from("alumni_legacy_people")
+        .select("id, activated_user_id, display_name")
+        .eq("id", id)
+        .maybeSingle();
+      if (!row?.id) {
+        skipped += 1;
+        continue;
+      }
+      if (row.activated_user_id) {
+        skipped += 1;
+        continue;
+      }
+      const { error } = await service
+        .from("alumni_legacy_people")
+        .delete()
+        .eq("id", id);
+      if (error) {
+        console.error("[alumni] bulk delete", error.message);
+        skipped += 1;
+      } else {
+        deleted += 1;
+      }
+    }
+
+    revalidatePath("/admin/alumni");
+    return {
+      ok: true,
+      message: `Removed ${deleted} register row${deleted === 1 ? "" : "s"}${
+        skipped ? ` · ${skipped} skipped (portal linked or not found)` : ""
+      }.`,
+      affected: deleted,
+      skipped,
+    };
+  } catch (error) {
+    if (error instanceof Error && error.message === "Unauthorized") {
+      return unauthorized();
+    }
+    return { ok: false, message: publicActionMessage(error) };
+  }
+}
+
+export async function bulkSetLegacyAlumniCohort(
+  legacyIds: string[],
+  cohortId: string | null,
+): Promise<AlumniBulkResult> {
+  try {
+    const actor = await requireSessionAdmin();
+    if (!isNationalAdmin(actor)) {
+      return { ok: false, message: "National desk only." };
+    }
+    if (!legacyIds.length) {
+      return { ok: false, message: "Select at least one alumnus." };
+    }
+
+    const service = createServiceSupabaseClient();
+    const { error, count } = await service
+      .from("alumni_legacy_people")
+      .update({ cohort_id: cohortId })
+      .in("id", legacyIds);
+
+    if (error) {
+      console.error("[alumni] bulk cohort", error.message);
+      return { ok: false, message: publicActionMessage(error.message) };
+    }
+
+    revalidatePath("/admin/alumni");
+    const affected = count ?? legacyIds.length;
+    return {
+      ok: true,
+      message: cohortId
+        ? `Linked cohort on ${affected} row${affected === 1 ? "" : "s"}.`
+        : `Cleared cohort on ${affected} row${affected === 1 ? "" : "s"}.`,
+      affected,
+    };
+  } catch (error) {
+    if (error instanceof Error && error.message === "Unauthorized") {
+      return unauthorized();
+    }
+    return { ok: false, message: publicActionMessage(error) };
+  }
+}
+
+export async function bulkSetLegacyManualsSent(
+  legacyIds: string[],
+  sent: boolean,
+): Promise<AlumniBulkResult> {
+  try {
+    const actor = await requireSessionAdmin();
+    if (!isNationalAdmin(actor)) {
+      return { ok: false, message: "National desk only." };
+    }
+    if (!legacyIds.length) {
+      return { ok: false, message: "Select at least one alumnus." };
+    }
+
+    const service = createServiceSupabaseClient();
+    const { error, count } = await service
+      .from("alumni_legacy_people")
+      .update({ manuals_sent: sent })
+      .in("id", legacyIds);
+
+    if (error) {
+      console.error("[alumni] bulk manuals", error.message);
+      return { ok: false, message: publicActionMessage(error.message) };
+    }
+
+    revalidatePath("/admin/alumni");
+    const affected = count ?? legacyIds.length;
+    return {
+      ok: true,
+      message: sent
+        ? `Marked manuals sent on ${affected} row${affected === 1 ? "" : "s"}.`
+        : `Cleared manuals flag on ${affected} row${affected === 1 ? "" : "s"}.`,
+      affected,
+    };
+  } catch (error) {
+    if (error instanceof Error && error.message === "Unauthorized") {
+      return unauthorized();
+    }
+    return { ok: false, message: publicActionMessage(error) };
+  }
+}
+
+export async function bulkOpenAlumniPortal(
+  legacyIds: string[],
+  sendAccessEmail: boolean,
+): Promise<AlumniBulkResult> {
+  try {
+    const actor = await requireSessionAdmin();
+    if (!isNationalAdmin(actor)) {
+      return { ok: false, message: "National desk only." };
+    }
+    if (!legacyIds.length) {
+      return { ok: false, message: "Select at least one alumnus." };
+    }
+
+    let opened = 0;
+    let skipped = 0;
+    let mailFailed = 0;
+
+    for (const legacyId of legacyIds) {
+      const service = createServiceSupabaseClient();
+      const { data: legacy } = await service
+        .from("alumni_legacy_people")
+        .select("id, email, activated_user_id")
+        .eq("id", legacyId)
+        .maybeSingle();
+
+      if (!legacy?.id || legacy.activated_user_id) {
+        skipped += 1;
+        continue;
+      }
+      const email = String(legacy.email ?? "").trim();
+      if (!email) {
+        skipped += 1;
+        continue;
+      }
+
+      const result = await assignAlumniEmail({
+        legacyId,
+        email,
+        sendAccessEmail,
+      });
+      if (result.ok) {
+        opened += 1;
+        if (/could not send|email/i.test(result.message)) {
+          mailFailed += 1;
+        }
+      } else {
+        skipped += 1;
+      }
+    }
+
+    revalidatePath("/admin/alumni");
+    return {
+      ok: true,
+      message: `Opened portal for ${opened} alumn${opened === 1 ? "us" : "i"}${
+        skipped ? ` · ${skipped} skipped` : ""
+      }${mailFailed ? ` · ${mailFailed} access email failed` : ""}.`,
+      affected: opened,
+      skipped,
+    };
+  } catch (error) {
+    if (error instanceof Error && error.message === "Unauthorized") {
+      return unauthorized();
+    }
+    return { ok: false, message: publicActionMessage(error) };
+  }
+}
+
+export async function bulkUpgradeAlumniToStudent(
+  legacyIds: string[],
+): Promise<AlumniBulkResult> {
+  try {
+    const actor = await requireSessionAdmin();
+    if (!isNationalAdmin(actor)) {
+      return { ok: false, message: "National desk only." };
+    }
+    if (!legacyIds.length) {
+      return { ok: false, message: "Select at least one alumnus." };
+    }
+
+    const service = createServiceSupabaseClient();
+    let upgraded = 0;
+    let skipped = 0;
+
+    for (const legacyId of legacyIds) {
+      const { data: legacy } = await service
+        .from("alumni_legacy_people")
+        .select("activated_user_id")
+        .eq("id", legacyId)
+        .maybeSingle();
+      const userId = legacy?.activated_user_id;
+      if (!userId) {
+        skipped += 1;
+        continue;
+      }
+      const result = await upgradeAlumniToStudent(userId);
+      if (result.ok) upgraded += 1;
+      else skipped += 1;
+    }
+
+    revalidatePath("/admin/alumni");
+    revalidatePath("/admin/students");
+    return {
+      ok: true,
+      message: `Upgraded ${upgraded} to student portal${
+        skipped ? ` · ${skipped} skipped` : ""
+      }.`,
+      affected: upgraded,
+      skipped,
+    };
+  } catch (error) {
+    if (error instanceof Error && error.message === "Unauthorized") {
+      return unauthorized();
+    }
     return { ok: false, message: publicActionMessage(error) };
   }
 }

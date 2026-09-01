@@ -2,6 +2,16 @@ import { type NextRequest, NextResponse } from "next/server";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { createMiddlewareSession } from "@/lib/supabase/middleware";
 
+function redirectAuthenticatedToDesk(
+  request: NextRequest,
+  nextPath: string,
+) {
+  const url = request.nextUrl.clone();
+  url.pathname = "/auth/continue";
+  url.search = `?next=${encodeURIComponent(nextPath)}`;
+  return NextResponse.redirect(url);
+}
+
 async function getActiveAdminProfile(
   supabase: SupabaseClient,
   userId: string,
@@ -40,10 +50,7 @@ export async function middleware(request: NextRequest) {
     if (supabase && user) {
       const profile = await getActiveAdminProfile(supabase, user.id);
       if (profile) {
-        const desk = request.nextUrl.clone();
-        desk.pathname = "/admin";
-        desk.search = "";
-        return NextResponse.redirect(desk);
+        return redirectAuthenticatedToDesk(request, "/admin");
       }
     }
     return response;
@@ -53,11 +60,9 @@ export async function middleware(request: NextRequest) {
     if (supabase && user) {
       const profile = await getActiveStudentProfile(supabase, user.id);
       if (profile) {
-        const portal = request.nextUrl.clone();
-        portal.pathname =
+        const nextPath =
           profile.account_kind === "alumni" ? "/alumni" : "/student";
-        portal.search = "";
-        return NextResponse.redirect(portal);
+        return redirectAuthenticatedToDesk(request, nextPath);
       }
     }
     return response;
@@ -67,10 +72,7 @@ export async function middleware(request: NextRequest) {
     if (supabase && user) {
       const profile = await getActiveStudentProfile(supabase, user.id);
       if (profile && profile.account_kind === "alumni") {
-        const portal = request.nextUrl.clone();
-        portal.pathname = "/alumni";
-        portal.search = "";
-        return NextResponse.redirect(portal);
+        return redirectAuthenticatedToDesk(request, "/alumni");
       }
     }
     return response;

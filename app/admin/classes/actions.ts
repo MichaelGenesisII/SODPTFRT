@@ -396,9 +396,15 @@ function mapClass(row: Record<string, unknown>): ZoomClass {
   };
 }
 
-function revalidateClassPaths(classId?: string, recordUserId?: string) {
+function revalidateClassPaths(
+  classId?: string,
+  recordUserId?: string,
+  options?: { includeDetail?: boolean },
+) {
   revalidatePath("/admin/classes");
-  if (classId) revalidatePath(`/admin/classes/${classId}`);
+  if (classId && options?.includeDetail !== false) {
+    revalidatePath(`/admin/classes/${classId}`);
+  }
   revalidatePath("/admin/records");
   if (recordUserId) revalidatePath(`/admin/records/${recordUserId}`);
   revalidatePath("/student/classes");
@@ -1650,6 +1656,59 @@ export async function setZoomClassStatus(
   return { ok: true, message: `Marked ${status}.`, classId };
 }
 
+export async function updateClassJoinDetails(
+  classId: string,
+  input: {
+    zoom_join_url: string;
+    zoom_meeting_id?: string;
+    zoom_passcode?: string;
+  },
+): Promise<ClassActionResult> {
+  const access = await requireAccessibleClass(classId);
+  if (!access.ok) return { ok: false, message: access.message };
+
+  const { supabase, klass } = access;
+
+  if (klass.zoom_start_url?.trim()) {
+    return {
+      ok: false,
+      message:
+        "This class uses a managed Zoom meeting. The join link is updated automatically.",
+    };
+  }
+
+  const joinUrl = input.zoom_join_url.trim();
+  if (!joinUrl) {
+    return { ok: false, message: "Enter a join link." };
+  }
+  if (!/^https?:\/\//i.test(joinUrl)) {
+    return {
+      ok: false,
+      message: "Join link must start with http:// or https://.",
+    };
+  }
+
+  const meetingId =
+    input.zoom_meeting_id?.trim() ||
+    parseMeetingIdFromJoinUrl(joinUrl) ||
+    null;
+  const passcode = input.zoom_passcode?.trim() || null;
+
+  const { error } = await supabase
+    .from("zoom_classes")
+    .update({
+      zoom_join_url: joinUrl,
+      zoom_meeting_id: meetingId,
+      zoom_passcode: passcode,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", classId);
+
+  if (error) return fail(error);
+  revalidateClassPaths(classId);
+  return { ok: true, message: "Join link updated.", classId };
+}
+
 export async function deleteZoomClass(
   classId: string,
 ): Promise<ClassActionResult> {
@@ -1693,7 +1752,7 @@ export async function deleteZoomClass(
     .delete()
     .eq("id", classId);
   if (error) return fail(error);
-  revalidateClassPaths(classId);
+  revalidateClassPaths(classId, undefined, { includeDetail: false });
   return {
     ok: true,
     message:

@@ -16,6 +16,7 @@ This **portal** helps people enrol for the course, pay fees, join Saturday class
 - Address: 3–5 Bradbury Place, Belfast BT7 1RQ, United Kingdom
 - Phone: +44 7535 687400
 - Email: info@schoolofdisciples.org
+- **WhatsApp live chat:** https://wa.me/447535687400 (also linked from /support and /student/support)
 - Visit / Call / Email are also listed on /support
 - /contact redirects to /support
 
@@ -26,12 +27,14 @@ This **portal** helps people enrol for the course, pay fees, join Saturday class
 
 ## Enrolment (/enrol)
 - Course application wizard. Applicants must answer truthfully — false information can disqualify an application.
-- Steps cover: programme choice → identity → address → personal details → faith → course / parish / Saturday → preview → declaration
-- **Programmes:**
-  - **Standard Program** — about 10 months, one Saturday class each month
-  - **SOD Ignite** — for young adults aged **17–22**; outside that age range, choose Standard
-- Both programmes share the same **tuition fee** (see Payments)
-- Saturday of the month: choose 1st–4th Saturday (classes typically **10am–4pm**, once a month on that Saturday). Some Saturdays may show limited capacity
+- Steps cover: identity → address → personal details → faith → course / parish / Saturday → preview → declaration
+- **Programme intakes (auto-assigned — applicants do not pick):**
+  - **Cohort 1 — November intake** — starts first week of November; four Saturday options (1st–4th) in Year 1
+  - **Cohort 2 — January intake** — starts 3rd Saturday of January; Year 1 Saturdays are 3rd & 4th only
+  - **Cohort 3 — February intake** — starts 3rd Saturday of February; Year 1 Saturdays are 3rd & 4th only
+- Enrolment closes the **Friday before the 4th Saturday** of Year 1 for the assigned intake
+- **Standard Program** — about 10 months per programme year on the standard pace; **SOD Ignite** — for young adults aged **17–22**
+- Saturday of the month: choose from the Saturdays **still available** for your intake’s Year 1. If earlier Saturdays have already passed, you are placed on the remaining class (often the last Saturday). Classes typically **10am–4pm**.
 - Parish / batch selection appears where the form asks for it
 - Final step includes the Applicant’s Declaration (abide by rules, respect authorities, pray for them, avoid being a stumbling block, make at least one disciple during training)
 - After submit: thank-you screen with application reference and bank **payment reference** (shown without dashes); temporary portal login details are emailed; further information is typically within **2 business days**
@@ -45,7 +48,7 @@ Typical path: **Apply → Review → Pay → Begin**
 User-facing application statuses:
 - **Application received** (submitted) — usually reviewed within about 2 business days
 - **Under review**
-- **Accepted** — application itself is free; pay tuition (full or instalment) to secure a place
+- **Accepted** — application itself is free; pay the programme fee (full or instalment) to secure a place
 - **Payment pending** — transfer matching / proof under review
 - **Place secured** (paid)
 - **Not progressing** (rejected) — contact the School via Support
@@ -65,7 +68,7 @@ The signed-in student area is called **My Journey**. The menu groups pages under
 **Enrolment**
 - **Overview** (/student or /student#overview) — next step, standing, journey path, latest notice signal
 - **Application** (/student#application) — enrolment status and a **read-only** copy of the submitted form
-- **Payments** (/student/payments) — tuition and graduation fees
+- **Payments** (/student/payments) — programme fee (£350)
 
 **Learning**
 - **Classes** (/student/classes) — live sessions, check-in, Zoom seat
@@ -77,6 +80,7 @@ The signed-in student area is called **My Journey**. The menu groups pages under
 - **Notices** (/student/notices) — updates from the School
 - **Community** (/student/community) — national student chat
 - **Support** (/student/support) — private chat with the Listening Desk
+- **Report a bug** (/student/report-bug) — when something in the portal is broken or confusing
 - **Account** (/student/account) — password and profile summary
 
 On desktop, the sidebar can be collapsed or opened with **Menu**. On mobile, use the menu button. Leave a page and come back (or refresh) to pick up desk updates such as payment status or attendance.
@@ -109,13 +113,13 @@ On desktop, the sidebar can be collapsed or opened with **Menu**. On mobile, use
 Where: /student/payments (alumni: /alumni/payments)
 
 **Fees (as shown in the portal):**
-- **Tuition fee — £300** — pay in full or in instalments; **minimum £30** per payment (unless clearing the remaining balance in one go)
-- **Graduation fee — £50** — due before graduation; same instalment rules
-- Applying to join is free; tuition is what secures the place after acceptance
+- **Programme fee — £350** — one combined balance covering **tuition (£300)** and **graduation (£50)**. Pay in full or in instalments; **minimum £30** per payment (unless clearing the remaining balance in one go)
+- Applying to join is free; the programme fee secures the place after acceptance
+- Graduation is included in the programme fee — there is no separate graduation payment row
 
 **What students see on Payments:**
-- **Outstanding** — total still left across fees
-- **Balances** — progress for tuition and graduation (paid so far, amount due, amount left)
+- **Outstanding** — balance still left on the programme fee
+- **Balances** — progress on the programme fee (paid so far, amount due, amount left)
 - Tabs: **Due** (pay next) · **In review** (waiting on the desk) · **Paid** (settled) · **History** (each instalment — card or approved bank transfer)
 - Personal **payment reference** and enrolment reference where shown
 
@@ -199,9 +203,11 @@ Attendance on Records matters for exams and graduation eligibility.
 - To change name, address, or parish placement: open **Support** — the assistant cannot edit those
 
 ## Support (Listening Desk)
-- **Public / not signed in:** /support — “Send a note” (topic + message); receive a desk reference; topics include Enrolment, Student portal, Payments, Classes & exams, General enquiry
+- **Public / not signed in:** /support — “Send a note” (topic + message); receive a desk reference; topics include Enrolment, Student portal, Payments, Classes & exams, **Report a bug**, General enquiry. WhatsApp live chat is linked on the page.
 - **Signed-in students:** /student/support — chat-style inbox with staff; start a conversation, reply in the thread, delete a ticket if offered; unread replies may show a badge on Support in the menu
+- **Report a bug:** /student/report-bug (students) — sends a Support desk note with the “Report a bug” topic pre-selected
 - Signed-in people who use the public form may also find the thread in portal Support
+- **WhatsApp:** https://wa.me/447535687400 — for quick questions when chat is preferred (linked from Support pages; do not invent other numbers)
 - This **assistant (David)** answers common handbook questions instantly; he does **not** replace Support for password resets, payment disputes, batch moves, exam unlocks, or record edits
 
 ## Emails from the School

@@ -7,6 +7,9 @@ type DeskPaginationProps = {
   onPageChange: (page: number) => void;
   className?: string;
   itemLabel?: string;
+  /** When true, hide controls if everything fits on one page (legacy behaviour). */
+  hideWhenSinglePage?: boolean;
+  variant?: "footer" | "header";
 };
 
 export function DeskPagination({
@@ -16,6 +19,8 @@ export function DeskPagination({
   onPageChange,
   className = "",
   itemLabel = "items",
+  hideWhenSinglePage = false,
+  variant = "footer",
 }: DeskPaginationProps) {
   const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
   const currentPage = Math.min(Math.max(1, page), totalPages);
@@ -23,14 +28,25 @@ export function DeskPagination({
   const rangeFrom = totalItems === 0 ? 0 : pageStart + 1;
   const rangeTo = Math.min(pageStart + pageSize, totalItems);
 
-  if (totalItems <= pageSize) return null;
+  if (totalItems === 0) return null;
+  if (hideWhenSinglePage && totalItems <= pageSize) return null;
+
+  const edgeClass = variant === "header" ? "border-b pb-2.5" : "border-t pt-4";
 
   return (
     <div
-      className={`flex flex-wrap items-center justify-between gap-3 border-t border-stone/70 pt-4 text-sm ${className}`}
+      className={`flex flex-wrap items-center justify-between gap-3 border-stone/70 text-sm ${edgeClass} ${className}`}
+      role="navigation"
+      aria-label="Pagination"
     >
       <p className="text-ink/55">
         Showing {rangeFrom}–{rangeTo} of {totalItems} {itemLabel}
+        {totalPages > 1 ? (
+          <span className="text-ink/40">
+            {" "}
+            · page {currentPage} of {totalPages}
+          </span>
+        ) : null}
       </p>
       <div className="flex items-center gap-2">
         <button
@@ -41,7 +57,7 @@ export function DeskPagination({
         >
           Previous
         </button>
-        <span className="text-xs tabular-nums text-ink/50">
+        <span className="min-w-[3rem] text-center text-xs tabular-nums text-ink/50">
           {currentPage}/{totalPages}
         </span>
         <button

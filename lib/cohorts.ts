@@ -9,6 +9,8 @@ export type Cohort = {
   year_end: number;
   programme_type: ProgrammeType;
   is_active: boolean;
+  intake_key?: "november" | "january" | "february" | null;
+  is_fixed_intake?: boolean;
   created_at: string;
   updated_at: string;
 };

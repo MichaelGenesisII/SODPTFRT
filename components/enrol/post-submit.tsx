@@ -8,6 +8,11 @@ import {
   PROGRAMME_FEES,
   type ProgrammeFeeKey,
 } from "@/lib/enrol/payment";
+import {
+  MIN_INSTALLMENT_GBP,
+  PROGRAMME_FEE_GRADUATION_PART_GBP,
+  PROGRAMME_FEE_TUITION_PART_GBP,
+} from "@/lib/payments/fees";
 import { contact, SOD_SITE } from "@/lib/site-nav";
 import type { ApplicationReference } from "@/lib/enrol/reference";
 
@@ -136,9 +141,12 @@ export function EnrolPostSubmit({
             Transfer to the SOD account
           </h2>
           <p className="mt-3 max-w-xl text-sm leading-relaxed text-ink/70">
-            Pay {formatGbp(fee.amountGbp)}. Use the payment reference exactly so
-            we can match your transfer. Then sign in to upload proof from
-            Payments.
+            Programme fee {formatGbp(fee.amountGbp)} (
+            {formatGbp(PROGRAMME_FEE_TUITION_PART_GBP)} tuition +{" "}
+            {formatGbp(PROGRAMME_FEE_GRADUATION_PART_GBP)} graduation). Pay in
+            full or by instalment from {formatGbp(MIN_INSTALLMENT_GBP)}. Use the
+            payment reference exactly so we can match your transfer. Then sign
+            in to upload proof from Payments.
           </p>
         </div>
 
@@ -274,7 +282,8 @@ export function EnrolPostSubmit({
           >
             view bank details
           </button>{" "}
-          here first ({formatGbp(fee.amountGbp)}).
+          here first ({formatGbp(fee.amountGbp)} programme fee — instalments from{" "}
+          {formatGbp(MIN_INSTALLMENT_GBP)}).
         </p>
       </div>
 

@@ -148,6 +148,33 @@ function fingerprint(parts: (string | number | null | undefined)[]): string {
     .join("|");
 }
 
+/**
+ * Stable identity for one person in a batch year.
+ * Used for in-file merge and DB upsert — never includes source file name.
+ */
+export function alumniPersonIdentityKey(input: {
+  batchYear: number;
+  email?: string | null;
+  studentId?: string | null;
+  displayName?: string | null;
+  centre?: string | null;
+}): string {
+  const email = String(input.email ?? "")
+    .trim()
+    .toLowerCase();
+  if (email) return fingerprint([input.batchYear, "email", email]);
+  const studentId = String(input.studentId ?? "")
+    .trim()
+    .toLowerCase();
+  if (studentId) return fingerprint([input.batchYear, "student", studentId]);
+  return fingerprint([
+    input.batchYear,
+    "name",
+    input.displayName || "",
+    input.centre || "",
+  ]);
+}
+
 function parseDob(value: unknown): string | null {
   if (value == null || value === "") return null;
   if (value instanceof Date && !Number.isNaN(value.getTime())) {
@@ -594,26 +621,22 @@ function parseSheetRows(
       }),
     );
 
-    const dedupeKey = email
-      ? fingerprint([meta.batchYear, "email", email])
-      : fingerprint([
-          meta.batchYear,
-          "name",
-          names.displayName,
-          studentId || "",
-          centre || "",
-        ]);
+    const dedupeKey = alumniPersonIdentityKey({
+      batchYear: meta.batchYear,
+      email,
+      studentId,
+      displayName: names.displayName,
+      centre,
+    });
     if (seenKeys.has(dedupeKey)) {
       const prev = allRows.find((r) => {
-        const key = r.email
-          ? fingerprint([r.batchYear, "email", r.email])
-          : fingerprint([
-              r.batchYear,
-              "name",
-              r.displayName,
-              r.studentId || "",
-              r.centre || "",
-            ]);
+        const key = alumniPersonIdentityKey({
+          batchYear: r.batchYear,
+          email: r.email,
+          studentId: r.studentId,
+          displayName: r.displayName,
+          centre: r.centre,
+        });
         return key === dedupeKey;
       });
       if (prev) {
@@ -650,16 +673,13 @@ function parseSheetRows(
     }
     seenKeys.add(dedupeKey);
 
-    const importFingerprint = fingerprint([
-      meta.batchYear,
-      meta.sourceFile || "",
-      email || "",
-      studentId || "",
-      names.firstName,
-      names.lastName,
-      centre || "",
-      names.displayName,
-    ]);
+    const importFingerprint = alumniPersonIdentityKey({
+      batchYear: meta.batchYear,
+      email,
+      studentId,
+      displayName: names.displayName,
+      centre,
+    });
 
     allRows.push({
       sheet: sheetName,

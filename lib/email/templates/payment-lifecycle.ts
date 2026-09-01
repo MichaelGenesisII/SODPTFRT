@@ -36,7 +36,7 @@ function paidNextStep(input: PaymentMailInput): string {
   if (isGraduationFee(input)) {
     return "Next on your path: upload your graduation selfie from the payments page when you are ready.";
   }
-  return "This payment counts toward your tuition. Track your balance anytime from your student portal.";
+  return "This payment counts toward your programme fee. Track your balance anytime from your student portal.";
 }
 
 function paymentTextCloser(supportUrl: string, siteUrl: string, why: string): string {
@@ -127,7 +127,7 @@ export function buildPaymentReceivedEmail(input: PaymentMailInput) {
                 <tr>
                   <td style="padding:28px 26px 22px;" width="58%" valign="top">
                     <p style="margin:0;font-family:Arial,Helvetica,sans-serif;font-size:10px;letter-spacing:0.2em;text-transform:uppercase;color:#8fb8a3;">
-                      ${graduation ? "Graduation ledger" : "Application ledger"}
+                      ${graduation ? "Graduation ledger" : "Programme ledger"}
                     </p>
                     <p style="margin:14px 0 0;font-size:34px;line-height:1;letter-spacing:-0.03em;color:#f4f7f5;">
                       ${name},
@@ -177,7 +177,7 @@ export function buildPaymentReceivedEmail(input: PaymentMailInput) {
 
           <tr>
             <td style="background:#ffffff;padding:22px 26px 8px;border:1px solid #c5d6cc;border-top:0;font-family:Arial,Helvetica,sans-serif;font-size:15px;line-height:1.65;color:rgba(20,36,28,0.78);">
-              <p style="margin:0;">Thank you — this ${graduation ? "graduation" : "tuition"} payment is on your record.</p>
+              <p style="margin:0;">Thank you — this ${graduation ? "graduation" : "programme fee"} payment is on your record.</p>
               <p style="margin:14px 0 0;">${escapeHtml(nextStep)}</p>
               <table role="presentation" cellpadding="0" cellspacing="0" style="margin:24px 0 8px;">
                 <tr>
@@ -287,7 +287,7 @@ export function buildPaymentApprovedEmail(input: PaymentMailInput) {
           <tr>
             <td style="background:#ffffff;padding:26px 28px;border:1px solid #c2d6cb;border-top:0;">
               <p style="margin:0;font-family:Arial,Helvetica,sans-serif;font-size:15px;line-height:1.65;color:rgba(20,36,28,0.78);">
-                An administrator has marked your ${graduation ? "graduation" : "tuition"} bank proof as paid. Reference
+                An administrator has marked your ${graduation ? "graduation" : "programme fee"} bank proof as paid. Reference
                 <span style="font-family:ui-monospace,Consolas,monospace;color:#145c45;">${reference}</span>
                 is now complete.
               </p>
@@ -406,7 +406,7 @@ export function buildPaymentProofReceivedEmail(input: PaymentMailInput) {
                 </tr>
               </table>
               <p style="margin:0;font-family:Arial,Helvetica,sans-serif;font-size:15px;line-height:1.65;color:rgba(42,36,24,0.78);">
-                Thanks — your screenshot for the ${graduation ? "graduation" : "tuition"} fee is queued for review. You will get another email when it is approved or if we need a clearer image.
+                Thanks — your screenshot for the ${graduation ? "graduation" : "programme"} fee is queued for review. You will get another email when it is approved or if we need a clearer image.
               </p>
               <p style="margin:14px 0 0;font-family:ui-monospace,Consolas,monospace;font-size:13px;color:#6b5530;">
                 ${reference}
@@ -518,7 +518,7 @@ export function buildPaymentReturnedEmail(input: PaymentMailInput) {
                       reference <span style="font-family:ui-monospace,Consolas,monospace;color:#5c2e1e;">${reference}</span>
                     </p>
                     <p style="margin:16px 0 0;">
-                      This is for your ${graduation ? "graduation" : "tuition"} fee — once a clearer proof is approved, it will be marked paid.
+                      This is for your ${graduation ? "graduation" : "programme"} fee — once a clearer proof is approved, it will be marked paid.
                     </p>
                     <table role="presentation" cellpadding="0" cellspacing="0" style="margin:24px 0 8px;">
                       <tr>

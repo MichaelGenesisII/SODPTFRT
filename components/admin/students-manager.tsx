@@ -4,9 +4,19 @@ import {
   useEffect,
   useMemo,
   useState,
+  useTransition,
+  type ReactNode,
 } from "react";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import {
+  bulkDeleteStudentAccounts,
+  bulkSetManualsSent,
+  bulkSetStudentsActive,
+  bulkUpdateEnrolmentStatus,
+  bulkUpdatePaymentStatus,
+  type StudentActionResult,
+} from "@/app/admin/students/actions";
 import {
   defaultStudentDeskFilters,
   parseStudentDeskListQuery,
@@ -15,16 +25,23 @@ import {
   type StudentDeskFilterState,
   type StudentDeskLane,
 } from "@/components/admin/student-desk-filters";
+import { DeskConfirmModal } from "@/components/ui/desk-confirm-modal";
+import { DeskLoaderOverlay } from "@/components/ui/desk-loader";
+import { useToast } from "@/components/ui/toast";
 import {
   ENROLMENT_STATUS_META,
+  ENROLMENT_STATUSES,
+  PAYMENT_STATUS_META,
+  PAYMENT_STATUSES,
   isStudentFeePaid,
   studentFeeSnap,
   studentFullName,
   type AdminStudentRecord,
 } from "@/lib/admin/students";
 import { isNationalAdmin, type AdminProfile } from "@/lib/admin/profile";
+import { INTAKE_LABELS } from "@/lib/cohorts/intake";
 import { SATURDAY_SLOT_LABELS } from "@/lib/cohorts/saturday";
-import type { EnrolmentStatus } from "@/lib/student/types";
+import type { EnrolmentStatus, PaymentStatus } from "@/lib/student/types";
 import { type Batch, type Parish } from "@/lib/parishes";
 import { DeskPagination } from "@/lib/ui/desk-pagination";
 
@@ -32,12 +49,13 @@ const STUDENTS_PAGE_SIZE = 12;
 
 type PageView = "desk" | "insight";
 
-const LANES: { id: StudentDeskLane; label: string }[] = [
-  { id: "all", label: "All" },
-  { id: "review", label: "In review" },
-  { id: "secured", label: "On path" },
-  { id: "paused", label: "Paused" },
-];
+type BulkConfirm =
+  | { kind: "enrolment"; status: EnrolmentStatus }
+  | { kind: "payment"; status: PaymentStatus }
+  | { kind: "pause" }
+  | { kind: "reactivate" }
+  | { kind: "manuals" }
+  | { kind: "delete" };
 
 type StudentsManagerProps = {
   students: AdminStudentRecord[];
@@ -84,6 +102,59 @@ function statusChipClass(status: EnrolmentStatus) {
   }
 }
 
+function downloadStudentsCsv(
+  rows: AdminStudentRecord[],
+  filename: string,
+) {
+  const header = [
+    "name",
+    "email",
+    "active",
+    "enrolment_status",
+    "payment_status",
+    "parish",
+    "batch",
+    "intake",
+    "saturday",
+    "reference",
+    "programme_fee_paid",
+  ];
+  const lines = [
+    header.join(","),
+    ...rows.map((student) => {
+      const cells = [
+        studentFullName(student),
+        student.email,
+        student.is_active ? "yes" : "no",
+        student.enrolment?.status ?? "",
+        student.enrolment?.payment_status ?? "",
+        student.enrolment?.parish_name ?? "",
+        student.enrolment?.batch_name ?? "",
+        student.enrolment?.intake_key
+          ? INTAKE_LABELS[student.enrolment.intake_key]
+          : "",
+        student.enrolment?.saturday_slot
+          ? SATURDAY_SLOT_LABELS[student.enrolment.saturday_slot]
+          : "",
+        student.enrolment?.reference ?? "",
+        isStudentFeePaid(studentFeeSnap(student, "tuition")) ? "yes" : "no",
+      ];
+      return cells
+        .map((value) => `"${String(value).replaceAll('"', '""')}"`)
+        .join(",");
+    }),
+  ];
+  const blob = new Blob([lines.join("\n")], {
+    type: "text/csv;charset=utf-8",
+  });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.click();
+  URL.revokeObjectURL(url);
+}
+
 export function StudentsManager({
   students,
   profile,
@@ -93,6 +164,8 @@ export function StudentsManager({
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
+  const { success, error } = useToast();
+  const [pending, startTransition] = useTransition();
   const national = isNationalAdmin(profile);
 
   const initial = parseStudentDeskListQuery(
@@ -105,34 +178,41 @@ export function StudentsManager({
   const [lane, setLane] = useState<StudentDeskLane>(initial.lane);
   const [query, setQuery] = useState(initial.query);
   const [filters, setFilters] = useState<StudentDeskFilterState>(initial.filters);
-  const [page, setPage] = useState(1);
+  const [page, setPage] = useState(initial.page);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [busyLabel, setBusyLabel] = useState<string | null>(null);
+  const [bulkEnrolStatus, setBulkEnrolStatus] =
+    useState<EnrolmentStatus>("accepted");
+  const [bulkPayStatus, setBulkPayStatus] =
+    useState<PaymentStatus>("pending_review");
+  const [pendingConfirm, setPendingConfirm] = useState<BulkConfirm | null>(
+    null,
+  );
+
+  const busy = pending || Boolean(busyLabel);
 
   const listQuery = useMemo(
-    () => studentDeskListQuery({ lane, query, filters }),
-    [lane, query, filters],
+    () => studentDeskListQuery({ lane, query, filters, page }),
+    [lane, query, filters, page],
   );
 
   useEffect(() => {
-    const next = studentDeskListQuery({ lane, query, filters });
+    const next = studentDeskListQuery({ lane, query, filters, page });
     const current = searchParams.toString();
     const normalizedCurrent = current ? `?${current}` : "";
     if (next !== normalizedCurrent) {
       router.replace(next ? `${pathname}${next}` : pathname, { scroll: false });
     }
-  }, [lane, query, filters, pathname, router, searchParams]);
+  }, [lane, query, filters, page, pathname, router, searchParams]);
 
-  const counts = useMemo(() => {
-    const base: Record<StudentDeskLane, number> = {
-      all: students.length,
-      review: 0,
-      secured: 0,
-      paused: 0,
-    };
-    for (const student of students) {
-      base[laneFor(student)] += 1;
-    }
-    return base;
-  }, [students]);
+  useEffect(() => {
+    const parsed = parseStudentDeskListQuery(
+      searchParams.toString(),
+      profile.parish_id,
+      national,
+    );
+    if (parsed.page !== page) setPage(parsed.page);
+  }, [searchParams, profile.parish_id, national, page]);
 
   const proofReviewCount = useMemo(
     () =>
@@ -146,10 +226,22 @@ export function StudentsManager({
     const q = query.trim().toLowerCase();
     return students.filter((student) => {
       if (lane !== "all" && laneFor(student) !== lane) return false;
+      if (
+        filters.intake &&
+        student.enrolment?.intake_key !== filters.intake
+      ) {
+        return false;
+      }
       if (filters.parish && student.enrolment?.parish_id !== filters.parish) {
         return false;
       }
       if (filters.batch && student.enrolment?.batch_id !== filters.batch) {
+        return false;
+      }
+      if (
+        filters.batchYear &&
+        String(student.enrolment?.batch_year ?? "") !== filters.batchYear
+      ) {
         return false;
       }
       if (filters.manuals === "sent" && student.manuals_status !== "sent") {
@@ -211,11 +303,21 @@ export function StudentsManager({
     pageStart,
     pageStart + STUDENTS_PAGE_SIZE,
   );
-  const rangeFrom = filtered.length === 0 ? 0 : pageStart + 1;
-  const rangeTo = Math.min(pageStart + STUDENTS_PAGE_SIZE, filtered.length);
+
+  const pageAllSelected =
+    pageStudents.length > 0 &&
+    pageStudents.every((student) => selected.has(student.id));
+  const pageSomeSelected =
+    pageStudents.some((student) => selected.has(student.id)) && !pageAllSelected;
+
+  const selectedStudents = useMemo(
+    () => students.filter((student) => selected.has(student.id)),
+    [students, selected],
+  );
 
   useEffect(() => {
     setPage(1);
+    setSelected(new Set());
   }, [lane, query, filters]);
 
   useEffect(() => {
@@ -223,7 +325,11 @@ export function StudentsManager({
   }, [page, totalPages]);
 
   function goToPage(next: number) {
-    setPage(Math.min(totalPages, Math.max(1, next)));
+    const target = Math.min(totalPages, Math.max(1, next));
+    setPage(target);
+    if (typeof window !== "undefined") {
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    }
   }
 
   function studentDetailHref(studentId: string) {
@@ -233,8 +339,183 @@ export function StudentsManager({
       : `/admin/students/${studentId}`;
   }
 
+  function toggleOne(id: string) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function togglePage() {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (pageAllSelected) {
+        for (const student of pageStudents) next.delete(student.id);
+      } else {
+        for (const student of pageStudents) next.add(student.id);
+      }
+      return next;
+    });
+  }
+
+  function selectAllFiltered() {
+    setSelected(new Set(filtered.map((student) => student.id)));
+  }
+
+  function clearSelection() {
+    setSelected(new Set());
+  }
+
+  function runBulk(
+    action: () => Promise<StudentActionResult>,
+    label: string,
+  ) {
+    setBusyLabel(label);
+    startTransition(async () => {
+      try {
+        const result = await action();
+        if (result.ok) {
+          success(result.message, "Students");
+          setPendingConfirm(null);
+          clearSelection();
+          router.refresh();
+        } else {
+          error(result.message, "Students");
+        }
+      } finally {
+        setBusyLabel(null);
+      }
+    });
+  }
+
+  function confirmBulk() {
+    if (!pendingConfirm || busy) return;
+    const ids = [...selected];
+    switch (pendingConfirm.kind) {
+      case "enrolment":
+        runBulk(
+          () => bulkUpdateEnrolmentStatus(ids, pendingConfirm.status),
+          "Updating enrolment…",
+        );
+        return;
+      case "payment":
+        runBulk(
+          () => bulkUpdatePaymentStatus(ids, pendingConfirm.status),
+          "Updating payment…",
+        );
+        return;
+      case "pause":
+        runBulk(() => bulkSetStudentsActive(ids, false), "Pausing seats…");
+        return;
+      case "reactivate":
+        runBulk(() => bulkSetStudentsActive(ids, true), "Reactivating…");
+        return;
+      case "manuals":
+        runBulk(() => bulkSetManualsSent(ids), "Sending manuals…");
+        return;
+      case "delete":
+        runBulk(
+          () => bulkDeleteStudentAccounts(ids),
+          "Removing students…",
+        );
+        return;
+    }
+  }
+
+  const confirmCopy = ((): {
+    eyebrow: string;
+    title: string;
+    body: ReactNode;
+    confirmLabel: string;
+    destructive?: boolean;
+  } | null => {
+    if (!pendingConfirm) return null;
+    const count = selected.size;
+    const who = `${count} student${count === 1 ? "" : "s"}`;
+    switch (pendingConfirm.kind) {
+      case "enrolment":
+        return {
+          eyebrow: "Bulk enrolment",
+          title: `Set enrolment to ${ENROLMENT_STATUS_META[pendingConfirm.status].label}?`,
+          body: (
+            <>
+              This updates enrolment status for{" "}
+              <span className="font-medium text-ink">{who}</span>.
+            </>
+          ),
+          confirmLabel: "Update status",
+        };
+      case "payment":
+        return {
+          eyebrow: "Bulk payment",
+          title: `Mark payment ${PAYMENT_STATUS_META[pendingConfirm.status].label}?`,
+          body: (
+            <>
+              This updates application payment for{" "}
+              <span className="font-medium text-ink">{who}</span>. Marking paid
+              syncs the programme fee.
+            </>
+          ),
+          confirmLabel: "Update payment",
+        };
+      case "pause":
+        return {
+          eyebrow: "Pause seats",
+          title: `Pause ${who}?`,
+          body: (
+            <>
+              Selected students will not be able to sign in. A notice email is
+              sent where possible.
+            </>
+          ),
+          confirmLabel: "Pause seats",
+          destructive: true,
+        };
+      case "reactivate":
+        return {
+          eyebrow: "Reactivate",
+          title: `Reactivate ${who}?`,
+          body: <>Selected students will be able to sign in again.</>,
+          confirmLabel: "Reactivate",
+        };
+      case "manuals":
+        return {
+          eyebrow: "Manuals",
+          title: `Mark manuals send 1 of 3 for ${who}?`,
+          body: (
+            <>
+              Students who already have send 1 marked are skipped. Notification
+              emails are queued for the rest.
+            </>
+          ),
+          confirmLabel: "Send manuals 1",
+        };
+      case "delete":
+        return {
+          eyebrow: "Permanent delete",
+          title: `Delete ${who}?`,
+          body: (
+            <>
+              This permanently removes the selected accounts, enrolment data,
+              and portal access. A notice is emailed where possible. This cannot
+              be undone.
+            </>
+          ),
+          confirmLabel: count === 1 ? "Delete student" : "Delete students",
+          destructive: true,
+        };
+    }
+  })();
+
   return (
-    <div className="space-y-3 sm:space-y-4">
+    <div className="relative space-y-3 sm:space-y-4" aria-busy={busy}>
+      <DeskLoaderOverlay
+        active={busy && !pendingConfirm}
+        label={busyLabel ?? "Working…"}
+      />
+
       <nav
         data-tour="students-tabs"
         className="flex gap-1 overflow-x-auto border-b border-stone pb-px"
@@ -272,33 +553,6 @@ export function StudentsManager({
         <StudentsInsightGuide national={national} />
       ) : (
         <>
-          <section
-            data-tour="students-stats"
-            className="grid grid-cols-2 gap-2 sm:grid-cols-4 sm:gap-3.5"
-          >
-            <StudentStatTile
-              label="Students"
-              value={students.length}
-              hint="On the UK books"
-            />
-            <StudentStatTile
-              label="In review"
-              shortLabel="Review"
-              value={counts.review}
-              hint="Not yet secured"
-            />
-            <StudentStatTile
-              label="On path"
-              value={counts.secured}
-              hint="Application paid"
-            />
-            <StudentStatTile
-              label="Paused"
-              value={counts.paused}
-              hint="Seat inactive"
-            />
-          </section>
-
           {proofReviewCount > 0 ? (
             <Link
               href="/admin/payments"
@@ -317,64 +571,217 @@ export function StudentsManager({
             </Link>
           ) : null}
 
-          <div className="flex flex-col gap-2">
-            <nav
-              data-tour="students-lanes"
-              className="flex gap-1 overflow-x-auto border-b border-stone pb-px [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
-              aria-label="Student lanes"
-            >
-              {LANES.map((item) => {
-                const active = lane === item.id;
-                return (
-                  <button
-                    key={item.id}
-                    type="button"
-                    onClick={() => setLane(item.id)}
-                    className={`relative shrink-0 px-3 py-1.5 text-sm font-medium tracking-wide transition-colors ${
-                      active ? "text-pine" : "text-ink/50 hover:text-ink/80"
-                    }`}
-                  >
-                    {item.label}
-                    <span className="ml-1.5 tabular-nums text-ink/35">
-                      {counts[item.id]}
-                    </span>
-                    <span
-                      className={`absolute inset-x-2 bottom-0 h-0.5 bg-celadon transition-opacity ${
-                        active ? "opacity-100" : "opacity-0"
-                      }`}
-                      aria-hidden
-                    />
-                  </button>
-                );
-              })}
-            </nav>
+          <StudentDeskFilters
+            query={query}
+            onQueryChange={setQuery}
+            lane={lane}
+            onLaneChange={setLane}
+            filters={filters}
+            onFiltersChange={setFilters}
+            parishes={parishes}
+            batches={batches}
+            national={national}
+            resultCount={filtered.length}
+            totalCount={students.length}
+          />
 
-            <StudentDeskFilters
-              query={query}
-              onQueryChange={setQuery}
-              filters={filters}
-              onFiltersChange={setFilters}
-              parishes={parishes}
-              batches={batches}
-              national={national}
-              resultCount={filtered.length}
-              totalCount={students.length}
-            />
-          </div>
+          {selected.size > 0 ? (
+            <section className="sticky top-0 z-20 space-y-3 border border-pine/25 bg-mist/95 px-3 py-3 shadow-[0_8px_24px_-16px_rgba(20,53,44,0.45)] backdrop-blur-sm sm:px-4">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="text-sm text-ink/70">
+                  <span className="font-medium text-pine">{selected.size}</span>{" "}
+                  selected
+                  {selected.size < filtered.length ? (
+                    <>
+                      {" "}
+                      ·{" "}
+                      <button
+                        type="button"
+                        onClick={selectAllFiltered}
+                        disabled={busy}
+                        className="font-medium text-pine underline decoration-pine/30 underline-offset-2 disabled:opacity-50"
+                      >
+                        Select all {filtered.length} matching
+                      </button>
+                    </>
+                  ) : null}
+                </p>
+                <button
+                  type="button"
+                  onClick={clearSelection}
+                  disabled={busy}
+                  className="text-sm text-ink/55 hover:text-pine disabled:opacity-50"
+                >
+                  Clear
+                </button>
+              </div>
+
+              <div className="flex flex-col gap-2 lg:flex-row lg:flex-wrap lg:items-end">
+                <label className="block min-w-[12rem] flex-1 text-xs">
+                  <span className="font-medium uppercase tracking-[0.12em] text-ink/45">
+                    Enrolment status
+                  </span>
+                  <span className="mt-1 flex gap-1">
+                    <select
+                      value={bulkEnrolStatus}
+                      disabled={busy}
+                      onChange={(e) =>
+                        setBulkEnrolStatus(e.target.value as EnrolmentStatus)
+                      }
+                      className="min-w-0 flex-1 border border-stone bg-white/80 px-2 py-2 text-sm outline-none focus:border-pine disabled:opacity-50"
+                    >
+                      {ENROLMENT_STATUSES.map((status) => (
+                        <option key={status} value={status}>
+                          {ENROLMENT_STATUS_META[status].label}
+                        </option>
+                      ))}
+                    </select>
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() =>
+                        setPendingConfirm({
+                          kind: "enrolment",
+                          status: bulkEnrolStatus,
+                        })
+                      }
+                      className="shrink-0 border border-pine px-3 py-2 text-sm font-medium text-pine hover:bg-pine hover:text-mist disabled:opacity-50"
+                    >
+                      Apply
+                    </button>
+                  </span>
+                </label>
+
+                <label className="block min-w-[12rem] flex-1 text-xs">
+                  <span className="font-medium uppercase tracking-[0.12em] text-ink/45">
+                    Payment status
+                  </span>
+                  <span className="mt-1 flex gap-1">
+                    <select
+                      value={bulkPayStatus}
+                      disabled={busy}
+                      onChange={(e) =>
+                        setBulkPayStatus(e.target.value as PaymentStatus)
+                      }
+                      className="min-w-0 flex-1 border border-stone bg-white/80 px-2 py-2 text-sm outline-none focus:border-pine disabled:opacity-50"
+                    >
+                      {PAYMENT_STATUSES.map((status) => (
+                        <option key={status} value={status}>
+                          {PAYMENT_STATUS_META[status].label}
+                        </option>
+                      ))}
+                    </select>
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() =>
+                        setPendingConfirm({
+                          kind: "payment",
+                          status: bulkPayStatus,
+                        })
+                      }
+                      className="shrink-0 border border-pine px-3 py-2 text-sm font-medium text-pine hover:bg-pine hover:text-mist disabled:opacity-50"
+                    >
+                      Apply
+                    </button>
+                  </span>
+                </label>
+
+                <div className="flex flex-wrap gap-1.5">
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() => setPendingConfirm({ kind: "manuals" })}
+                    className="border border-stone px-3 py-2 text-sm text-ink/75 hover:border-pine hover:text-pine disabled:opacity-50"
+                  >
+                    Manuals 1 of 3
+                  </button>
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() => setPendingConfirm({ kind: "reactivate" })}
+                    className="border border-stone px-3 py-2 text-sm text-ink/75 hover:border-pine hover:text-pine disabled:opacity-50"
+                  >
+                    Reactivate
+                  </button>
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() => setPendingConfirm({ kind: "pause" })}
+                    className="border border-red-800/30 px-3 py-2 text-sm text-red-900/80 hover:border-red-800/50 disabled:opacity-50"
+                  >
+                    Pause
+                  </button>
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() => setPendingConfirm({ kind: "delete" })}
+                    className="inline-flex items-center justify-center border border-red-800/35 px-2.5 py-2 text-red-900/85 hover:border-red-800/60 hover:bg-red-50 disabled:opacity-50"
+                    aria-label={`Delete ${selected.size} selected student${selected.size === 1 ? "" : "s"}`}
+                    title="Delete selected"
+                  >
+                    <TrashIcon className="h-4 w-4" />
+                  </button>
+                  <button
+                    type="button"
+                    disabled={busy || selectedStudents.length === 0}
+                    onClick={() => {
+                      downloadStudentsCsv(
+                        selectedStudents,
+                        `sod-students-${new Date().toISOString().slice(0, 10)}.csv`,
+                      );
+                      success(
+                        `Exported ${selectedStudents.length} student${selectedStudents.length === 1 ? "" : "s"}.`,
+                        "Students",
+                      );
+                    }}
+                    className="border border-stone px-3 py-2 text-sm text-ink/75 hover:border-pine hover:text-pine disabled:opacity-50"
+                  >
+                    Export CSV
+                  </button>
+                </div>
+              </div>
+            </section>
+          ) : null}
 
           <section className="border border-stone bg-mist/30">
             <div className="flex flex-wrap items-center justify-between gap-2 border-b border-stone px-3 py-2.5 text-sm text-ink/55 sm:px-4 sm:py-3">
               <p>
                 {filtered.length === 0
                   ? "No students match."
-                  : `Showing ${rangeFrom}–${rangeTo} of ${filtered.length}`}
+                  : `${filtered.length} in roster`}
               </p>
               <p className="text-[0.65rem] font-medium uppercase tracking-[0.12em] text-ink/40">
-                View only — open a row to manage the student
+                Select rows for bulk actions · open a name for the full file
               </p>
             </div>
 
-            <div className="hidden border-b border-stone bg-white/50 px-4 py-2 text-[0.65rem] font-medium uppercase tracking-[0.12em] text-ink/45 md:grid md:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)_6rem_7rem_5rem_2rem] md:gap-3">
+            {filtered.length > 0 ? (
+              <DeskPagination
+                variant="header"
+                page={currentPage}
+                totalItems={filtered.length}
+                pageSize={STUDENTS_PAGE_SIZE}
+                onPageChange={goToPage}
+                className="px-3 sm:px-4"
+                itemLabel="students"
+              />
+            ) : null}
+
+            <div className="hidden border-b border-stone bg-white/50 px-4 py-2 text-[0.65rem] font-medium uppercase tracking-[0.12em] text-ink/45 md:grid md:grid-cols-[2rem_minmax(0,1.5fr)_minmax(0,1fr)_6rem_7rem_5rem_2rem] md:items-center md:gap-3">
+              <label className="flex items-center justify-center">
+                <span className="sr-only">Select page</span>
+                <input
+                  type="checkbox"
+                  checked={pageAllSelected}
+                  ref={(el) => {
+                    if (el) el.indeterminate = pageSomeSelected;
+                  }}
+                  onChange={togglePage}
+                  disabled={busy || pageStudents.length === 0}
+                  className="size-4 accent-pine"
+                />
+              </label>
               <span>Student</span>
               <span>Placement</span>
               <span>Saturday</span>
@@ -389,6 +796,9 @@ export function StudentsManager({
                   key={student.id}
                   student={student}
                   href={studentDetailHref(student.id)}
+                  checked={selected.has(student.id)}
+                  onToggle={() => toggleOne(student.id)}
+                  disabled={busy}
                 />
               ))}
             </ul>
@@ -429,16 +839,55 @@ export function StudentsManager({
           </section>
         </>
       )}
+
+      <DeskConfirmModal
+        open={Boolean(pendingConfirm && confirmCopy)}
+        onClose={() => !busy && setPendingConfirm(null)}
+        onConfirm={confirmBulk}
+        eyebrow={confirmCopy?.eyebrow}
+        title={confirmCopy?.title ?? ""}
+        body={confirmCopy?.body}
+        confirmLabel={confirmCopy?.confirmLabel ?? "Confirm"}
+        destructive={confirmCopy?.destructive}
+        busy={busy}
+        busyLabel={busyLabel ?? "Working…"}
+      />
     </div>
+  );
+}
+
+function TrashIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" aria-hidden>
+      <path
+        d="M5 7h14M10 7V5a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1v2M8 7v12a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V7"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M10 11v5M14 11v5"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+      />
+    </svg>
   );
 }
 
 function StudentListRow({
   student,
   href,
+  checked,
+  onToggle,
+  disabled,
 }: {
   student: AdminStudentRecord;
   href: string;
+  checked: boolean;
+  onToggle: () => void;
+  disabled?: boolean;
 }) {
   const name = studentFullName(student);
   const status = student.enrolment?.status;
@@ -448,7 +897,18 @@ function StudentListRow({
 
   return (
     <li>
-      <div className="group grid items-center gap-3 px-3 py-3 transition-colors hover:bg-white/70 sm:px-4 md:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)_6rem_7rem_5rem_2rem]">
+      <div className="group grid items-center gap-3 px-3 py-3 transition-colors hover:bg-white/70 sm:px-4 md:grid-cols-[2rem_minmax(0,1.5fr)_minmax(0,1fr)_6rem_7rem_5rem_2rem]">
+        <label className="flex items-center justify-center self-start pt-2 md:self-center md:pt-0">
+          <span className="sr-only">Select {name}</span>
+          <input
+            type="checkbox"
+            checked={checked}
+            disabled={disabled}
+            onChange={onToggle}
+            className="size-4 accent-pine"
+          />
+        </label>
+
         <Link href={href} className="flex min-w-0 items-start gap-3">
           {student.passport_url ? (
             // eslint-disable-next-line @next/next/no-img-element
@@ -469,6 +929,15 @@ function StudentListRow({
             <span className="mt-0.5 block truncate text-xs text-ink/50">
               {student.email}
             </span>
+            {student.enrolment?.intake_key ? (
+              <span className="mt-1 inline-block border border-celadon/30 px-1.5 py-0.5 text-[0.6rem] font-medium uppercase tracking-[0.1em] text-celadon">
+                {student.enrolment.intake_key === "november"
+                  ? "C1 · Nov"
+                  : student.enrolment.intake_key === "january"
+                    ? "C2 · Jan"
+                    : "C3 · Feb"}
+              </span>
+            ) : null}
             {student.path.exam_average != null ? (
               <span className="mt-1 inline-block text-[0.65rem] tabular-nums text-ink/40">
                 Exam avg {student.path.exam_average}%
@@ -482,7 +951,11 @@ function StudentListRow({
             {student.enrolment?.parish_name ?? "—"}
           </p>
           <p className="truncate text-xs text-ink/45">
-            {student.enrolment?.batch_name ?? student.enrolment?.reference ?? "—"}
+            {student.enrolment?.batch_name
+              ? student.enrolment.batch_year != null
+                ? `${student.enrolment.batch_name} (${student.enrolment.batch_year})`
+                : student.enrolment.batch_name
+              : (student.enrolment?.reference ?? "—")}
           </p>
         </Link>
 
@@ -491,7 +964,7 @@ function StudentListRow({
         </Link>
 
         <Link href={href} className="hidden flex-wrap gap-1 md:flex">
-          <FeePill label="Tuition" paid={tuitionPaid} />
+          <FeePill label="Fee" paid={tuitionPaid} />
           <FeePill label="Grad" paid={graduationPaid} />
         </Link>
 
@@ -537,7 +1010,12 @@ function StudentListRow({
             {ENROLMENT_STATUS_META[status].label}
           </span>
         ) : null}
-        <FeePill label="Tuition" paid={tuitionPaid} />
+        {!student.is_active ? (
+          <span className="border border-ink/15 px-2 py-0.5 text-[0.65rem] uppercase tracking-[0.1em] text-ink/40">
+            Paused
+          </span>
+        ) : null}
+        <FeePill label="Fee" paid={tuitionPaid} />
         <FeePill label="Grad" paid={graduationPaid} />
       </div>
     </li>
@@ -549,116 +1027,60 @@ function FeePill({ label, paid }: { label: string; paid: boolean }) {
     <span
       className={`border px-1.5 py-0.5 text-[0.6rem] uppercase tracking-[0.08em] ${
         paid
-          ? "border-celadon/40 bg-celadon/10 text-pine"
+          ? "border-pine/30 bg-pine/5 text-pine"
           : "border-stone text-ink/40"
       }`}
     >
-      {label} {paid ? "paid" : "due"}
+      {label} {paid ? "✓" : "·"}
     </span>
   );
 }
 
-function StudentStatTile({
-  label,
-  shortLabel,
-  value,
-  hint,
-}: {
-  label: string;
-  shortLabel?: string;
-  value: number;
-  hint: string;
-}) {
-  return (
-    <div className="flex min-w-0 flex-col items-center gap-1.5 rounded-2xl border border-stone/50 bg-white px-2 py-2.5 text-center sm:flex-row sm:items-center sm:gap-3 sm:px-3.5 sm:py-3 sm:text-left">
-      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-pine sm:h-11 sm:w-11">
-        <span className="font-display text-xl text-mist tabular-nums">
-          {value}
-        </span>
-      </div>
-      <div className="min-w-0 sm:border-l sm:border-stone/70 sm:pl-3">
-        <p className="truncate text-[0.7rem] font-medium text-pine sm:text-sm">
-          <span className="sm:hidden">{shortLabel ?? label}</span>
-          <span className="hidden sm:inline">{label}</span>
-        </p>
-        <p className="mt-0.5 hidden truncate text-xs text-ink/50 sm:block">
-          {hint}
-        </p>
-      </div>
-    </div>
-  );
-}
-
 function StudentsInsightGuide({ national }: { national: boolean }) {
-  const sections = [
-    {
-      title: "Navigation",
-      body: "The list is view-only — filter, search, and open any row for the full student file. Status, fees, placement, and account changes happen on the detail page only.",
-    },
-    {
-      title: "What this desk is for",
-      body: "Search the cohort, open a student file on its own page, preview everything they submitted, see attendance and exam scores, then update placement or account tools.",
-    },
-    {
-      title: "Profile",
-      body: "Identity and placement at a glance: names, contact, DOB, address, region, parish, batch, and application reference — the fields that lived on the old spreadsheet left columns.",
-    },
-    {
-      title: "Application",
-      body: "Full enrolment ledger: faith journey, church roles, occupation, and schools — everything captured on the enrol form.",
-    },
-    {
-      title: "Path",
-      body: "Attendance (Y/N by session) and exam percentages from Records. Edit the scorecard on the Records desk; release online exams from Exams → Queue.",
-    },
-    {
-      title: "Manage",
-      body: "CRUD for the live student: enrolment status, payment flags, fee rows, editable contact details, parish/batch reassignment, pause/reactivate, temporary password, or remove.",
-    },
-    {
-      title: "Payments",
-      body: "Bank proof review lives on the Payments desk. This page surfaces fee status and links across when a proof is waiting — it is not a payments-only screen.",
-    },
-    {
-      title: "Who sees what",
-      body: national
-        ? "National desks see every student. Pause / temp password / remove email the student (toasts under Students). Marketing mail lives on Campaigns."
-        : "You only see students enrolled in your parish. Pause / temp password / remove email that student. Marketing mail lives on Campaigns.",
-    },
-  ];
-
   return (
-    <div key="insight" className="animate-panel-in border border-stone bg-mist">
-      <div className="border-b border-stone px-3 py-4 sm:px-5 sm:py-5">
-        <p className="text-[0.6rem] font-medium uppercase tracking-[0.16em] text-celadon">
-          How students work
+    <section className="space-y-4 border border-stone bg-mist/40 px-4 py-5 sm:px-6 sm:py-6">
+      <div>
+        <p className="text-[0.65rem] font-medium uppercase tracking-[0.14em] text-celadon">
+          How this desk works
         </p>
-        <h2 className="mt-1.5 font-display text-[clamp(1.35rem,4vw,1.85rem)] tracking-[-0.02em] text-pine">
-          Insight
+        <h2 className="mt-1 font-display text-xl text-pine sm:text-2xl">
+          Students insight
         </h2>
-        <p className="mt-1.5 max-w-xl text-sm leading-relaxed text-ink/60">
-          Directory, dossier tabs, and how this desk relates to Payments,
-          Exams, and Records.
+        <p className="mt-2 max-w-2xl text-sm leading-relaxed text-ink/65">
+          One filter panel covers intake (Cohort 1–3), parish batch, Saturday,
+          roster status, and fees. Select rows for bulk updates, or open a file
+          for full placement
+          {national ? " across all regions" : ""}.
         </p>
       </div>
-      <ol className="divide-y divide-stone">
-        {sections.map((section, index) => (
+      <ul className="grid gap-3 sm:grid-cols-2">
+        {[
+          {
+            title: "Programme intakes",
+            body: "Programme intake is Cohort 1 (November), Cohort 2 (January), or Cohort 3 (February). Use the dropdown — leave blank for the full roster.",
+          },
+          {
+            title: "Batches & years",
+            body: "Batches are parish year groups created on Parishes. Batch year filters everyone tagged with that calendar year across intakes and parishes.",
+          },
+          {
+            title: "Roster status",
+            body: "In review = not yet secured. On path = application payment confirmed. Paused = seat inactive.",
+          },
+          {
+            title: "Bulk & file",
+            body: "Tick rows for enrolment or payment status, pause/reactivate, manuals send 1, or CSV. Open a name for full placement edits.",
+          },
+        ].map((item) => (
           <li
-            key={section.title}
-            className="grid gap-1.5 px-3 py-3.5 sm:grid-cols-[2rem_1fr] sm:gap-4 sm:px-5"
+            key={item.title}
+            className="border border-stone bg-white/50 px-4 py-3"
           >
-            <p className="font-display text-lg tabular-nums text-celadon/80">
-              {String(index + 1).padStart(2, "0")}
-            </p>
-            <div>
-              <h3 className="text-sm font-medium text-ink">{section.title}</h3>
-              <p className="mt-1 max-w-2xl text-sm leading-relaxed text-ink/65">
-                {section.body}
-              </p>
-            </div>
+            <p className="text-sm font-medium text-pine">{item.title}</p>
+            <p className="mt-1 text-sm leading-relaxed text-ink/60">{item.body}</p>
           </li>
         ))}
-      </ol>
-    </div>
+      </ul>
+    </section>
   );
 }

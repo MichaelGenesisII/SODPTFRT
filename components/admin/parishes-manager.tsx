@@ -1235,12 +1235,13 @@ function ParishesManage({
                         {selectedParish.name}
                       </h3>
                       <p className="mt-1 text-sm text-ink/55">
-                        Link batches to a programme cohort on{" "}
+                        Batches stay local for parish placement. Programme intake
+                        is assigned at enrolment — filter by Cohort 1–3 on{" "}
                         <Link
-                          href="/admin/cohorts"
+                          href="/admin/students"
                           className="font-medium text-pine underline decoration-pine/25"
                         >
-                          Cohorts → Manage
+                          Students
                         </Link>
                         .
                       </p>

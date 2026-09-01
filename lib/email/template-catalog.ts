@@ -435,8 +435,8 @@ export const EMAIL_SAMPLE_VALUES: Record<string, string> = {
   portalCertificatesUrl:
     "https://portal.schoolofdisciples.org/student/records",
   enrolUrl: "https://portal.schoolofdisciples.org/enrol",
-  feeLabel: "Tuition",
-  amountLabel: "£50.00",
+  feeLabel: "Programme fee",
+  amountLabel: "£350",
   classTitle: "Session 12 — The Holy Spirit",
   startsAtLabel: "Saturday 10 March, 7:00pm",
   joinUrl: "https://portal.schoolofdisciples.org/student/classes",

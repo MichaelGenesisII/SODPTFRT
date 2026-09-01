@@ -28,7 +28,8 @@ import {
 import { SOD_SITE } from "@/lib/site-nav";
 import { findAuthUserIdByEmail } from "@/lib/supabase/auth-admin";
 import { createServiceSupabaseClient } from "@/lib/supabase/service";
-import { ensureParishYearBatch } from "@/app/enrol/saturday-actions";
+import { ensureParishYearBatch, getEnrolIntakeContext } from "@/app/enrol/saturday-actions";
+import { resolveIntakeForEnrolment } from "@/lib/cohorts/intake";
 
 export type SubmitEnrolmentResult =
   | {
@@ -108,6 +109,13 @@ export async function submitEnrolment(
 
     const service = createServiceSupabaseClient();
 
+    const intakeAssignment = resolveIntakeForEnrolment(new Date());
+    if (!intakeAssignment.enrolOpen) {
+      return enrolFail(
+        "Enrolment is not open for this intake right now. Please try again when the next intake opens, or contact Support.",
+      );
+    }
+
     if (!saturdayCohortId) {
       return enrolFail("Please choose which Saturday cohort you will attend.");
     }
@@ -123,9 +131,18 @@ export async function submitEnrolment(
       return enrolFail("Selected Saturday cohort is not available.");
     }
 
+    const slot = saturdayRow.saturday_slot as number;
+    if (
+      !intakeAssignment.year1SaturdaySlots.includes(
+        slot as 1 | 2 | 3 | 4,
+      )
+    ) {
+      return enrolFail("That Saturday is not available for your intake.");
+    }
+
     const { data: programme, error: programmeError } = await service
       .from("cohorts")
-      .select("id, name, year_start, year_end, is_active")
+      .select("id, name, year_start, year_end, is_active, intake_key, is_fixed_intake")
       .eq("id", saturdayRow.programme_cohort_id)
       .maybeSingle();
 
@@ -133,7 +150,15 @@ export async function submitEnrolment(
       if (programmeError) console.error("[enrol] programme year", programmeError);
       return enrolFail("That programme year is not open for enrolment.");
     }
+    if (
+      programme.is_fixed_intake &&
+      programme.intake_key &&
+      programme.intake_key !== intakeAssignment.intakeKey
+    ) {
+      return enrolFail("Your intake assignment does not match this Saturday.");
+    }
     cohortId = programme.id;
+    const intakeKey = intakeAssignment.intakeKey;
 
     const { data: siblingSlots } = await service
       .from("saturday_cohorts")
@@ -399,6 +424,7 @@ export async function submitEnrolment(
         parish_id: parishId,
         batch_id: batchId,
         cohort_id: cohortId,
+        intake_key: intakeKey,
         saturday_cohort_id: saturdayCohortId,
         local_church: emptyToNull(localChurchStored) ?? "",
         church_leader: "—",

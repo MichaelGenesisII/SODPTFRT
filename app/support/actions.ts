@@ -54,6 +54,9 @@ export async function createSupportTicket(
     const name = String(formData.get("name") ?? "").trim();
     const email = String(formData.get("email") ?? "").trim().toLowerCase();
     const message = String(formData.get("message") ?? "").trim();
+    const intakeSourceRaw = String(formData.get("intake_source") ?? "public");
+    const intakeSource =
+      intakeSourceRaw === "portal" ? ("portal" as const) : ("public" as const);
 
     if (!isSupportTopic(topic)) {
       return { ok: false, message: "Please choose a valid topic." };
@@ -113,7 +116,7 @@ export async function createSupportTicket(
         status: "open",
         priority: "normal",
         user_id: linkedUserId,
-        intake_source: "public",
+        intake_source: intakeSource,
         created_at: now,
         updated_at: now,
       };

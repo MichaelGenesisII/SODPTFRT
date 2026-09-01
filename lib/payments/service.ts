@@ -248,9 +248,31 @@ export async function refreshFeeAccountStatus(
 
   if (feeType === "tuition") {
     await syncTuitionEnrolment(client, userId, fullyPaid, pending);
+    if (fullyPaid) {
+      await syncGraduationIncluded(client, userId);
+    }
   }
 
   return normalizeStudentFeePayment(data as Record<string, unknown>);
+}
+
+async function syncGraduationIncluded(
+  client: SupabaseClient,
+  userId: string,
+): Promise<void> {
+  const grad = await getFeePayment(client, userId, "graduation");
+  if (!grad || grad.status === "paid") return;
+  const now = new Date().toISOString();
+  await client
+    .from("student_fee_payments")
+    .update({
+      status: "paid",
+      amount_due_gbp: 0,
+      amount_paid_gbp: 0,
+      paid_at: now,
+      updated_at: now,
+    })
+    .eq("id", grad.id);
 }
 
 export async function createStripeTransaction(input: {

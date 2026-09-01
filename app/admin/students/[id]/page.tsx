@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { listBatchesForAdmin, listParishesForAdmin } from "@/app/admin/parishes/actions";
-import { getAdminStudentById } from "@/app/admin/students/actions";
+import { getAdminStudentById, listSaturdayCohortsForPlacement } from "@/app/admin/students/actions";
 import { StudentDetailWorkspace } from "@/components/admin/student-detail-workspace";
 import { getSessionAdmin, isNationalAdmin } from "@/lib/admin/auth";
 import { studentFullName } from "@/lib/admin/students";
@@ -46,6 +46,9 @@ export default async function AdminStudentDetailPage({
   }
 
   const student = result.student;
+  const saturdayOptions = student.enrolment?.cohort_id
+    ? await listSaturdayCohortsForPlacement(student.enrolment.cohort_id)
+    : [];
 
   return (
     <div className="mx-auto max-w-6xl">
@@ -71,6 +74,7 @@ export default async function AdminStudentDetailPage({
         profile={profile}
         parishes={parishes}
         batches={batches}
+        saturdayOptions={saturdayOptions}
         backHref={backHref}
       />
     </div>

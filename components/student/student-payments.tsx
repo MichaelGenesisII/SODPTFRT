@@ -24,13 +24,18 @@ import { DeskLoader, DeskLoaderOverlay } from "@/components/ui/desk-loader";
 import { useToast } from "@/components/ui/toast";
 import { BANK_TRANSFER, formatGbp } from "@/lib/enrol/payment";
 import {
-  FEE_CATALOGUE,
+  STUDENT_PAYMENT_CATALOGUE,
   FEE_STATUS_META,
   MIN_INSTALLMENT_GBP,
+  PROGRAMME_FEE_GRADUATION_PART_GBP,
+  PROGRAMME_FEE_TOTAL_GBP,
+  PROGRAMME_FEE_TUITION_PART_GBP,
   feeDefinition,
   hasTuitionInstallmentPaid,
   feeRemaining,
   isFeeFullyPaid,
+  programmeFeeBreakdownLabel,
+  programmeFeeInstallmentHint,
   type FeePaymentStatus,
   type FeeTransaction,
   type FeeType,
@@ -75,7 +80,7 @@ function feeRowsFor(
   payments: Partial<Record<FeeType, StudentFeePayment>>,
   tab: PaymentsTab,
 ): FeeType[] {
-  return FEE_CATALOGUE.map((fee) => fee.type).filter((type) => {
+  return STUDENT_PAYMENT_CATALOGUE.map((fee) => fee.type).filter((type) => {
     return bucketFor(payments[type]) === tab;
   });
 }
@@ -369,8 +374,8 @@ function Header({ flash }: { flash?: string | null }) {
         Your payments
       </h1>
       <p className="mt-2 max-w-xl text-sm leading-relaxed text-ink/70 sm:mt-1.5">
-        Choose tuition or graduation, then pay in full or by instalment — minimum{" "}
-        {formatGbp(MIN_INSTALLMENT_GBP)} each time unless you clear the balance.
+        {programmeFeeBreakdownLabel()}. {programmeFeeInstallmentHint()} Card or
+        bank transfer — you choose how much to pay each time.
       </p>
       {flash ? (
         <p className="mt-3 border border-pine/20 bg-pine/5 px-4 py-3 text-sm leading-relaxed text-pine">
@@ -781,8 +786,14 @@ function BalanceSummary({ payments }: { payments: StudentFeePayment[] }) {
       <p className="text-[0.65rem] font-medium uppercase tracking-[0.14em] text-celadon">
         Balances
       </p>
+      <p className="mt-2 text-xs leading-relaxed text-ink/55">
+        Total {formatGbp(PROGRAMME_FEE_TOTAL_GBP)} · tuition{" "}
+        {formatGbp(PROGRAMME_FEE_TUITION_PART_GBP)} + graduation{" "}
+        {formatGbp(PROGRAMME_FEE_GRADUATION_PART_GBP)}. Pay the whole amount or
+        in instalments (from {formatGbp(MIN_INSTALLMENT_GBP)}).
+      </p>
       <ul className="mt-3 space-y-3">
-        {FEE_CATALOGUE.map((fee) => {
+        {STUDENT_PAYMENT_CATALOGUE.map((fee) => {
           const account = byType[fee.type];
           const due = account?.amount_due_gbp ?? fee.amountGbp;
           const paid = account?.amount_paid_gbp ?? 0;
@@ -806,6 +817,10 @@ function BalanceSummary({ payments }: { payments: StudentFeePayment[] }) {
                   )}
                 </span>
               </div>
+              <p className="mt-1 text-[0.7rem] text-ink/45">
+                Includes {formatGbp(PROGRAMME_FEE_TUITION_PART_GBP)} tuition and{" "}
+                {formatGbp(PROGRAMME_FEE_GRADUATION_PART_GBP)} graduation
+              </p>
               <div
                 className="mt-2 h-1.5 overflow-hidden bg-stone/80"
                 role="progressbar"

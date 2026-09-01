@@ -59,9 +59,9 @@ export default async function AdminStudentsPage() {
         </h1>
         <p className="mt-1.5 max-w-2xl text-sm leading-relaxed text-ink/70">
           {isNationalAdmin(profile)
-            ? "Browse and filter the full UK cohort, then open a student file to manage placement, contact, or account."
-            : "Browse and filter students in your parish, then open a file to manage placement, contact, or account."}{" "}
-          The list is view-only — all changes happen on the student file page. Bank proof review lives on{" "}
+            ? "Filter by November, January, or February intake. Select several students for bulk updates, or open a file for full placement and account controls."
+            : "Filter by programme intake within your parish. Select several for bulk updates, or open a file for full placement and account controls."}{" "}
+          Bank proof review lives on{" "}
           <Link href="/admin/payments" className="font-medium text-pine underline">
             Payments
           </Link>

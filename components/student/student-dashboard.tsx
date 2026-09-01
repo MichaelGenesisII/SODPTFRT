@@ -17,7 +17,8 @@ import {
 } from "@/lib/enrol/payment";
 import {
   TUITION_FEE,
-  GRADUATION_FEE,
+  programmeFeeBreakdownLabel,
+  programmeFeeInstallmentHint,
   type FeePaymentStatus,
 } from "@/lib/payments/fees";
 import {
@@ -75,7 +76,7 @@ function statusCopy(status: EnrolmentStatus): { title: string; body: string } {
     case "accepted":
       return {
         title: "Accepted",
-        body: "Welcome aboard. Application is free — pay tuition when you are ready (in full or by instalment).",
+        body: "Welcome aboard. Application is free — settle the programme fee when you are ready (£350 = £300 tuition + £50 graduation, in full or by instalment from £30).",
       };
     case "payment_pending":
       return {
@@ -1093,7 +1094,7 @@ function ApplicationView({
                   <p className="mt-3 text-sm leading-relaxed text-mist/70">
                     {proofInReview
                       ? "Your bank proof is under review. Track it from Payments."
-                      : `Tuition ${formatGbp(TUITION_FEE.amountGbp)} and ${GRADUATION_FEE.label.toLowerCase()} ${formatGbp(GRADUATION_FEE.amountGbp)} — pay in full or by instalment (minimum ${formatGbp(50)} each time).`}
+                      : `${programmeFeeBreakdownLabel()} — ${programmeFeeInstallmentHint()}`}
                   </p>
                   <Link
                     href="/student/payments"

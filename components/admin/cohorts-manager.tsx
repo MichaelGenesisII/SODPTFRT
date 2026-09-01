@@ -11,7 +11,6 @@ import {
 import Link from "next/link";
 import {
   assignBatchToCohort,
-  createCohort,
   getCohortInsightSummary,
   searchCohortInsightStudents,
   updateCohort,
@@ -30,6 +29,7 @@ import {
   DEFAULT_PROGRAMME_TYPE,
   type Cohort,
 } from "@/lib/cohorts";
+import { INTAKE_LABELS, type IntakeKey } from "@/lib/cohorts/intake";
 import { formatBatchLabel, type Batch, type Parish } from "@/lib/parishes";
 import { DeskPagination } from "@/lib/ui/desk-pagination";
 
@@ -345,13 +345,6 @@ function CohortsDesk({
               </button>
             );
           })}
-          <button
-            type="button"
-            onClick={() => onOpenManage("create")}
-            className="relative shrink-0 px-3 py-1.5 text-sm font-medium text-celadon hover:text-pine"
-          >
-            + New
-          </button>
         </nav>
 
         <div className="border border-stone bg-mist/40 px-3 py-3 sm:px-4">
@@ -539,7 +532,7 @@ function CohortsManage({
 
   useEffect(() => {
     if (initialFocus === "create") {
-      startCreate();
+      // Create is disabled for fixed intakes — open link section instead.
       onFocusHandled();
       return;
     }
@@ -646,8 +639,8 @@ function CohortsManage({
           Manage
         </h2>
         <p className="mt-1.5 max-w-2xl text-sm leading-relaxed text-ink/60">
-          Create UK intake cycles, link parish batches, and control which
-          cohorts stay open for enrolment.
+          Three fixed programme intakes (November, January, February). Link
+          parish batches and control which intakes stay open for enrolment.
         </p>
         {unlinkedBatchCount > 0 ? (
           <p className="mt-3 text-sm text-ink/70">
@@ -671,14 +664,6 @@ function CohortsManage({
                 className={fieldClass}
               />
             </label>
-            <button
-              type="button"
-              onClick={startCreate}
-              disabled={busy}
-              className="mt-2 flex w-full items-center justify-center border border-celadon/50 px-3 py-2 text-sm font-medium text-pine transition hover:border-pine hover:bg-pine/5 disabled:opacity-50"
-            >
-              + New programme cohort
-            </button>
           </div>
           <ul className="max-h-[min(24rem,50vh)] divide-y divide-stone overflow-y-auto lg:max-h-none lg:flex-1">
             {filteredCohorts.map((cohort) => {
@@ -727,12 +712,18 @@ function CohortsManage({
               {creatingNew ? "New programme" : "Cohort details"}
             </p>
             <h3 className="mt-1 font-display text-lg text-pine">
-              {creatingNew
-                ? "Create programme cohort"
-                : selected
-                  ? formatCohortLabel(selected)
-                  : "Select a cohort"}
+              {selected
+                ? selected.intake_key
+                  ? INTAKE_LABELS[selected.intake_key as IntakeKey]
+                  : formatCohortLabel(selected)
+                : "Select a cohort"}
             </h3>
+            {selected?.is_fixed_intake ? (
+              <p className="mt-2 text-sm text-ink/55">
+                Fixed intake — manage students on the Desk; link parish batches
+                below.
+              </p>
+            ) : null}
 
             <div className="mt-5 grid gap-4 sm:grid-cols-2">
               <label className="block text-sm sm:col-span-2">
@@ -741,7 +732,7 @@ function CohortsManage({
                   value={name}
                   onChange={(e) => setName(e.target.value)}
                   placeholder="SP 2022/23"
-                  disabled={busy}
+                  disabled={busy || Boolean(selected?.is_fixed_intake)}
                   className={`mt-1.5 ${fieldClass}`}
                 />
               </label>
@@ -751,7 +742,7 @@ function CohortsManage({
                   type="number"
                   value={yearStart}
                   onChange={(e) => setYearStart(e.target.value)}
-                  disabled={busy}
+                  disabled={busy || Boolean(selected?.is_fixed_intake)}
                   className={`mt-1.5 ${fieldClass}`}
                 />
               </label>
@@ -761,7 +752,7 @@ function CohortsManage({
                   type="number"
                   value={yearEnd}
                   onChange={(e) => setYearEnd(e.target.value)}
-                  disabled={busy}
+                  disabled={busy || Boolean(selected?.is_fixed_intake)}
                   className={`mt-1.5 ${fieldClass}`}
                 />
               </label>
@@ -779,73 +770,38 @@ function CohortsManage({
             </div>
 
             <div className="mt-6 flex flex-wrap gap-2">
-              <button
-                type="button"
-                disabled={busy || !name.trim()}
-                onClick={() => {
-                  const payload = {
-                    name,
-                    yearStart: Number(yearStart),
-                    yearEnd: Number(yearEnd),
-                    isActive,
-                  };
-                  if (
-                    selected &&
-                    !creatingNew &&
-                    selected.is_active &&
-                    !isActive
-                  ) {
-                    setPendingConfirm({ kind: "deactivate", payload });
-                    return;
-                  }
-                  runAdmin(() =>
-                    selected && !creatingNew
-                      ? updateCohort(selected.id, {
-                          ...payload,
-                          programmeType: DEFAULT_PROGRAMME_TYPE,
-                        })
-                      : createCohort({
-                          name: payload.name,
-                          yearStart: payload.yearStart,
-                          yearEnd: payload.yearEnd,
-                          programmeType: DEFAULT_PROGRAMME_TYPE,
-                        }),
-                  );
-                }}
-                className="inline-flex min-h-[2.75rem] items-center justify-center border border-pine px-5 py-2.5 text-sm font-medium text-pine hover:bg-pine hover:text-mist disabled:opacity-50"
-              >
-                {busy ? (
-                  <DeskLoader
-                    label={
-                      selected && !creatingNew
-                        ? "Saving cohort…"
-                        : "Creating cohort…"
-                    }
-                  />
-                ) : selected && !creatingNew ? (
-                  "Save cohort"
-                ) : (
-                  "Create cohort"
-                )}
-              </button>
-              {!creatingNew && selected ? (
+              {selected && !creatingNew ? (
                 <button
                   type="button"
-                  onClick={startCreate}
-                  disabled={busy}
-                  className="inline-flex min-h-[2.75rem] items-center justify-center border border-stone px-5 py-2.5 text-sm text-ink/70 hover:border-pine/40 disabled:opacity-50"
+                  disabled={busy || !name.trim()}
+                  onClick={() => {
+                    const payload = {
+                      name,
+                      yearStart: Number(yearStart),
+                      yearEnd: Number(yearEnd),
+                      isActive,
+                    };
+                    if (selected.is_active && !isActive) {
+                      setPendingConfirm({ kind: "deactivate", payload });
+                      return;
+                    }
+                    runAdmin(() =>
+                      updateCohort(selected.id, {
+                        ...payload,
+                        programmeType: DEFAULT_PROGRAMME_TYPE,
+                      }),
+                    );
+                  }}
+                  className="inline-flex min-h-[2.75rem] items-center justify-center border border-pine px-5 py-2.5 text-sm font-medium text-pine hover:bg-pine hover:text-mist disabled:opacity-50"
                 >
-                  New instead
+                  {busy ? (
+                    <DeskLoader label="Saving cohort…" />
+                  ) : (
+                    "Save cohort"
+                  )}
                 </button>
               ) : null}
             </div>
-
-            {creatingNew ? (
-              <p className="mt-4 text-sm leading-relaxed text-ink/55">
-                Saving creates four Saturday slots (1st–4th Saturday) for this
-                programme. Students choose one at enrolment.
-              </p>
-            ) : null}
           </section>
 
           {selected && !creatingNew ? (

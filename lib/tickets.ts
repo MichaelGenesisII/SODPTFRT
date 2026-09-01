@@ -3,6 +3,7 @@ export const SUPPORT_TOPICS = [
   "Student portal",
   "Payments",
   "Classes & exams",
+  "Report a bug",
   "General enquiry",
 ] as const;
 

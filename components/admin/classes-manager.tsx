@@ -27,6 +27,11 @@ import {
   type ClassAudience,
   type ZoomClass,
 } from "@/lib/classes/types";
+import {
+  buildProgrammeMonthOptions,
+  programmeMonthFieldCopy,
+} from "@/lib/classes/programme-month-options";
+import type { IntakeKey } from "@/lib/cohorts/intake";
 import { formatBatchLabel, type Batch, type Parish } from "@/lib/parishes";
 import { formatCohortLabel, type Cohort } from "@/lib/cohorts";
 import { DeskPagination } from "@/lib/ui/desk-pagination";
@@ -485,6 +490,44 @@ function CreateClassForm({
   const programmeYears = [
     ...new Set(cohorts.map((cohort) => cohort.year_start)),
   ].sort((a, b) => b - a);
+  const selectedCohort = cohorts.find((cohort) => cohort.id === cohortId);
+  const scheduleDate = useMemo(() => {
+    if (!startLocal) return new Date();
+    const parsed = new Date(startLocal);
+    return Number.isNaN(parsed.getTime()) ? new Date() : parsed;
+  }, [startLocal]);
+  const programmeMonthOptions = useMemo(
+    () =>
+      buildProgrammeMonthOptions({
+        audience,
+        intakeKey: selectedCohort?.intake_key as IntakeKey | null | undefined,
+        programmeYear: programmeYear ? Number(programmeYear) : null,
+        scheduleDate,
+      }),
+    [
+      audience,
+      selectedCohort?.intake_key,
+      programmeYear,
+      scheduleDate,
+    ],
+  );
+  const programmeMonthHelp = programmeMonthFieldCopy({
+    audience,
+    intakeKey: selectedCohort?.intake_key as IntakeKey | null | undefined,
+    scheduleDate,
+    optionCount: programmeMonthOptions.length,
+  });
+
+  useEffect(() => {
+    if (!programmeMonth) return;
+    if (
+      !programmeMonthOptions.some(
+        (option) => String(option.value) === programmeMonth,
+      )
+    ) {
+      setProgrammeMonth("");
+    }
+  }, [programmeMonth, programmeMonthOptions]);
 
   function toLocalInputValue(date: Date) {
     const pad = (n: number) => String(n).padStart(2, "0");
@@ -616,25 +659,6 @@ function CreateClassForm({
         />
       </label>
 
-      <label className="block text-sm">
-        Programme month (exam unlock)
-        <select
-          value={programmeMonth}
-          onChange={(e) => setProgrammeMonth(e.target.value)}
-          className={`mt-1 ${fieldClass}`}
-        >
-          <option value="">None — no year-exam unlock</option>
-          {Array.from({ length: 10 }, (_, i) => i + 1).map((n) => (
-            <option key={n} value={n}>
-              Month {n} → Exam Year {n}
-            </option>
-          ))}
-        </select>
-        <span className="mt-1 block text-xs text-ink/50">
-          Present attendance for this class unlocks that year paper.
-        </span>
-      </label>
-
       <fieldset>
         <legend className="text-sm">Who is this for?</legend>
         <div className="mt-2 grid gap-2 sm:grid-cols-3">
@@ -686,6 +710,7 @@ function CreateClassForm({
                 checked={audience === opt.id}
                 onChange={() => {
                   setAudience(opt.id);
+                  setProgrammeMonth("");
                   if (opt.id === "everyone") {
                     setParishId("");
                     setBatchId("");
@@ -786,7 +811,10 @@ function CreateClassForm({
           <select
             required
             value={cohortId}
-            onChange={(e) => setCohortId(e.target.value)}
+            onChange={(e) => {
+              setCohortId(e.target.value);
+              setProgrammeMonth("");
+            }}
             className={`mt-1 ${fieldClass}`}
           >
             <option value="">Select cohort</option>
@@ -805,7 +833,10 @@ function CreateClassForm({
           <select
             required
             value={programmeYear}
-            onChange={(e) => setProgrammeYear(e.target.value)}
+            onChange={(e) => {
+              setProgrammeYear(e.target.value);
+              setProgrammeMonth(e.target.value);
+            }}
             className={`mt-1 ${fieldClass}`}
           >
             <option value="">Select year</option>
@@ -818,6 +849,24 @@ function CreateClassForm({
         </label>
       ) : null}
 
+      <label className="block text-sm">
+        Programme month (exam unlock)
+        <select
+          value={programmeMonth}
+          onChange={(e) => setProgrammeMonth(e.target.value)}
+          className={`mt-1 ${fieldClass}`}
+        >
+          <option value="">None — no year-exam unlock</option>
+          {programmeMonthOptions.map((option) => (
+            <option key={option.value} value={option.value}>
+              {option.label}
+              {option.hint ? ` · ${option.hint}` : ""}
+            </option>
+          ))}
+        </select>
+        <span className="mt-1 block text-xs text-ink/50">{programmeMonthHelp}</span>
+      </label>
+
       <div className="grid gap-3 sm:grid-cols-2">
         <label className="block text-sm">
           Starts
@@ -828,6 +877,7 @@ function CreateClassForm({
             onChange={(e) => {
               const next = e.target.value;
               setStartLocal(next);
+              setProgrammeMonth("");
               syncEndFromStart(next);
             }}
             className={`mt-1 ${fieldClass}`}
