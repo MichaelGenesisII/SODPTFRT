@@ -31,7 +31,7 @@ import {
   SATURDAY_COHORT_HINT,
   type SaturdayCohortOption,
 } from "@/lib/cohorts/saturday";
-import type { EnrolIntakeContext } from "@/app/enrol/saturday-actions";
+import type { EnrolIntakeContext } from "@/lib/enrol/intake-context";
 import { EnrolAlreadyApplied } from "@/components/enrol/already-enrolled";
 import { EnrolPostSubmit } from "@/components/enrol/post-submit";
 import {

@@ -10,18 +10,8 @@ import {
   type SaturdayCohortOption,
 } from "@/lib/cohorts/saturday";
 import type { Cohort } from "@/lib/cohorts";
-import { INTAKE_SLUGS } from "@/lib/cohorts/intake";
+import type { EnrolIntakeContext } from "@/lib/enrol/intake-context";
 import { createServiceSupabaseClient } from "@/lib/supabase/service";
-
-export type EnrolIntakeContext = {
-  intakeKey: IntakeKey;
-  intakeLabel: string;
-  enrolOpen: boolean;
-  enrolClosesLabel: string | null;
-  year1SaturdaySlots: readonly (1 | 2 | 3 | 4)[];
-  saturdayForced: boolean;
-  programmeCohortId: string | null;
-};
 
 export async function getEnrolIntakeContext(
   asOf: Date = new Date(),
@@ -129,9 +119,6 @@ export async function resolveFixedIntakeCohortId(
     .maybeSingle();
   return data?.id ?? null;
 }
-
-/** @deprecated Slugs for migration scripts only. */
-export { INTAKE_SLUGS };
 
 /**
  * Find or create an open parish batch linked to the programme year,

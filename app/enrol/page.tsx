@@ -1,9 +1,6 @@
 import type { Metadata } from "next";
 import { listActiveParishesForEnrol } from "@/app/admin/parishes/actions";
-import {
-  getEnrolIntakeContext,
-  listSaturdayCohortsForEnrol,
-} from "@/app/enrol/saturday-actions";
+import { listSaturdayCohortsForEnrol } from "@/app/enrol/saturday-actions";
 import { EnrolWizard } from "@/components/enrol/enrol-wizard";
 import { SiteFooter } from "@/components/site-footer";
 import { SiteHeader } from "@/components/site-header";
