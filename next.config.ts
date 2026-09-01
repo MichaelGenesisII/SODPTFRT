@@ -7,6 +7,12 @@ const zoomDownloadManagerStub = path.resolve(
 );
 
 const nextConfig: NextConfig = {
+  experimental: {
+    serverActions: {
+      // Alumni import accepts spreadsheets up to 15 MB; default Next limit is 1 MB.
+      bodySizeLimit: "16mb",
+    },
+  },
   // Keep Turbopack rooted on this app (avoids parent lockfile confusion)
   // without breaking builtin client modules via import.meta path quirks.
   turbopack: {

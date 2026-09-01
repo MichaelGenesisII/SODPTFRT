@@ -45,3 +45,15 @@ export function alumniListQuery(input: AlumniListQueryState): string {
   const qs = params.toString();
   return qs ? `?${qs}` : "";
 }
+
+/** Compare list URLs regardless of query-string parameter order. */
+export function alumniListQueriesEqual(a: string, b: string): boolean {
+  const left = parseAlumniListQuery(a);
+  const right = parseAlumniListQuery(b);
+  return (
+    left.query === right.query &&
+    left.batchYear === right.batchYear &&
+    left.portal === right.portal &&
+    left.page === right.page
+  );
+}

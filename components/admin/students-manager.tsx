@@ -44,6 +44,7 @@ import { SATURDAY_SLOT_LABELS } from "@/lib/cohorts/saturday";
 import type { EnrolmentStatus, PaymentStatus } from "@/lib/student/types";
 import { type Batch, type Parish } from "@/lib/parishes";
 import { DeskPagination } from "@/lib/ui/desk-pagination";
+import { useDebouncedValue } from "@/lib/ui/use-debounced-value";
 
 const STUDENTS_PAGE_SIZE = 12;
 
@@ -177,6 +178,7 @@ export function StudentsManager({
   const [pageView, setPageView] = useState<PageView>("desk");
   const [lane, setLane] = useState<StudentDeskLane>(initial.lane);
   const [query, setQuery] = useState(initial.query);
+  const debouncedQuery = useDebouncedValue(query, 450);
   const [filters, setFilters] = useState<StudentDeskFilterState>(initial.filters);
   const [page, setPage] = useState(initial.page);
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -192,18 +194,18 @@ export function StudentsManager({
   const busy = pending || Boolean(busyLabel);
 
   const listQuery = useMemo(
-    () => studentDeskListQuery({ lane, query, filters, page }),
-    [lane, query, filters, page],
+    () => studentDeskListQuery({ lane, query: debouncedQuery, filters, page }),
+    [lane, debouncedQuery, filters, page],
   );
 
   useEffect(() => {
-    const next = studentDeskListQuery({ lane, query, filters, page });
+    const next = studentDeskListQuery({ lane, query: debouncedQuery, filters, page });
     const current = searchParams.toString();
     const normalizedCurrent = current ? `?${current}` : "";
     if (next !== normalizedCurrent) {
       router.replace(next ? `${pathname}${next}` : pathname, { scroll: false });
     }
-  }, [lane, query, filters, page, pathname, router, searchParams]);
+  }, [lane, debouncedQuery, filters, page, pathname, router, searchParams]);
 
   useEffect(() => {
     const parsed = parseStudentDeskListQuery(
@@ -221,6 +223,29 @@ export function StudentsManager({
       ).length,
     [students],
   );
+
+  const studentSearchHaystacks = useMemo(() => {
+    return new Map(
+      students.map((student) => [
+        student.id,
+        [
+          studentFullName(student),
+          student.email,
+          student.enrolment?.reference,
+          student.enrolment?.reference_compact,
+          student.enrolment?.town_city,
+          student.enrolment?.local_church,
+          student.enrolment?.parish_name,
+          student.enrolment?.parish_region,
+          student.enrolment?.batch_name,
+          student.enrolment?.mobile_number,
+        ]
+          .filter(Boolean)
+          .join(" ")
+          .toLowerCase(),
+      ]),
+    );
+  }, [students]);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -274,24 +299,9 @@ export function StudentsManager({
         return false;
       }
       if (!q) return true;
-      const haystack = [
-        studentFullName(student),
-        student.email,
-        student.enrolment?.reference,
-        student.enrolment?.reference_compact,
-        student.enrolment?.town_city,
-        student.enrolment?.local_church,
-        student.enrolment?.parish_name,
-        student.enrolment?.parish_region,
-        student.enrolment?.batch_name,
-        student.enrolment?.mobile_number,
-      ]
-        .filter(Boolean)
-        .join(" ")
-        .toLowerCase();
-      return haystack.includes(q);
+      return studentSearchHaystacks.get(student.id)?.includes(q) ?? false;
     });
-  }, [students, lane, query, filters]);
+  }, [students, lane, query, filters, studentSearchHaystacks]);
 
   const totalPages = Math.max(
     1,

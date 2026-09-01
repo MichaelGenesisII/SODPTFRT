@@ -56,7 +56,7 @@ function applyLegacyRegisterFilters(
   },
 ) {
   let q = request;
-  if (input?.batchYear) {
+  if (input?.batchYear != null) {
     q = q.eq("batch_year", input.batchYear);
   }
   if (input?.portal === "awaiting_email") {
@@ -84,6 +84,86 @@ function applyLegacyRegisterFilters(
     }
   }
   return q;
+}
+
+/** Distinct graduating years on the register (paginated — PostgREST row caps hide years otherwise). */
+async function loadAlumniLegacyBatchYears(
+  service: ReturnType<typeof createServiceSupabaseClient>,
+): Promise<number[]> {
+  const years = new Set<number>();
+  const pageSize = 1000;
+  let offset = 0;
+
+  while (true) {
+    const { data, error } = await service
+      .from("alumni_legacy_people")
+      .select("batch_year")
+      .order("batch_year", { ascending: false })
+      .range(offset, offset + pageSize - 1);
+
+    if (error) {
+      console.error("[alumni] batch years", error);
+      break;
+    }
+    if (!data?.length) break;
+
+    for (const row of data) {
+      const year = Number(row.batch_year);
+      if (Number.isFinite(year)) years.add(year);
+    }
+
+    if (data.length < pageSize) break;
+    offset += pageSize;
+  }
+
+  return [...years].sort((a, b) => b - a);
+}
+
+async function loadAlumniLegacyRegisterStats(
+  service: ReturnType<typeof createServiceSupabaseClient>,
+) {
+  const [{ count: totalAll }, { count: awaiting }, { count: ready }] =
+    await Promise.all([
+      service
+        .from("alumni_legacy_people")
+        .select("id", { count: "exact", head: true }),
+      service
+        .from("alumni_legacy_people")
+        .select("id", { count: "exact", head: true })
+        .is("activated_user_id", null),
+      service
+        .from("alumni_legacy_people")
+        .select("id", { count: "exact", head: true })
+        .not("activated_user_id", "is", null),
+    ]);
+
+  return {
+    total: totalAll ?? 0,
+    awaitingEmail: awaiting ?? 0,
+    portalReady: ready ?? 0,
+  };
+}
+
+export async function listAlumniLegacyBatchYears(): Promise<number[]> {
+  const actor = await requireSessionAdmin();
+  if (!isNationalAdmin(actor)) return [];
+
+  const service = createServiceSupabaseClient();
+  return loadAlumniLegacyBatchYears(service);
+}
+
+export async function listAlumniLegacyRegisterStats(): Promise<{
+  total: number;
+  awaitingEmail: number;
+  portalReady: number;
+}> {
+  const actor = await requireSessionAdmin();
+  if (!isNationalAdmin(actor)) {
+    return { total: 0, awaitingEmail: 0, portalReady: 0 };
+  }
+
+  const service = createServiceSupabaseClient();
+  return loadAlumniLegacyRegisterStats(service);
 }
 
 function asExams(value: unknown): AlumniExamEntry[] {
@@ -182,6 +262,7 @@ export async function searchLegacyAlumniAction(input: {
     portal: input.portal,
     page: input.page ?? 1,
     pageSize: ALUMNI_PAGE_SIZE,
+    includeMeta: false,
   });
   return {
     rows: result.rows,
@@ -242,6 +323,8 @@ export async function listLegacyAlumni(input?: {
   portal?: AlumniPortalFilter;
   page?: number;
   pageSize?: number;
+  /** When false, skips stats and batch-year scans (for live search). */
+  includeMeta?: boolean;
 }): Promise<{
   rows: AlumniLegacyPerson[];
   total: number;
@@ -287,28 +370,19 @@ export async function listLegacyAlumni(input?: {
     throw new Error("Could not load alumni register.");
   }
 
-  const [{ data: yearRows }, { count: totalAll }, { count: awaiting }, { count: ready }] =
-    await Promise.all([
-      service
-        .from("alumni_legacy_people")
-        .select("batch_year")
-        .order("batch_year", { ascending: false }),
-      service
-        .from("alumni_legacy_people")
-        .select("id", { count: "exact", head: true }),
-      service
-        .from("alumni_legacy_people")
-        .select("id", { count: "exact", head: true })
-        .is("activated_user_id", null),
-      service
-        .from("alumni_legacy_people")
-        .select("id", { count: "exact", head: true })
-        .not("activated_user_id", "is", null),
-    ]);
+  const includeMeta = input?.includeMeta !== false;
 
-  const batchYears = [
-    ...new Set((yearRows ?? []).map((r) => Number(r.batch_year))),
-  ].filter((y) => Number.isFinite(y));
+  let batchYears: number[] = [];
+  let stats = { total: 0, awaitingEmail: 0, portalReady: 0 };
+
+  if (includeMeta) {
+    const [loadedBatchYears, loadedStats] = await Promise.all([
+      loadAlumniLegacyBatchYears(service),
+      loadAlumniLegacyRegisterStats(service),
+    ]);
+    batchYears = loadedBatchYears;
+    stats = loadedStats;
+  }
 
   return {
     rows: ((data ?? []) as Record<string, unknown>[]).map((row) =>
@@ -318,11 +392,7 @@ export async function listLegacyAlumni(input?: {
     page,
     pageSize,
     batchYears,
-    stats: {
-      total: totalAll ?? 0,
-      awaitingEmail: awaiting ?? 0,
-      portalReady: ready ?? 0,
-    },
+    stats,
   };
 }
 

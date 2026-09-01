@@ -3,6 +3,8 @@ import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 import {
   listLegacyAlumni,
+  listAlumniLegacyBatchYears,
+  listAlumniLegacyRegisterStats,
   searchLegacyAlumniAction,
 } from "@/app/admin/alumni/actions";
 import { listCohortsForAdmin } from "@/app/admin/cohorts/actions";
@@ -38,12 +40,13 @@ export default async function AdminAlumniPage({ searchParams }: Props) {
   const sp = await searchParams;
   const listState = parseAlumniListQuery(searchParamsToQuery(sp));
 
-  const [register, cohorts] = await Promise.all([
+  const [register, cohorts, batchYears, stats] = await Promise.all([
     listLegacyAlumni({
       query: listState.query,
       batchYear: listState.batchYear,
       portal: listState.portal,
       page: listState.page,
+      includeMeta: false,
     }).catch(() => ({
       rows: [],
       total: 0,
@@ -53,6 +56,12 @@ export default async function AdminAlumniPage({ searchParams }: Props) {
       stats: { total: 0, awaitingEmail: 0, portalReady: 0 },
     })),
     listCohortsForAdmin().catch(() => []),
+    listAlumniLegacyBatchYears().catch(() => [] as number[]),
+    listAlumniLegacyRegisterStats().catch(() => ({
+      total: 0,
+      awaitingEmail: 0,
+      portalReady: 0,
+    })),
   ]);
 
   return (
@@ -75,8 +84,8 @@ export default async function AdminAlumniPage({ searchParams }: Props) {
         <AlumniManager
           initialRows={register.rows}
           initialTotal={register.total}
-          batchYears={register.batchYears}
-          stats={register.stats}
+          batchYears={batchYears}
+          stats={stats}
           cohorts={cohorts}
           onSearch={searchLegacyAlumniAction}
         />

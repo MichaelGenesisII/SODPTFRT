@@ -30,7 +30,7 @@ export function DeskLoader({
   const dot = size === "md" ? 10 : 8;
 
   return (
-    <div
+    <span
       role="status"
       aria-live="polite"
       aria-label={label}
@@ -54,7 +54,7 @@ export function DeskLoader({
       ) : (
         <span className="sr-only">{label}</span>
       )}
-    </div>
+    </span>
   );
 }
 

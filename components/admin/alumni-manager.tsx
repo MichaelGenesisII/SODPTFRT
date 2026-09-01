@@ -24,9 +24,11 @@ import {
 import { AlumniListRow } from "@/components/admin/alumni-portrait-card";
 import { DeskConfirmModal } from "@/components/ui/desk-confirm-modal";
 import { DeskLoader, DeskLoaderOverlay } from "@/components/ui/desk-loader";
+import { useDebouncedValue } from "@/lib/ui/use-debounced-value";
 import { useToast } from "@/components/ui/toast";
 import {
   ALUMNI_PAGE_SIZE,
+  alumniListQueriesEqual,
   alumniListQuery,
   parseAlumniListQuery,
 } from "@/lib/admin/alumni-desk";
@@ -152,14 +154,20 @@ export function AlumniManager({
   );
   const [bulkCohortId, setBulkCohortId] = useState<string>("");
   const [bulkSendMail, setBulkSendMail] = useState(true);
-  const busy = pending || Boolean(busyLabel);
+  const [searching, setSearching] = useState(false);
+  const [listPending, startListTransition] = useTransition();
+  const registerLoading = searching || listPending;
+  const deskBusy = Boolean(busyLabel);
+  const busy = pending || deskBusy;
+  const searchRequestId = useRef(0);
 
   const parsed = parseAlumniListQuery(searchParams.toString());
 
   const [tab, setTab] = useState<DeskTab>("register");
   const [rows, setRows] = useState(initialRows);
   const [total, setTotal] = useState(initialTotal);
-  const [query, setQuery] = useState(parsed.query);
+  const [queryInput, setQueryInput] = useState(parsed.query);
+  const debouncedQuery = useDebouncedValue(queryInput, 450);
   const [batchYear, setBatchYear] = useState<number | null>(parsed.batchYear);
   const [portal, setPortal] = useState<AlumniPortalFilter>(parsed.portal);
   const [page, setPage] = useState(parsed.page);
@@ -170,8 +178,8 @@ export function AlumniManager({
   >({});
   const [dragOver, setDragOver] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
-  const queryDebounceReady = useRef(false);
   const skipInitialFetch = useRef(true);
+  const skipInitialDebouncedSearch = useRef(true);
 
   useEffect(() => {
     if (!confirmImport && !importMetrics) return;
@@ -199,13 +207,21 @@ export function AlumniManager({
   const pageSomeSelected =
     rows.some((person) => selected.has(person.id)) && !pageAllSelected;
 
+  const yearOptions = useMemo(() => {
+    const years = new Set(batchYears);
+    if (batchYear != null && Number.isFinite(batchYear)) {
+      years.add(batchYear);
+    }
+    return [...years].sort((a, b) => b - a);
+  }, [batchYears, batchYear]);
+
   useEffect(() => {
     setSelected(new Set());
-  }, [query, batchYear, portal, page]);
+  }, [debouncedQuery, batchYear, portal, page]);
 
   const listQuery = useMemo(
-    () => alumniListQuery({ query, batchYear, portal, page }),
-    [query, batchYear, portal, page],
+    () => alumniListQuery({ query: debouncedQuery, batchYear, portal, page }),
+    [debouncedQuery, batchYear, portal, page],
   );
 
   const totalPages = Math.max(1, Math.ceil(total / ALUMNI_PAGE_SIZE));
@@ -217,7 +233,7 @@ export function AlumniManager({
     const next = listQuery;
     const current = searchParams.toString();
     const normalizedCurrent = current ? `?${current}` : "";
-    if (next !== normalizedCurrent) {
+    if (!alumniListQueriesEqual(next, normalizedCurrent)) {
       router.replace(next ? `${pathname}${next}` : pathname, { scroll: false });
     }
   }, [listQuery, pathname, router, searchParams]);
@@ -227,22 +243,26 @@ export function AlumniManager({
   }, [page, totalPages]);
 
   useEffect(() => {
-    const parsed = parseAlumniListQuery(searchParams.toString());
-    if (parsed.page !== page) setPage(parsed.page);
-  }, [searchParams, page]);
+    const fromUrl = parseAlumniListQuery(searchParams.toString());
+    setPage(fromUrl.page);
+    setBatchYear(fromUrl.batchYear);
+    setPortal(fromUrl.portal);
+    setQueryInput(fromUrl.query);
+  }, [searchParams]);
 
-  function refresh(next?: {
+  function refreshList(next?: {
     query?: string;
     batchYear?: number | null;
     portal?: AlumniPortalFilter;
     page?: number;
   }) {
-    const q = next?.query ?? query;
+    const q = next?.query ?? debouncedQuery;
     const year = next?.batchYear === undefined ? batchYear : next.batchYear;
     const status = next?.portal ?? portal;
     const pageNum = next?.page ?? page;
-    setBusyLabel("Searching…");
-    startTransition(async () => {
+    const requestId = ++searchRequestId.current;
+    setSearching(true);
+    startListTransition(async () => {
       try {
         const result = await onSearch({
           query: q,
@@ -250,14 +270,18 @@ export function AlumniManager({
           portal: status,
           page: pageNum,
         });
+        if (requestId !== searchRequestId.current) return;
         setRows(result.rows);
         setTotal(result.total);
         setPage(result.page);
       } catch (err) {
+        if (requestId !== searchRequestId.current) return;
         console.error("[alumni] search", err);
         error("Could not search the alumni register.");
       } finally {
-        setBusyLabel(null);
+        if (requestId === searchRequestId.current) {
+          setSearching(false);
+        }
       }
     });
   }
@@ -267,22 +291,19 @@ export function AlumniManager({
       skipInitialFetch.current = false;
       return;
     }
-    refresh();
+    refreshList();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [batchYear, portal, page]);
 
   useEffect(() => {
-    if (!queryDebounceReady.current) {
-      queryDebounceReady.current = true;
+    if (skipInitialDebouncedSearch.current) {
+      skipInitialDebouncedSearch.current = false;
       return;
     }
-    const handle = window.setTimeout(() => {
-      setPage(1);
-      refresh({ query, page: 1 });
-    }, 350);
-    return () => window.clearTimeout(handle);
+    setPage(1);
+    refreshList({ query: debouncedQuery, page: 1 });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [query]);
+  }, [debouncedQuery]);
 
   function commitImport() {
     if (!preview || busy) return;
@@ -308,7 +329,7 @@ export function AlumniManager({
           message: result.message,
         });
         setTab("register");
-        refresh({ page: 1 });
+        refreshList({ page: 1 });
         router.refresh();
       } finally {
         setBusyLabel(null);
@@ -358,6 +379,7 @@ export function AlumniManager({
   }
 
   function goToPage(next: number) {
+    setSearching(true);
     setPage(Math.min(totalPages, Math.max(1, next)));
     if (typeof window !== "undefined") {
       window.scrollTo({ top: 0, behavior: "smooth" });
@@ -394,7 +416,7 @@ export function AlumniManager({
     startTransition(async () => {
       try {
         const result = await listLegacyAlumniIds({
-          query,
+          query: debouncedQuery,
           batchYear,
           portal,
         });
@@ -427,7 +449,7 @@ export function AlumniManager({
           success(result.message, "Alumni");
           setPendingConfirm(null);
           clearSelection();
-          refresh();
+          refreshList();
           router.refresh();
         } else {
           error(result.message, "Alumni");
@@ -552,9 +574,9 @@ export function AlumniManager({
   })();
 
   return (
-    <div className="relative space-y-5 sm:space-y-6" aria-busy={busy}>
+    <div className="relative space-y-5 sm:space-y-6" aria-busy={busy || registerLoading}>
       <DeskLoaderOverlay
-        active={busy && !confirmImport && !importMetrics && !pendingConfirm}
+        active={deskBusy && !confirmImport && !importMetrics && !pendingConfirm}
         label={busyLabel ?? "Working…"}
       />
 
@@ -646,40 +668,52 @@ export function AlumniManager({
                 <p className="text-[0.65rem] font-medium uppercase tracking-[0.14em] text-celadon">
                   Graduating lists
                 </p>
-                <p className="mt-1 text-sm text-ink/60">
-                  {total === 0
-                    ? "No alumni match."
-                    : `Showing ${rangeFrom}–${rangeTo} of ${total}`}
-                  {batchYear ? ` · batch ${batchYear}` : ""}
-                </p>
+                <div className="mt-1 text-sm text-ink/60">
+                  {registerLoading ? (
+                    <DeskLoader label="Updating register…" />
+                  ) : total === 0 ? (
+                    "No alumni match."
+                  ) : (
+                    <>
+                      Showing {rangeFrom}–{rangeTo} of {total}
+                      {batchYear ? ` · batch ${batchYear}` : ""}
+                    </>
+                  )}
+                </div>
               </div>
               <div className="grid w-full gap-2 sm:grid-cols-[minmax(0,1fr)_8rem_9.5rem] lg:w-auto lg:min-w-[32rem]">
                 <label className="block text-sm">
                   <span className="sr-only">Search</span>
                   <input
-                    value={query}
-                    onChange={(e) => setQuery(e.target.value)}
+                    value={queryInput}
+                    onChange={(e) => setQueryInput(e.target.value)}
                     placeholder="Search name, centre, ID, email…"
-                    disabled={busy}
+                    disabled={deskBusy}
                     className={fieldClass}
                   />
+                  {registerLoading ? (
+                    <span className="mt-1 block text-xs text-ink/45">
+                      Updating…
+                    </span>
+                  ) : null}
                 </label>
                 <label className="block text-sm">
                   <span className="sr-only">Batch year</span>
                   <select
                     value={batchYear ?? ""}
-                    disabled={busy}
+                    disabled={deskBusy || registerLoading}
                     onChange={(e) => {
                       const next = e.target.value
                         ? Number(e.target.value)
                         : null;
+                      setSearching(true);
                       setBatchYear(next);
                       setPage(1);
                     }}
                     className={fieldClass}
                   >
                     <option value="">All years</option>
-                    {batchYears.map((year) => (
+                    {yearOptions.map((year) => (
                       <option key={year} value={year}>
                         {year}
                       </option>
@@ -690,8 +724,9 @@ export function AlumniManager({
                   <span className="sr-only">Portal status</span>
                   <select
                     value={portal}
-                    disabled={busy}
+                    disabled={deskBusy || registerLoading}
                     onChange={(e) => {
+                      setSearching(true);
                       setPortal(e.target.value as AlumniPortalFilter);
                       setPage(1);
                     }}
@@ -706,7 +741,11 @@ export function AlumniManager({
             </div>
           </div>
 
-          <section className="border border-stone bg-mist/30">
+          <section className="relative border border-stone bg-mist/30">
+            <DeskLoaderOverlay
+              active={registerLoading}
+              label="Updating register…"
+            />
             <div className="flex flex-wrap items-center justify-between gap-2 border-b border-stone px-3 py-2.5 text-sm text-ink/55 sm:px-4 sm:py-3">
               <p>
                 {total === 0
@@ -912,7 +951,7 @@ export function AlumniManager({
                 <button
                   type="button"
                   onClick={() => {
-                    setQuery("");
+                    setQueryInput("");
                     setBatchYear(null);
                     setPortal("all");
                     setPage(1);
