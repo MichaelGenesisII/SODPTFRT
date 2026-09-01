@@ -41,9 +41,12 @@ import {
 } from "@/lib/alumni/types";
 import type { Cohort } from "@/lib/cohorts";
 import { DeskPagination } from "@/lib/ui/desk-pagination";
+import { publicActionMessage } from "@/lib/safe-action-message";
 
 const fieldClass =
   "w-full min-w-0 border border-stone bg-white/70 px-3 py-2 text-sm outline-none focus:border-pine disabled:opacity-50";
+
+const ALUMNI_IMPORT_MAX_BYTES = 15 * 1024 * 1024;
 
 type DeskTab = "register" | "import";
 
@@ -331,6 +334,9 @@ export function AlumniManager({
         setTab("register");
         refreshList({ page: 1 });
         router.refresh();
+      } catch (err) {
+        console.error("[alumni] commit import", err);
+        error(publicActionMessage(err, "Could not import that file. Please try again."));
       } finally {
         setBusyLabel(null);
       }
@@ -338,6 +344,10 @@ export function AlumniManager({
   }
 
   async function parseFile(file: File) {
+    if (file.size > ALUMNI_IMPORT_MAX_BYTES) {
+      error("That file is too large. Maximum size is 15 MB.");
+      return;
+    }
     const formData = new FormData();
     formData.append("file", file);
     setBusyLabel("Parsing spreadsheet…");
@@ -365,6 +375,9 @@ export function AlumniManager({
           `${result.preview.rows.length} people ready · ${result.preview.skipped.length} notes`,
           "Import preview",
         );
+      } catch (err) {
+        console.error("[alumni] parse import", err);
+        error(publicActionMessage(err, "Could not read that file. Please check the format and try again."));
       } finally {
         setBusyLabel(null);
       }
