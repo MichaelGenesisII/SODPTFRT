@@ -6,6 +6,7 @@ import {
   useState,
   useTransition,
   type ReactNode,
+  type MouseEvent,
 } from "react";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
@@ -22,6 +23,7 @@ import {
   parseStudentDeskListQuery,
   StudentDeskFilters,
   studentDeskListQuery,
+  studentDeskListQueriesEqual,
   type StudentDeskFilterState,
   type StudentDeskLane,
 } from "@/components/admin/student-desk-filters";
@@ -36,6 +38,7 @@ import {
   isStudentFeePaid,
   studentFeeSnap,
   studentFullName,
+  studentProgrammeFeeLane,
   type AdminStudentRecord,
 } from "@/lib/admin/students";
 import { isNationalAdmin, type AdminProfile } from "@/lib/admin/profile";
@@ -190,8 +193,11 @@ export function StudentsManager({
   const [pendingConfirm, setPendingConfirm] = useState<BulkConfirm | null>(
     null,
   );
+  const [openingStudentId, setOpeningStudentId] = useState<string | null>(
+    null,
+  );
 
-  const busy = pending || Boolean(busyLabel);
+  const busy = pending || Boolean(busyLabel) || Boolean(openingStudentId);
 
   const listQuery = useMemo(
     () => studentDeskListQuery({ lane, query: debouncedQuery, filters, page }),
@@ -202,19 +208,15 @@ export function StudentsManager({
     const next = studentDeskListQuery({ lane, query: debouncedQuery, filters, page });
     const current = searchParams.toString();
     const normalizedCurrent = current ? `?${current}` : "";
-    if (next !== normalizedCurrent) {
-      router.replace(next ? `${pathname}${next}` : pathname, { scroll: false });
+    if (!studentDeskListQueriesEqual(next, normalizedCurrent, profile.parish_id, national)) {
+      const href = next ? `${pathname}${next}` : pathname;
+      window.history.replaceState(window.history.state, "", href);
     }
-  }, [lane, debouncedQuery, filters, page, pathname, router, searchParams]);
+  }, [lane, debouncedQuery, filters, page, pathname, searchParams, profile.parish_id, national]);
 
   useEffect(() => {
-    const parsed = parseStudentDeskListQuery(
-      searchParams.toString(),
-      profile.parish_id,
-      national,
-    );
-    if (parsed.page !== page) setPage(parsed.page);
-  }, [searchParams, profile.parish_id, national, page]);
+    setOpeningStudentId(null);
+  }, [pathname]);
 
   const proofReviewCount = useMemo(
     () =>
@@ -248,7 +250,7 @@ export function StudentsManager({
   }, [students]);
 
   const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
+    const q = debouncedQuery.trim().toLowerCase();
     return students.filter((student) => {
       if (lane !== "all" && laneFor(student) !== lane) return false;
       if (
@@ -284,24 +286,14 @@ export function StudentsManager({
       ) {
         return false;
       }
-      const tuition = studentFeeSnap(student, "tuition");
-      const graduation = studentFeeSnap(student, "graduation");
-      const tuitionPaid = isStudentFeePaid(tuition);
-      const graduationPaid = isStudentFeePaid(graduation);
-      if (filters.tuition === "paid" && !tuitionPaid) return false;
-      if (filters.tuition === "unpaid" && tuitionPaid) return false;
-      if (filters.graduation === "paid" && !graduationPaid) return false;
-      if (filters.graduation === "unpaid" && graduationPaid) return false;
-      if (
-        filters.bothFees === "both_paid" &&
-        !(tuitionPaid && graduationPaid)
-      ) {
-        return false;
+      if (filters.programmeFee !== "all") {
+        const lane = studentProgrammeFeeLane(student);
+        if (lane !== filters.programmeFee) return false;
       }
       if (!q) return true;
       return studentSearchHaystacks.get(student.id)?.includes(q) ?? false;
     });
-  }, [students, lane, query, filters, studentSearchHaystacks]);
+  }, [students, lane, debouncedQuery, filters, studentSearchHaystacks]);
 
   const totalPages = Math.max(
     1,
@@ -328,7 +320,7 @@ export function StudentsManager({
   useEffect(() => {
     setPage(1);
     setSelected(new Set());
-  }, [lane, query, filters]);
+  }, [lane, debouncedQuery, filters]);
 
   useEffect(() => {
     if (page > totalPages) setPage(totalPages);
@@ -347,6 +339,11 @@ export function StudentsManager({
     return from
       ? `/admin/students/${studentId}?from=${encodeURIComponent(from)}`
       : `/admin/students/${studentId}`;
+  }
+
+  function openStudentFile(studentId: string) {
+    setOpeningStudentId(studentId);
+    router.push(studentDetailHref(studentId));
   }
 
   function toggleOne(id: string) {
@@ -521,8 +518,12 @@ export function StudentsManager({
   return (
     <div className="relative space-y-3 sm:space-y-4" aria-busy={busy}>
       <DeskLoaderOverlay
-        active={busy && !pendingConfirm}
-        label={busyLabel ?? "Working…"}
+        active={(busy && !pendingConfirm) || Boolean(openingStudentId)}
+        label={
+          openingStudentId
+            ? "Opening student file…"
+            : (busyLabel ?? "Working…")
+        }
       />
 
       <nav
@@ -821,6 +822,8 @@ export function StudentsManager({
                   key={student.id}
                   student={student}
                   href={studentDetailHref(student.id)}
+                  onOpen={() => openStudentFile(student.id)}
+                  opening={openingStudentId === student.id}
                   checked={selected.has(student.id)}
                   onToggle={() => toggleOne(student.id)}
                   disabled={busy}
@@ -904,21 +907,32 @@ function TrashIcon({ className }: { className?: string }) {
 function StudentListRow({
   student,
   href,
+  onOpen,
+  opening,
   checked,
   onToggle,
   disabled,
 }: {
   student: AdminStudentRecord;
   href: string;
+  onOpen: () => void;
+  opening?: boolean;
   checked: boolean;
   onToggle: () => void;
   disabled?: boolean;
 }) {
   const name = studentFullName(student);
   const status = student.enrolment?.status;
-  const tuitionPaid = isStudentFeePaid(studentFeeSnap(student, "tuition"));
-  const graduationPaid = isStudentFeePaid(studentFeeSnap(student, "graduation"));
+  const feeLane = studentProgrammeFeeLane(student);
   const slot = student.enrolment?.saturday_slot;
+
+  function handleOpen(event: MouseEvent<HTMLAnchorElement>) {
+    event.preventDefault();
+    if (disabled || opening) return;
+    onOpen();
+  }
+
+  const rowLinkClass = opening ? "pointer-events-none opacity-70" : undefined;
 
   return (
     <li>
@@ -934,7 +948,12 @@ function StudentListRow({
           />
         </label>
 
-        <Link href={href} className="flex min-w-0 items-start gap-3">
+        <Link
+          href={href}
+          onClick={handleOpen}
+          className={`flex min-w-0 items-start gap-3 ${rowLinkClass ?? ""}`}
+          aria-busy={opening}
+        >
           {student.passport_url ? (
             // eslint-disable-next-line @next/next/no-img-element
             <img
@@ -971,7 +990,11 @@ function StudentListRow({
           </span>
         </Link>
 
-        <Link href={href} className="hidden min-w-0 md:block">
+        <Link
+          href={href}
+          onClick={handleOpen}
+          className={`hidden min-w-0 md:block ${rowLinkClass ?? ""}`}
+        >
           <p className="truncate text-sm text-ink/75">
             {student.enrolment?.parish_name ?? "—"}
           </p>
@@ -984,16 +1007,27 @@ function StudentListRow({
           </p>
         </Link>
 
-        <Link href={href} className="hidden text-sm text-ink/60 md:block">
+        <Link
+          href={href}
+          onClick={handleOpen}
+          className={`hidden text-sm text-ink/60 md:block ${rowLinkClass ?? ""}`}
+        >
           {slot ? SATURDAY_SLOT_LABELS[slot] : "—"}
         </Link>
 
-        <Link href={href} className="hidden flex-wrap gap-1 md:flex">
-          <FeePill label="Fee" paid={tuitionPaid} />
-          <FeePill label="Grad" paid={graduationPaid} />
+        <Link
+          href={href}
+          onClick={handleOpen}
+          className={`hidden flex-wrap gap-1 md:flex ${rowLinkClass ?? ""}`}
+        >
+          <ProgrammeFeePill lane={feeLane} />
         </Link>
 
-        <Link href={href} className="hidden md:block">
+        <Link
+          href={href}
+          onClick={handleOpen}
+          className={`hidden md:block ${rowLinkClass ?? ""}`}
+        >
           {status ? (
             <span
               className={`inline-block border px-2 py-0.5 text-[0.65rem] uppercase tracking-[0.1em] ${statusChipClass(status)}`}
@@ -1012,7 +1046,8 @@ function StudentListRow({
 
         <Link
           href={href}
-          className="ml-auto flex shrink-0 items-center justify-end text-pine/50 group-hover:text-pine md:ml-0"
+          onClick={handleOpen}
+          className={`ml-auto flex shrink-0 items-center justify-end text-pine/50 group-hover:text-pine md:ml-0 ${rowLinkClass ?? ""}`}
           aria-label={`Open ${name}`}
         >
           <span className="text-lg leading-none" aria-hidden>
@@ -1040,23 +1075,31 @@ function StudentListRow({
             Paused
           </span>
         ) : null}
-        <FeePill label="Fee" paid={tuitionPaid} />
-        <FeePill label="Grad" paid={graduationPaid} />
+        <ProgrammeFeePill lane={feeLane} />
       </div>
     </li>
   );
 }
 
-function FeePill({ label, paid }: { label: string; paid: boolean }) {
+function ProgrammeFeePill({ lane }: { lane: ReturnType<typeof studentProgrammeFeeLane> }) {
+  const label =
+    lane === "paid_full"
+      ? "Paid in full"
+      : lane === "paid_part"
+        ? "Part paid"
+        : "Not paid";
+  const tone =
+    lane === "paid_full"
+      ? "border-pine/30 bg-pine/5 text-pine"
+      : lane === "paid_part"
+        ? "border-[#8c3b2f]/30 bg-[#8c3b2f]/5 text-[#8c3b2f]"
+        : "border-stone text-ink/40";
+
   return (
     <span
-      className={`border px-1.5 py-0.5 text-[0.6rem] uppercase tracking-[0.08em] ${
-        paid
-          ? "border-pine/30 bg-pine/5 text-pine"
-          : "border-stone text-ink/40"
-      }`}
+      className={`border px-1.5 py-0.5 text-[0.6rem] uppercase tracking-[0.08em] ${tone}`}
     >
-      {label} {paid ? "✓" : "·"}
+      {label}
     </span>
   );
 }
@@ -1091,6 +1134,10 @@ function StudentsInsightGuide({ national }: { national: boolean }) {
           {
             title: "Roster status",
             body: "In review = not yet secured. On path = application payment confirmed. Paused = seat inactive.",
+          },
+          {
+            title: "Programme fee",
+            body: "Filter by paid in full, part paid, or not paid yet — one £350 programme fee, not separate tuition and graduation lines.",
           },
           {
             title: "Bulk & file",

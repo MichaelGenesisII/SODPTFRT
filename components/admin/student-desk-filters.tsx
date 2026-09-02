@@ -5,8 +5,7 @@ import { SATURDAY_SLOT_LABELS } from "@/lib/cohorts/saturday";
 import { formatBatchLabel, type Batch, type Parish } from "@/lib/parishes";
 
 export type ManualsLane = "all" | "not_sent" | "sent";
-export type FeePaidLane = "all" | "paid" | "unpaid";
-export type BothFeesLane = "all" | "both_paid";
+export type ProgrammeFeeFilter = "all" | "paid_full" | "paid_part" | "not_paid";
 export type IntakeFilter = "" | "november" | "january" | "february";
 
 export type StudentDeskFilterState = {
@@ -17,9 +16,7 @@ export type StudentDeskFilterState = {
   batchYear: string;
   saturday: string;
   manuals: ManualsLane;
-  tuition: FeePaidLane;
-  graduation: FeePaidLane;
-  bothFees: BothFeesLane;
+  programmeFee: ProgrammeFeeFilter;
 };
 
 export function defaultStudentDeskFilters(
@@ -33,9 +30,7 @@ export function defaultStudentDeskFilters(
     batchYear: "",
     saturday: "",
     manuals: "all",
-    tuition: "all",
-    graduation: "all",
-    bothFees: "all",
+    programmeFee: "all",
   };
 }
 
@@ -59,13 +54,34 @@ export function studentDeskListQuery(input: {
   if (input.filters.batchYear) params.set("byear", input.filters.batchYear);
   if (input.filters.saturday) params.set("sat", input.filters.saturday);
   if (input.filters.manuals !== "all") params.set("manuals", input.filters.manuals);
-  if (input.filters.tuition !== "all") params.set("tuition", input.filters.tuition);
-  if (input.filters.graduation !== "all") {
-    params.set("graduation", input.filters.graduation);
+  if (input.filters.programmeFee !== "all") {
+    params.set("pfee", input.filters.programmeFee);
   }
-  if (input.filters.bothFees !== "all") params.set("both", input.filters.bothFees);
   const text = params.toString();
   return text ? `?${text}` : "";
+}
+
+/** Compare list URLs regardless of query-string parameter order. */
+export function studentDeskListQueriesEqual(
+  a: string,
+  b: string,
+  parishId: string | null,
+  national: boolean,
+): boolean {
+  const left = parseStudentDeskListQuery(a, parishId, national);
+  const right = parseStudentDeskListQuery(b, parishId, national);
+  return (
+    left.lane === right.lane &&
+    left.query === right.query &&
+    left.page === right.page &&
+    left.filters.intake === right.filters.intake &&
+    left.filters.parish === right.filters.parish &&
+    left.filters.batch === right.filters.batch &&
+    left.filters.batchYear === right.filters.batchYear &&
+    left.filters.saturday === right.filters.saturday &&
+    left.filters.manuals === right.filters.manuals &&
+    left.filters.programmeFee === right.filters.programmeFee
+  );
 }
 
 export function parseStudentDeskListQuery(
@@ -88,9 +104,7 @@ export function parseStudentDeskListQuery(
       ? laneRaw
       : "all";
   const manualsRaw = params.get("manuals");
-  const tuitionRaw = params.get("tuition");
-  const graduationRaw = params.get("graduation");
-  const bothRaw = params.get("both");
+  const pfeeRaw = params.get("pfee");
   const pageRaw = params.get("page");
   const page = pageRaw ? Math.max(1, Number(pageRaw) || 1) : 1;
   const intakeRaw = params.get("intake");
@@ -113,13 +127,12 @@ export function parseStudentDeskListQuery(
       saturday: params.get("sat") ?? "",
       manuals:
         manualsRaw === "sent" || manualsRaw === "not_sent" ? manualsRaw : "all",
-      tuition:
-        tuitionRaw === "paid" || tuitionRaw === "unpaid" ? tuitionRaw : "all",
-      graduation:
-        graduationRaw === "paid" || graduationRaw === "unpaid"
-          ? graduationRaw
+      programmeFee:
+        pfeeRaw === "paid_full" ||
+        pfeeRaw === "paid_part" ||
+        pfeeRaw === "not_paid"
+          ? pfeeRaw
           : "all",
-      bothFees: bothRaw === "both_paid" ? "both_paid" : "all",
     },
   };
 }
@@ -142,34 +155,19 @@ type Preset = {
 
 const QUICK_PRESETS: Preset[] = [
   {
-    id: "both-paid",
-    label: "Both fees paid",
-    apply: (current) => ({
-      ...current,
-      tuition: "all",
-      graduation: "all",
-      bothFees: "both_paid",
-    }),
+    id: "fee-paid-full",
+    label: "Paid in full",
+    apply: (current) => ({ ...current, programmeFee: "paid_full" }),
   },
   {
-    id: "fee-follow-up",
-    label: "Tuition outstanding",
-    apply: (current) => ({
-      ...current,
-      tuition: "unpaid",
-      graduation: "all",
-      bothFees: "all",
-    }),
+    id: "fee-part",
+    label: "Part paid",
+    apply: (current) => ({ ...current, programmeFee: "paid_part" }),
   },
   {
-    id: "grad-follow-up",
-    label: "Graduation outstanding",
-    apply: (current) => ({
-      ...current,
-      tuition: "all",
-      graduation: "unpaid",
-      bothFees: "all",
-    }),
+    id: "fee-not-paid",
+    label: "Not paid yet",
+    apply: (current) => ({ ...current, programmeFee: "not_paid" }),
   },
   {
     id: "manuals-pending",
@@ -203,9 +201,7 @@ function countActiveFilters(
   if (filters.batchYear) count += 1;
   if (filters.saturday) count += 1;
   if (filters.manuals !== "all") count += 1;
-  if (filters.tuition !== "all") count += 1;
-  if (filters.graduation !== "all") count += 1;
-  if (filters.bothFees !== "all") count += 1;
+  if (filters.programmeFee !== "all") count += 1;
   return count;
 }
 
@@ -281,71 +277,30 @@ function buildActiveChips(
       reset: { manuals: "all" },
     });
   }
-  if (filters.tuition !== "all") {
+  if (filters.programmeFee !== "all") {
     chips.push({
-      key: "tuition",
-      label: filters.tuition === "paid" ? "Tuition paid" : "Tuition unpaid",
-      reset: { tuition: "all" },
-    });
-  }
-  if (filters.graduation !== "all") {
-    chips.push({
-      key: "graduation",
+      key: "programmeFee",
       label:
-        filters.graduation === "paid"
-          ? "Graduation paid"
-          : "Graduation unpaid",
-      reset: { graduation: "all" },
-    });
-  }
-  if (filters.bothFees !== "all") {
-    chips.push({
-      key: "bothFees",
-      label: "Both fees paid",
-      reset: { bothFees: "all" },
+        filters.programmeFee === "paid_full"
+          ? "Paid in full"
+          : filters.programmeFee === "paid_part"
+            ? "Part paid"
+            : "Not paid yet",
+      reset: { programmeFee: "all" },
     });
   }
 
   return chips;
 }
 
-function FeeSegmentRow({
-  label,
-  value,
-  onChange,
-}: {
-  label: string;
-  value: FeePaidLane;
-  onChange: (next: FeePaidLane) => void;
-}) {
-  return (
-    <div>
-      <p className="mb-1 text-[0.65rem] font-medium text-ink/50">{label}</p>
-      <div
-        className="flex overflow-hidden border border-stone"
-        role="group"
-        aria-label={label}
-      >
-        {(
-          [
-            ["all", "All"],
-            ["paid", "Paid"],
-            ["unpaid", "Unpaid"],
-          ] as const
-        ).map(([id, text]) => (
-          <button
-            key={id}
-            type="button"
-            onClick={() => onChange(id)}
-            className={segmentClass(value === id)}
-          >
-            {text}
-          </button>
-        ))}
-      </div>
-    </div>
-  );
-}
+const PROGRAMME_FEE_FILTER_LABELS: Record<
+  Exclude<ProgrammeFeeFilter, "all">,
+  string
+> = {
+  paid_full: "Paid in full",
+  paid_part: "Part paid",
+  not_paid: "Not paid",
+};
 
 export function StudentDeskFilters({
   query,
@@ -639,53 +594,30 @@ export function StudentDeskFilters({
             <legend className="text-[0.65rem] font-medium uppercase tracking-[0.12em] text-ink/45">
               Fees
             </legend>
-            <FeeSegmentRow
-              label="Tuition"
-              value={filters.tuition}
-              onChange={(tuition) =>
-                patch({
-                  tuition,
-                  bothFees: tuition !== "all" ? "all" : filters.bothFees,
-                })
-              }
-            />
-            <FeeSegmentRow
-              label="Graduation"
-              value={filters.graduation}
-              onChange={(graduation) =>
-                patch({
-                  graduation,
-                  bothFees: graduation !== "all" ? "all" : filters.bothFees,
-                })
-              }
-            />
             <div>
               <p className="mb-1 text-[0.65rem] font-medium text-ink/50">
-                Combined
+                Programme fee (£350)
               </p>
               <div
                 className="flex overflow-hidden border border-stone"
                 role="group"
-                aria-label="Both fees"
+                aria-label="Programme fee payment"
               >
                 {(
                   [
-                    ["all", "Any"],
-                    ["both_paid", "Both paid"],
+                    ["all", "All"],
+                    ["paid_full", PROGRAMME_FEE_FILTER_LABELS.paid_full],
+                    ["paid_part", PROGRAMME_FEE_FILTER_LABELS.paid_part],
+                    ["not_paid", PROGRAMME_FEE_FILTER_LABELS.not_paid],
                   ] as const
                 ).map(([id, text]) => (
                   <button
                     key={id}
                     type="button"
                     onClick={() =>
-                      patch({
-                        bothFees: id,
-                        tuition: id === "both_paid" ? "all" : filters.tuition,
-                        graduation:
-                          id === "both_paid" ? "all" : filters.graduation,
-                      })
+                      patch({ programmeFee: id as ProgrammeFeeFilter })
                     }
-                    className={segmentClass(filters.bothFees === id)}
+                    className={segmentClass(filters.programmeFee === id)}
                   >
                     {text}
                   </button>

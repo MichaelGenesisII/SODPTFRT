@@ -161,6 +161,20 @@ export function isStudentFeePaid(
   return fee.status === "paid" || isFeeFullyPaid(fee);
 }
 
+/** Programme fee payment lane for admin desk filters (tuition account holds £350). */
+export type ProgrammeFeeLane = "paid_full" | "paid_part" | "not_paid";
+
+export function studentProgrammeFeeLane(
+  student: AdminStudentRecord,
+): ProgrammeFeeLane {
+  const fee = studentFeeSnap(student, "tuition");
+  if (!fee) return "not_paid";
+  if (isStudentFeePaid(fee)) return "paid_full";
+  const paid = Number(fee.amount_paid_gbp) || 0;
+  if (paid > 0 || fee.status === "pending_review") return "paid_part";
+  return "not_paid";
+}
+
 export function formatAdminDate(iso?: string | null): string {
   if (!iso) return "—";
   const date = new Date(iso);
