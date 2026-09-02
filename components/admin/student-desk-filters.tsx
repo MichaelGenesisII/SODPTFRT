@@ -375,7 +375,7 @@ export function StudentDeskFilters({
   resultCount: number;
   totalCount: number;
 }) {
-  const [expanded, setExpanded] = useState(true);
+  const [expanded, setExpanded] = useState(false);
 
   const filterBatches = useMemo(
     () =>
@@ -446,8 +446,8 @@ export function StudentDeskFilters({
             aria-expanded={expanded}
           >
             {expanded
-              ? "Hide filters"
-              : `Show filters${activeCount ? ` (${activeCount})` : ""}`}
+              ? "Hide advanced filters"
+              : `Show advanced filters${activeCount ? ` (${activeCount})` : ""}`}
           </button>
         </div>
       </header>

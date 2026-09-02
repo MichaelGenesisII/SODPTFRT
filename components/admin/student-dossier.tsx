@@ -922,26 +922,33 @@ function ManagePane({
             Fees
           </p>
           <ul className="mt-3 divide-y divide-stone border-y border-stone">
-            {student.fees.length === 0 ? (
-              <li className="py-4 text-sm text-ink/45">
-                No fee rows yet (tuition / graduation).
-              </li>
-            ) : (
-              student.fees.map((fee) => (
-                <li
-                  key={fee.fee_type}
-                  className="flex items-center justify-between gap-2 py-2.5 text-sm"
-                >
-                  <span className="capitalize">{fee.fee_type}</span>
+            {(() => {
+              const programmeFee =
+                student.fees.find((fee) => fee.fee_type === "tuition") ?? null;
+              if (!programmeFee) {
+                return (
+                  <li className="py-4 text-sm text-ink/45">
+                    No programme fee recorded yet.
+                  </li>
+                );
+              }
+              return (
+                <li className="flex items-center justify-between gap-2 py-2.5 text-sm">
+                  <span>Programme fee</span>
                   <span className="text-ink/60">
-                    {formatGbp(fee.amount_paid_gbp)} /{" "}
-                    {formatGbp(fee.amount_due_gbp)} ·{" "}
-                    {FEE_STATUS_META[fee.status]?.label ?? fee.status}
+                    {formatGbp(programmeFee.amount_paid_gbp)} /{" "}
+                    {formatGbp(programmeFee.amount_due_gbp)} ·{" "}
+                    {FEE_STATUS_META[programmeFee.status]?.label ??
+                      programmeFee.status}
                   </span>
                 </li>
-              ))
-            )}
+              );
+            })()}
           </ul>
+          <p className="mt-2 text-xs leading-relaxed text-ink/50">
+            £350 programme fee (£300 tuition + £50 graduation). Tracked as one
+            balance.
+          </p>
         </div>
 
         {enrol ? (

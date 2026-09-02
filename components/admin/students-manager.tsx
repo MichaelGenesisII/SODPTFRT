@@ -509,8 +509,7 @@ export function StudentsManager({
           body: (
             <>
               This permanently removes the selected accounts, enrolment data,
-              and portal access. A notice is emailed where possible. This cannot
-              be undone.
+              and portal access. This cannot be undone.
             </>
           ),
           confirmLabel: count === 1 ? "Delete student" : "Delete students",
@@ -528,35 +527,51 @@ export function StudentsManager({
 
       <nav
         data-tour="students-tabs"
-        className="flex gap-1 overflow-x-auto border-b border-stone pb-px"
+        className="flex flex-wrap items-center justify-between gap-2 border-b border-stone pb-px"
         aria-label="Students page"
       >
-        {(
-          [
-            { id: "desk" as const, label: "Desk" },
-            { id: "insight" as const, label: "Insight" },
-          ] as const
-        ).map((tab) => {
-          const active = pageView === tab.id;
-          return (
-            <button
-              key={tab.id}
-              type="button"
-              onClick={() => setPageView(tab.id)}
-              className={`relative shrink-0 px-3 py-1.5 text-sm font-medium tracking-wide transition-colors ${
-                active ? "text-pine" : "text-ink/50 hover:text-ink/80"
-              }`}
-            >
-              {tab.label}
-              <span
-                className={`absolute inset-x-2 bottom-0 h-0.5 bg-celadon transition-opacity ${
-                  active ? "opacity-100" : "opacity-0"
+        <div className="flex gap-1 overflow-x-auto">
+          {(
+            [
+              { id: "desk" as const, label: "Desk" },
+              { id: "insight" as const, label: "Insight" },
+            ] as const
+          ).map((tab) => {
+            const active = pageView === tab.id;
+            return (
+              <button
+                key={tab.id}
+                type="button"
+                onClick={() => setPageView(tab.id)}
+                className={`relative shrink-0 px-3 py-1.5 text-sm font-medium tracking-wide transition-colors ${
+                  active ? "text-pine" : "text-ink/50 hover:text-ink/80"
                 }`}
-                aria-hidden
-              />
-            </button>
-          );
-        })}
+              >
+                {tab.label}
+                <span
+                  className={`absolute inset-x-2 bottom-0 h-0.5 bg-celadon transition-opacity ${
+                    active ? "opacity-100" : "opacity-0"
+                  }`}
+                  aria-hidden
+                />
+              </button>
+            );
+          })}
+        </div>
+        {pageView === "desk" ? (
+          <button
+            type="button"
+            onClick={() => {
+              setBusyLabel("Refreshing students…");
+              router.refresh();
+              window.setTimeout(() => setBusyLabel(null), 800);
+            }}
+            disabled={busy}
+            className="shrink-0 border border-stone bg-white/70 px-2.5 py-1 text-xs font-medium text-ink/70 hover:border-pine/40 hover:text-pine disabled:opacity-50"
+          >
+            Refresh
+          </button>
+        ) : null}
       </nav>
 
       {pageView === "insight" ? (

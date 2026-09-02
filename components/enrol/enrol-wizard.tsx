@@ -707,6 +707,8 @@ export function EnrolWizard({
                       }
                       options={COUNTRIES}
                       placeholder="Select country"
+                      searchable
+                      searchPlaceholder="Search country…"
                       error={errors.country}
                     />
                   </div>
@@ -777,6 +779,8 @@ export function EnrolWizard({
                 onChange={(value) => updateField(setData, "nationality", value)}
                 options={COUNTRIES}
                 placeholder="Select country"
+                searchable
+                searchPlaceholder="Search country…"
                 error={errors.nationality}
               />
             </div>

@@ -1,6 +1,13 @@
 "use client";
 
-import type { HTMLAttributes, ReactNode } from "react";
+import {
+  useEffect,
+  useId,
+  useRef,
+  useState,
+  type HTMLAttributes,
+  type ReactNode,
+} from "react";
 
 export function FieldLabel({
   htmlFor,
@@ -118,6 +125,11 @@ export function TextArea({
   );
 }
 
+/**
+ * Custom select that always opens downward. Native <select> lets the browser
+ * flip the menu upward when viewport space is tight — awkward mid-form.
+ * Pass `searchable` (or leave default for longer lists) to type-filter options.
+ */
 export function SelectInput({
   id,
   value,
@@ -125,6 +137,8 @@ export function SelectInput({
   options,
   placeholder,
   error,
+  searchable,
+  searchPlaceholder = "Search…",
 }: {
   id: string;
   value: string;
@@ -132,33 +146,181 @@ export function SelectInput({
   options: readonly string[] | readonly { value: string; label: string }[];
   placeholder: string;
   error?: string;
+  /** Type to filter options. Defaults on when there are more than 8 choices. */
+  searchable?: boolean;
+  searchPlaceholder?: string;
 }) {
+  const listId = useId();
+  const searchId = useId();
+  const rootRef = useRef<HTMLDivElement>(null);
+  const searchRef = useRef<HTMLInputElement>(null);
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+
   const normalized = options.map((option) =>
     typeof option === "string"
       ? { value: option, label: option }
       : option,
   );
+  const allowSearch = searchable ?? normalized.length > 8;
+  const selectedLabel =
+    normalized.find((option) => option.value === value)?.label ?? "";
+
+  const filtered = (() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return normalized;
+    return normalized.filter((option) =>
+      option.label.toLowerCase().includes(q),
+    );
+  })();
+
+  useEffect(() => {
+    if (!open) return;
+
+    function onPointerDown(event: MouseEvent | TouchEvent) {
+      const target = event.target as Node | null;
+      if (target && !rootRef.current?.contains(target)) {
+        setOpen(false);
+      }
+    }
+    function onKey(event: KeyboardEvent) {
+      if (event.key === "Escape") setOpen(false);
+    }
+
+    document.addEventListener("mousedown", onPointerDown);
+    document.addEventListener("touchstart", onPointerDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onPointerDown);
+      document.removeEventListener("touchstart", onPointerDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) {
+      setQuery("");
+      return;
+    }
+    if (allowSearch) {
+      window.requestAnimationFrame(() => searchRef.current?.focus());
+    }
+  }, [open, allowSearch]);
+
+  function openMenu() {
+    setOpen(true);
+    // Keep the field high enough that the downward list stays on screen.
+    window.requestAnimationFrame(() => {
+      rootRef.current?.scrollIntoView({
+        behavior: "smooth",
+        block: "center",
+      });
+    });
+  }
+
+  function closeMenu() {
+    setOpen(false);
+    setQuery("");
+  }
 
   return (
-    <div>
-      <select
+    <div className="relative" ref={rootRef}>
+      <button
         id={id}
-        value={value}
-        onChange={(event) => onChange(event.target.value)}
+        type="button"
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        aria-controls={listId}
         aria-invalid={Boolean(error)}
-        className={`w-full appearance-none border bg-mist/60 px-4 py-3 text-[0.95rem] text-ink outline-none transition-[border-color,background-color] duration-300 focus:bg-mist ${
+        onClick={() => {
+          if (open) closeMenu();
+          else openMenu();
+        }}
+        className={`flex w-full items-center justify-between gap-3 border bg-mist/60 px-4 py-3 text-left text-[0.95rem] outline-none transition-[border-color,background-color] duration-300 focus:bg-mist ${
           error
             ? "border-red-700/50 focus:border-red-700"
             : "border-stone focus:border-pine"
-        } ${value ? "" : "text-ink/35"}`}
+        } ${selectedLabel ? "text-ink" : "text-ink/35"}`}
       >
-        <option value="">{placeholder}</option>
-        {normalized.map((option) => (
-          <option key={option.value} value={option.value} className="text-ink">
-            {option.label}
-          </option>
-        ))}
-      </select>
+        <span className="min-w-0 truncate">
+          {selectedLabel || placeholder}
+        </span>
+        <span
+          className={`shrink-0 text-ink/45 transition-transform ${open ? "rotate-180" : ""}`}
+          aria-hidden
+        >
+          ▾
+        </span>
+      </button>
+
+      {open ? (
+        <div className="absolute left-0 right-0 top-full z-30 mt-1 border border-stone bg-mist shadow-[0_12px_28px_-18px_rgba(20,53,44,0.45)]">
+          {allowSearch ? (
+            <div className="border-b border-stone p-2">
+              <label htmlFor={searchId} className="sr-only">
+                {searchPlaceholder}
+              </label>
+              <input
+                ref={searchRef}
+                id={searchId}
+                type="search"
+                value={query}
+                autoComplete="off"
+                autoCorrect="off"
+                spellCheck={false}
+                placeholder={searchPlaceholder}
+                onChange={(event) => setQuery(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    const first = filtered[0];
+                    if (first) {
+                      onChange(first.value);
+                      closeMenu();
+                    }
+                  }
+                }}
+                className="w-full border border-stone bg-white/80 px-3 py-2 text-sm text-ink outline-none placeholder:text-ink/35 focus:border-pine"
+              />
+            </div>
+          ) : null}
+          <ul
+            id={listId}
+            role="listbox"
+            aria-labelledby={id}
+            className="max-h-52 overflow-y-auto"
+          >
+            {filtered.length === 0 ? (
+              <li className="px-4 py-3 text-sm text-ink/50">No matches.</li>
+            ) : (
+              filtered.map((option) => {
+                const active = option.value === value;
+                return (
+                  <li key={option.value} role="presentation">
+                    <button
+                      type="button"
+                      role="option"
+                      aria-selected={active}
+                      onMouseDown={(event) => event.preventDefault()}
+                      onClick={() => {
+                        onChange(option.value);
+                        closeMenu();
+                      }}
+                      className={`w-full px-4 py-2.5 text-left text-sm leading-snug transition-colors ${
+                        active
+                          ? "bg-pine text-mist"
+                          : "text-ink hover:bg-white/80"
+                      }`}
+                    >
+                      {option.label}
+                    </button>
+                  </li>
+                );
+              })
+            )}
+          </ul>
+        </div>
+      ) : null}
       <FieldError message={error} />
     </div>
   );

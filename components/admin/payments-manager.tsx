@@ -140,11 +140,31 @@ export function PaymentsManager({
   const [lane, setLane] = useState<Lane>("pending");
   const [feeFilter, setFeeFilter] = useState<"all" | FeeType>("all");
   const [query, setQuery] = useState("");
-  const [selectedId, setSelectedId] = useState<string | null>(
-    pending[0]?.id ?? null,
-  );
+  const [selectedId, setSelectedId] = useState<string | null>(() => {
+    if (initialUserId) {
+      const forStudent = [...pending, ...recentPaid].filter(
+        (row) => row.user_id === initialUserId,
+      );
+      const pick =
+        forStudent.find((row) => row.status === "pending_review") ??
+        forStudent[0];
+      return pick?.id ?? null;
+    }
+    return pending[0]?.id ?? null;
+  });
+  const [focusUserMissing, setFocusUserMissing] = useState(() => {
+    if (!initialUserId) return false;
+    return ![...pending, ...recentPaid].some(
+      (row) => row.user_id === initialUserId,
+    );
+  });
   const [mobileSurface, setMobileSurface] =
-    useState<MobileSurface>("directory");
+    useState<MobileSurface>(() =>
+      initialUserId &&
+      [...pending, ...recentPaid].some((row) => row.user_id === initialUserId)
+        ? "workspace"
+        : "directory",
+    );
   const [page, setPage] = useState(1);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
@@ -193,11 +213,20 @@ export function PaymentsManager({
   const rangeTo = Math.min(pageStart + PAYMENTS_PAGE_SIZE, rows.length);
 
   useEffect(() => {
-    if (!initialUserId) return;
+    if (!initialUserId) {
+      setFocusUserMissing(false);
+      return;
+    }
     const forStudent = [...pending, ...recentPaid].filter(
       (row) => row.user_id === initialUserId,
     );
-    if (forStudent.length === 0) return;
+    if (forStudent.length === 0) {
+      setFocusUserMissing(true);
+      setSelectedId(null);
+      setMobileSurface("directory");
+      return;
+    }
+    setFocusUserMissing(false);
     const pick =
       forStudent.find((row) => row.status === "pending_review") ??
       forStudent[0]!;
@@ -218,17 +247,39 @@ export function PaymentsManager({
   }, [page, totalPages]);
 
   const selected = useMemo(() => {
-    const fromRows = rows.find((r) => r.id === selectedId);
-    if (fromRows) return fromRows;
-    return rows[0] ?? null;
-  }, [rows, selectedId]);
+    if (!selectedId) return null;
+    return (
+      rows.find((r) => r.id === selectedId) ??
+      pending.find((r) => r.id === selectedId) ??
+      recentPaid.find((r) => r.id === selectedId) ??
+      null
+    );
+  }, [rows, selectedId, pending, recentPaid]);
 
   useEffect(() => {
-    if (selected && !rows.some((r) => r.id === selected.id)) {
+    if (!selectedId) return;
+    if (focusUserMissing) return;
+    const stillPresent =
+      rows.some((r) => r.id === selectedId) ||
+      pending.some((r) => r.id === selectedId) ||
+      recentPaid.some((r) => r.id === selectedId);
+    if (!stillPresent) {
+      // Keep focus on the linked student — do not jump to another queue row.
+      if (initialUserId) {
+        setSelectedId(null);
+        return;
+      }
       setSelectedId(rows[0]?.id ?? null);
       setMobileSurface("directory");
     }
-  }, [rows, selected]);
+  }, [
+    rows,
+    selectedId,
+    pending,
+    recentPaid,
+    initialUserId,
+    focusUserMissing,
+  ]);
 
   const directoryClass =
     mobileSurface === "directory" ? "block" : "hidden lg:block";
@@ -577,13 +628,37 @@ export function PaymentsManager({
               />
               {!selected ? (
                 <div className="flex h-full min-h-[16rem] flex-col items-center justify-center px-5 py-12 text-center sm:min-h-[20rem]">
-                  <p className="font-display text-xl text-pine">
-                    Open a proof
-                  </p>
-                  <p className="mt-1.5 max-w-sm text-sm text-ink/55">
-                    Select a bank transfer from the queue to preview the upload
-                    and approve or return it.
-                  </p>
+                  {focusUserMissing && initialUserId ? (
+                    <>
+                      <p className="font-display text-xl text-pine">
+                        No proof in this queue
+                      </p>
+                      <p className="mt-1.5 max-w-sm text-sm text-ink/55">
+                        This student has no bank transfer waiting for review
+                        (and no recent bank payment in the paid lane). Open
+                        their student file to check fee status, or pick another
+                        proof from the queue.
+                      </p>
+                      <Link
+                        href={
+                          studentBackHref ?? `/admin/students/${initialUserId}`
+                        }
+                        className="mt-4 inline-flex min-h-10 items-center justify-center border border-pine/30 bg-white/70 px-4 py-2 text-sm font-medium text-pine hover:border-pine"
+                      >
+                        Back to student file
+                      </Link>
+                    </>
+                  ) : (
+                    <>
+                      <p className="font-display text-xl text-pine">
+                        Open a proof
+                      </p>
+                      <p className="mt-1.5 max-w-sm text-sm text-ink/55">
+                        Select a bank transfer from the queue to preview the
+                        upload and approve or return it.
+                      </p>
+                    </>
+                  )}
                 </div>
               ) : (
                 <div className="animate-panel-in flex h-full flex-col">

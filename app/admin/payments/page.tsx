@@ -22,9 +22,12 @@ export default async function AdminPaymentsPage({ searchParams }: Props) {
 
   const params = (await searchParams) ?? {};
   const initialUserId = params.user?.trim() || undefined;
-  const studentBackHref = params.from?.startsWith("student:")
-    ? `/admin/students/${params.from.slice("student:".length)}`
-    : undefined;
+  const fromRaw = typeof params.from === "string" ? params.from.trim() : "";
+  const studentBackHref = fromRaw.startsWith("student:")
+    ? `/admin/students/${fromRaw.slice("student:".length)}`
+    : initialUserId
+      ? `/admin/students/${initialUserId}`
+      : undefined;
 
   let pending: Awaited<ReturnType<typeof listAdminPaymentQueue>> = [];
   let recent: Awaited<ReturnType<typeof listAdminPaymentQueue>> = [];
