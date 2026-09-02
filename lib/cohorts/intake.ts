@@ -159,7 +159,8 @@ function year1EnrolOpens(intakeKey: IntakeKey, cycleYear: number): Date {
 export function programmeCycleYear(asOf: Date = new Date()): number {
   const y = asOf.getFullYear();
   const m = asOf.getMonth();
-  return m >= 10 ? y : y - 1;
+  // C1 enrolment opens 1 September of the cycle year — treat Sep–Dec as that cycle.
+  return m >= 8 ? y : y - 1;
 }
 
 function isAfter(a: Date, b: Date): boolean {
