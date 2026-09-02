@@ -760,19 +760,6 @@ export async function deleteStudentAccount(
       p_email: access.profile.email,
     });
 
-    const { sendStudentRemovedEmail } = await import(
-      "@/lib/email/payment-mail"
-    );
-    const { portalBaseUrl } = await import("@/lib/email/backend");
-    const { SOD_SITE } = await import("@/lib/site-nav");
-    const mailed = await sendStudentRemovedEmail({
-      to: access.profile.email,
-      firstName: access.profile.first_name,
-      portalSupportUrl: `${portalBaseUrl()}/support`,
-      siteUrl: SOD_SITE,
-      enrolUrl: `${portalBaseUrl()}/enrol`,
-    });
-
     // Remove profile before Auth so a failed Auth cleanup does not block re-enrol.
     await service.from("student_profiles").delete().eq("id", studentId);
 
@@ -788,26 +775,12 @@ export async function deleteStudentAccount(
         .filter(Boolean)
         .join(" ") || access.profile.email;
     if (error) {
-      const cleanupNote =
-        `${label} was removed. They can enrol again with the same email.`;
-      if (!mailed.ok) {
-        return {
-          ok: true,
-          message: publicEmailFailureMessage(cleanupNote, mailed.message),
-        };
-      }
-      return { ok: true, message: cleanupNote };
-    }
-    if (!mailed.ok) {
       return {
         ok: true,
-        message: publicEmailFailureMessage(
-          `${label} removed.`,
-          mailed.message,
-        ),
+        message: `${label} was removed. They can enrol again with the same email.`,
       };
     }
-    return { ok: true, message: `${label} removed and emailed.` };
+    return { ok: true, message: `${label} removed.` };
   } catch (error) {
     if (error instanceof Error && error.message === "Unauthorized") {
       return unauthorized();
