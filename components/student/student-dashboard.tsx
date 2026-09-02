@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useState, useSyncExternalStore, type ReactNode } from "react";
 import { PhotoUploadCard } from "@/components/student/photo-upload-card";
+import { StudentPaymentDueSummary } from "@/components/student/student-payment-due-summary";
 import {
   StudentPortalWalkthroughTrigger,
 } from "@/components/student/student-portal-walkthrough";
@@ -350,6 +351,9 @@ export function StudentDashboard({
       payment === "pending_review");
   const needsPayment = Boolean(enrolment && !rejected && !paid && payWindow);
   const proofInReview = payment === "pending_review" && !paid;
+  const paymentIncomplete = Boolean(
+    enrolment && !rejected && !paid,
+  );
 
   return (
     <div className="relative mx-auto w-full max-w-5xl px-0">
@@ -381,6 +385,8 @@ export function StudentDashboard({
           journey={journey}
           notices={notices}
           noticesError={noticesError}
+          paymentIncomplete={paymentIncomplete}
+          canPayNow={Boolean(payWindow)}
         />
       ) : (
         <ApplicationView
@@ -394,6 +400,8 @@ export function StudentDashboard({
           needsPayment={needsPayment}
           proofInReview={proofInReview}
           paid={Boolean(paid)}
+          paymentIncomplete={paymentIncomplete}
+          canPayNow={Boolean(payWindow)}
         />
       )}
     </div>
@@ -461,6 +469,8 @@ function OverviewView({
   journey,
   notices,
   noticesError,
+  paymentIncomplete,
+  canPayNow,
 }: {
   profile: StudentProfile;
   first: string;
@@ -474,6 +484,8 @@ function OverviewView({
   journey: JourneyStep[];
   notices: Announcement[];
   noticesError: string | null;
+  paymentIncomplete: boolean;
+  canPayNow: boolean;
 }) {
   const [pendingExternal, setPendingExternal] = useState<
     | { kind: "link"; href: string; label: string }
@@ -492,10 +504,6 @@ function OverviewView({
   ]
     .filter(Boolean)
     .join(" · ");
-  const feesStillDue =
-    Boolean(enrolment) &&
-    payment !== "paid" &&
-    enrolment?.status !== "rejected";
   const tuitionRemaining = Math.max(0, tuitionDueGbp - tuitionPaidGbp);
 
   function openExternal(href: string, download?: string) {
@@ -585,12 +593,13 @@ function OverviewView({
                 </Link>
               )}
               {enrolment ? (
-                needsPassport && feesStillDue ? (
+                paymentIncomplete &&
+                continueTo.href !== "/student/payments" ? (
                   <Link
                     href="/student/payments"
                     className="inline-flex min-h-11 w-full items-center justify-center border border-mist/35 px-5 py-3 text-sm font-medium tracking-wide text-mist/90 transition-colors hover:border-mist hover:bg-mist/10 sm:w-auto"
                   >
-                    Payments
+                    {payment === "pending_review" ? "Track payment" : "Pay now"}
                   </Link>
                 ) : (
                   <button
@@ -707,6 +716,18 @@ function OverviewView({
           </p>
         ) : null}
       </section>
+
+      {paymentIncomplete && enrolment ? (
+        <StudentPaymentDueSummary
+          className="animate-fade-rise-delay-2 border-x border-b border-stone"
+          reference={enrolment.reference}
+          referenceCompact={enrolment.reference_compact}
+          tuitionPaidGbp={tuitionPaidGbp}
+          tuitionDueGbp={tuitionDueGbp}
+          payment={payment}
+          canPayNow={canPayNow}
+        />
+      ) : null}
 
       {needsPassport ? (
         <section
@@ -971,6 +992,8 @@ function ApplicationView({
   needsPayment,
   proofInReview,
   paid,
+  paymentIncomplete,
+  canPayNow,
 }: {
   profile: StudentProfile;
   enrolment: StudentEnrolment | null;
@@ -982,6 +1005,8 @@ function ApplicationView({
   needsPayment: boolean;
   proofInReview: boolean;
   paid: boolean;
+  paymentIncomplete: boolean;
+  canPayNow: boolean;
 }) {
   return (
     <div
@@ -1133,6 +1158,19 @@ function ApplicationView({
           </div>
         </div>
       </section>
+
+      {paymentIncomplete && enrolment ? (
+        <section className="pb-8 sm:pb-10">
+          <StudentPaymentDueSummary
+            reference={enrolment.reference}
+            referenceCompact={enrolment.reference_compact}
+            tuitionPaidGbp={tuitionPaidGbp}
+            tuitionDueGbp={tuitionDueGbp}
+            payment={payment}
+            canPayNow={canPayNow}
+          />
+        </section>
+      ) : null}
 
       {enrolment ? (
         <section className="relative pb-10 sm:pb-12" data-tour="student-application-form">

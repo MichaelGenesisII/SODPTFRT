@@ -60,6 +60,10 @@ import {
   buildCampaignEmail,
   type CampaignMailInput,
 } from "@/lib/email/templates/campaign";
+import {
+  buildPortalMigrationEmail,
+  type PortalMigrationEmailInput,
+} from "@/lib/email/templates/portal-migration";
 
 export type { TemplateOverride };
 
@@ -408,6 +412,18 @@ export async function sendExamResultCertificateEmail(input: {
     to: input.to,
     ...built,
     channel: "exam-result-certificate",
+  });
+}
+
+export async function sendPortalMigrationEmail(input: {
+  to: string;
+  template: PortalMigrationEmailInput;
+}) {
+  const built = buildPortalMigrationEmail(input.template);
+  return dispatch({
+    to: input.to,
+    ...built,
+    channel: "enrolment-confirmation",
   });
 }
 

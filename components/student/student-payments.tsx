@@ -122,11 +122,13 @@ export function StudentPaymentsBoard({
   );
 
   const tuitionAccount = byType.tuition;
+  const tuitionFullyPaid = Boolean(
+    tuitionAccount && isFeeFullyPaid(tuitionAccount),
+  );
   const passportUnlocked = hasTuitionInstallmentPaid(tuitionAccount);
-  const graduationPaid = byType.graduation ? isFeeFullyPaid(byType.graduation) : false;
   const needsPassport = passportUnlocked && !passportUploaded;
   const needsSelfie =
-    graduationPaid &&
+    tuitionFullyPaid &&
     (!graduationSelfieUploaded || graduationSelfieTakenDown);
 
   // Passport lives on the tuition fee row (often still Due after a partial payment).
@@ -137,8 +139,11 @@ export function StudentPaymentsBoard({
       : null;
 
   const defaultTab: PaymentsTab =
-    photoTab ??
-    (review.length > 0 ? "review" : due.length > 0 ? "due" : "paid");
+    due.length > 0
+      ? "due"
+      : review.length > 0
+        ? "review"
+        : photoTab ?? "paid";
   const [tab, setTab] = useState<PaymentsTab>(defaultTab);
   const [openType, setOpenType] = useState<FeeType | null>(() => {
     if (needsPassport) return "tuition";
