@@ -110,11 +110,6 @@ export async function submitEnrolment(
     const service = createServiceSupabaseClient();
 
     const intakeAssignment = resolveIntakeForEnrolment(new Date());
-    if (!intakeAssignment.enrolOpen) {
-      return enrolFail(
-        "Enrolment is not open for this intake right now. Please try again when the next intake opens, or contact Support.",
-      );
-    }
 
     if (!saturdayCohortId) {
       return enrolFail("Please choose which Saturday cohort you will attend.");

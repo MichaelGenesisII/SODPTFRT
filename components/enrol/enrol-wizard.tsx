@@ -1051,12 +1051,6 @@ export function EnrolWizard({
                   </>
                 ) : null}
               </p>
-              {!intakeContext.enrolOpen ? (
-                <p className="mb-3 text-sm text-red-900">
-                  Enrolment for this intake is not open right now. Please try
-                  again when the next intake opens, or contact Support.
-                </p>
-              ) : null}
               <SaturdayCohortPicker
                 cohorts={saturdayCohorts}
                 value={data.saturdayCohortId}

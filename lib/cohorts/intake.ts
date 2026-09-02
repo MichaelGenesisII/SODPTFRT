@@ -138,20 +138,20 @@ function dayAfter(date: Date): Date {
 
 /**
  * Enrolment windows (not class start dates):
- * - C1: from 1 Sep of the cycle year
- * - C2: day after C1 closes (covers Dec → early Jan)
+ * - C1: day after previous cycle's C3 closes (continuous — form is always open)
+ * - C2: day after C1 closes
  * - C3: day after C2 closes
  */
 function year1EnrolOpens(intakeKey: IntakeKey, cycleYear: number): Date {
   switch (intakeKey) {
     case "november":
-      return new Date(cycleYear, 8, 1);
+      return dayAfter(year1EnrolDeadline("february", cycleYear - 1));
     case "january":
       return dayAfter(year1EnrolDeadline("november", cycleYear));
     case "february":
       return dayAfter(year1EnrolDeadline("january", cycleYear));
     default:
-      return new Date(cycleYear, 8, 1);
+      return dayAfter(year1EnrolDeadline("february", cycleYear - 1));
   }
 }
 
@@ -159,8 +159,29 @@ function year1EnrolOpens(intakeKey: IntakeKey, cycleYear: number): Date {
 export function programmeCycleYear(asOf: Date = new Date()): number {
   const y = asOf.getFullYear();
   const m = asOf.getMonth();
-  // C1 enrolment opens 1 September of the cycle year — treat Sep–Dec as that cycle.
   return m >= 8 ? y : y - 1;
+}
+
+function assignmentForIntake(
+  intakeKey: IntakeKey,
+  cycleYear: number,
+  asOf: Date,
+  slots: readonly (1 | 2 | 3 | 4)[],
+  useRemainingSlots: boolean,
+): EnrolIntakeAssignment {
+  const year1Slots = useRemainingSlots
+    ? availableYear1SaturdaySlots(intakeKey, cycleYear, asOf)
+    : [...slots];
+  return {
+    intakeKey,
+    label: INTAKE_LABELS[intakeKey],
+    year1SaturdaySlots: year1Slots,
+    saturdayForced: year1Slots.length === 1,
+    enrolOpen: true,
+    enrolClosesLabel: formatEnrolClose(
+      year1EnrolDeadline(intakeKey, cycleYear),
+    ),
+  };
 }
 
 function isAfter(a: Date, b: Date): boolean {
@@ -182,8 +203,8 @@ function formatEnrolClose(deadline: Date): string {
 
 /**
  * Resolve which fixed intake a new applicant joins from today's date.
- * Windows: C1 until Fri before 4th Sat Nov → C2 until Fri before 4th Sat Jan →
- * C3 until Fri before 4th Sat Feb → next C1 (November).
+ * The form is always open — applicants are auto-assigned to the current or
+ * next intake window (C1 → C2 → C3 → next C1).
  */
 export function resolveIntakeForEnrolment(
   asOf: Date = new Date(),
@@ -201,43 +222,21 @@ export function resolveIntakeForEnrolment(
     const opens = year1EnrolOpens(w.key, cycle);
     const closes = year1EnrolDeadline(w.key, cycle);
     if (!isBefore(d, opens) && !isAfter(d, closes)) {
-      const slots = availableYear1SaturdaySlots(w.key, cycle, d);
-      return {
-        intakeKey: w.key,
-        label: INTAKE_LABELS[w.key],
-        year1SaturdaySlots: slots,
-        saturdayForced: slots.length === 1,
-        enrolOpen: true,
-        enrolClosesLabel: formatEnrolClose(closes),
-      };
+      return assignmentForIntake(w.key, cycle, d, w.slots, true);
     }
   }
 
-  // Between windows: assign next upcoming intake.
+  // Between windows in this cycle — next upcoming intake (still open).
   for (const w of windows) {
     const opens = year1EnrolOpens(w.key, cycle);
     if (isBefore(d, opens)) {
-      return {
-        intakeKey: w.key,
-        label: INTAKE_LABELS[w.key],
-        year1SaturdaySlots: w.slots,
-        saturdayForced: false,
-        enrolOpen: false,
-        enrolClosesLabel: formatEnrolClose(year1EnrolDeadline(w.key, cycle)),
-      };
+      return assignmentForIntake(w.key, cycle, d, w.slots, false);
     }
   }
 
   // After February close → next November cycle.
   const nextCycle = cycle + 1;
-  return {
-    intakeKey: "november",
-    label: INTAKE_LABELS.november,
-    year1SaturdaySlots: [1, 2, 3, 4],
-    saturdayForced: false,
-    enrolOpen: false,
-    enrolClosesLabel: formatEnrolClose(year1EnrolDeadline("november", nextCycle)),
-  };
+  return assignmentForIntake("november", nextCycle, d, [1, 2, 3, 4], false);
 }
 
 /**
