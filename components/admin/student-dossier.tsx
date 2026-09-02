@@ -30,7 +30,7 @@ import {
 } from "@/lib/admin/students";
 import { isNationalAdmin, type AdminProfile } from "@/lib/admin/profile";
 import { ATTENDANCE_MODES } from "@/lib/enrol/schema";
-import { FEE_STATUS_META, formatGbp } from "@/lib/payments/fees";
+import { formatGbp } from "@/lib/payments/fees";
 import {
   ACCOUNT_KIND_LABELS,
 } from "@/lib/student/account";
@@ -921,34 +921,121 @@ function ManagePane({
           <p className="text-[0.65rem] font-medium uppercase tracking-[0.14em] text-celadon">
             Fees
           </p>
-          <ul className="mt-3 divide-y divide-stone border-y border-stone">
-            {(() => {
-              const programmeFee =
-                student.fees.find((fee) => fee.fee_type === "tuition") ?? null;
-              if (!programmeFee) {
-                return (
-                  <li className="py-4 text-sm text-ink/45">
-                    No programme fee recorded yet.
-                  </li>
-                );
-              }
+          {(() => {
+            const programmeFee =
+              student.fees.find((fee) => fee.fee_type === "tuition") ?? null;
+            if (!programmeFee) {
               return (
-                <li className="flex items-center justify-between gap-2 py-2.5 text-sm">
-                  <span>Programme fee</span>
-                  <span className="text-ink/60">
-                    {formatGbp(programmeFee.amount_paid_gbp)} /{" "}
-                    {formatGbp(programmeFee.amount_due_gbp)} ·{" "}
-                    {FEE_STATUS_META[programmeFee.status]?.label ??
-                      programmeFee.status}
-                  </span>
-                </li>
+                <p className="mt-3 border border-dashed border-stone px-4 py-4 text-sm text-ink/45">
+                  No programme fee recorded yet.
+                </p>
               );
-            })()}
-          </ul>
-          <p className="mt-2 text-xs leading-relaxed text-ink/50">
-            £350 programme fee (£300 tuition + £50 graduation). Tracked as one
-            balance.
-          </p>
+            }
+
+            const paid = Number(programmeFee.amount_paid_gbp) || 0;
+            const due = Number(programmeFee.amount_due_gbp) || 0;
+            const left = Math.max(0, due - paid);
+            const progress = due > 0 ? Math.min(100, (paid / due) * 100) : 0;
+            const fullyPaid = left <= 0 && due > 0;
+            const inReview = programmeFee.status === "pending_review";
+            const started = paid > 0 || inReview || fullyPaid;
+
+            return (
+              <div className="mt-3 border border-stone bg-white/55">
+                <div className="flex flex-wrap items-start justify-between gap-3 border-b border-stone px-4 py-3.5">
+                  <div>
+                    <p className="font-medium text-pine">Programme fee</p>
+                    <p className="mt-0.5 text-xs text-ink/50">
+                      £350 · tuition £300 + graduation £50
+                    </p>
+                  </div>
+                  <span
+                    className={`shrink-0 border px-2 py-0.5 text-[0.65rem] font-medium uppercase tracking-[0.1em] ${
+                      fullyPaid
+                        ? "border-pine/30 bg-pine/5 text-pine"
+                        : inReview
+                          ? "border-[#8c3b2f]/30 bg-[#8c3b2f]/5 text-[#8c3b2f]"
+                          : started
+                            ? "border-celadon/40 text-celadon"
+                            : "border-stone text-ink/45"
+                    }`}
+                  >
+                    {fullyPaid
+                      ? "Paid in full"
+                      : inReview
+                        ? "Proof in review"
+                        : started
+                          ? "In progress"
+                          : "Not started"}
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-3 gap-px border-b border-stone bg-stone">
+                  <div className="bg-mist/80 px-3 py-3">
+                    <p className="text-[0.6rem] font-medium uppercase tracking-[0.12em] text-ink/40">
+                      Due
+                    </p>
+                    <p className="mt-1 font-display text-lg tabular-nums text-pine">
+                      {formatGbp(due)}
+                    </p>
+                  </div>
+                  <div className="bg-mist/80 px-3 py-3">
+                    <p className="text-[0.6rem] font-medium uppercase tracking-[0.12em] text-ink/40">
+                      Paid
+                    </p>
+                    <p className="mt-1 font-display text-lg tabular-nums text-pine">
+                      {formatGbp(paid)}
+                    </p>
+                  </div>
+                  <div className="bg-mist/80 px-3 py-3">
+                    <p className="text-[0.6rem] font-medium uppercase tracking-[0.12em] text-ink/40">
+                      Left
+                    </p>
+                    <p className="mt-1 font-display text-lg tabular-nums text-pine">
+                      {formatGbp(left)}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="px-4 py-3.5">
+                  <div
+                    className="h-2 overflow-hidden bg-stone/80"
+                    role="progressbar"
+                    aria-valuenow={Math.round(progress)}
+                    aria-valuemin={0}
+                    aria-valuemax={100}
+                    aria-label="Programme fee progress"
+                  >
+                    <div
+                      className={`h-full transition-[width] ${
+                        fullyPaid ? "bg-pine" : "bg-celadon"
+                      }`}
+                      style={{ width: `${progress}%` }}
+                    />
+                  </div>
+                  <p className="mt-2 text-xs leading-relaxed text-ink/55">
+                    {fullyPaid
+                      ? "Balance cleared. Place is secured on fees."
+                      : started
+                        ? `${Math.round(progress)}% of the programme fee received${
+                            inReview
+                              ? " · bank proof waiting on Payments"
+                              : ""
+                          }.`
+                        : "Student has not started paying. They can settle from the student Payments page."}
+                  </p>
+                  {inReview ? (
+                    <Link
+                      href={`/admin/payments?user=${student.id}&from=${encodeURIComponent(`student:${student.id}`)}`}
+                      className="mt-3 inline-flex text-sm font-medium text-pine underline"
+                    >
+                      Review bank proof on Payments →
+                    </Link>
+                  ) : null}
+                </div>
+              </div>
+            );
+          })()}
         </div>
 
         {enrol ? (

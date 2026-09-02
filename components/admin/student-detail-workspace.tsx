@@ -26,6 +26,7 @@ import {
   type AdminStudentRecord,
 } from "@/lib/admin/students";
 import type { AdminProfile } from "@/lib/admin/profile";
+import { formatGbp } from "@/lib/payments/fees";
 import type { Batch, Parish } from "@/lib/parishes";
 
 export type { StudentPendingConfirm };
@@ -56,6 +57,7 @@ export function StudentDetailWorkspace({
   const [revealedPassword, setRevealedPassword] = useState<string | null>(null);
   const [pendingConfirm, setPendingConfirm] =
     useState<StudentPendingConfirm | null>(null);
+  const [paymentEmptyOpen, setPaymentEmptyOpen] = useState(false);
 
   useEffect(() => {
     if (!pendingConfirm) return;
@@ -69,6 +71,19 @@ export function StudentDetailWorkspace({
       document.body.style.overflow = "";
     };
   }, [pendingConfirm, busy]);
+
+  useEffect(() => {
+    if (!paymentEmptyOpen) return;
+    function onKey(event: KeyboardEvent) {
+      if (event.key === "Escape") setPaymentEmptyOpen(false);
+    }
+    document.addEventListener("keydown", onKey);
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.body.style.overflow = "";
+    };
+  }, [paymentEmptyOpen]);
 
   function run(
     action: () => Promise<StudentActionResult>,
@@ -171,9 +186,20 @@ export function StudentDetailWorkspace({
 
   const name = studentFullName(student);
   const relatedFrom = `student:${student.id}`;
+  const programmeFee =
+    student.fees.find((fee) => fee.fee_type === "tuition") ?? null;
+  const paidGbp = programmeFee?.amount_paid_gbp ?? 0;
+  const dueGbp = programmeFee?.amount_due_gbp ?? 0;
+  const remainingGbp = Math.max(0, dueGbp - paidGbp);
   const hasPaymentReview =
     student.fees.some((fee) => fee.status === "pending_review") ||
     student.enrolment?.payment_status === "pending_review";
+  const hasPaymentActivity =
+    hasPaymentReview ||
+    paidGbp > 0 ||
+    programmeFee?.status === "paid" ||
+    student.enrolment?.payment_status === "paid";
+  const paymentsHref = `/admin/payments?user=${student.id}&from=${encodeURIComponent(relatedFrom)}`;
 
   const confirmCopy = (() => {
     if (!pendingConfirm) return null;
@@ -328,12 +354,22 @@ export function StudentDetailWorkspace({
         >
           Scorecard
         </Link>
-        <Link
-          href={`/admin/payments?user=${student.id}&from=${encodeURIComponent(relatedFrom)}`}
-          className="inline-flex min-h-[2.25rem] items-center justify-center border border-pine/30 bg-white/70 px-3 py-1.5 text-sm font-medium text-pine hover:border-pine"
-        >
-          {hasPaymentReview ? "Payments · review proof" : "Payments"}
-        </Link>
+        {hasPaymentActivity ? (
+          <Link
+            href={paymentsHref}
+            className="inline-flex min-h-[2.25rem] items-center justify-center border border-pine/30 bg-white/70 px-3 py-1.5 text-sm font-medium text-pine hover:border-pine"
+          >
+            {hasPaymentReview ? "Payments · review proof" : "Payments"}
+          </Link>
+        ) : (
+          <button
+            type="button"
+            onClick={() => setPaymentEmptyOpen(true)}
+            className="inline-flex min-h-[2.25rem] items-center justify-center border border-pine/30 bg-white/70 px-3 py-1.5 text-sm font-medium text-pine hover:border-pine"
+          >
+            Payments
+          </button>
+        )}
       </nav>
 
       <section className="border border-stone bg-mist/40">
@@ -410,6 +446,70 @@ export function StudentDetailWorkspace({
                 ) : (
                   confirmCopy.confirmLabel
                 )}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {paymentEmptyOpen ? (
+        <div
+          className="fixed inset-0 z-[90] flex items-end justify-center bg-ink/45 p-4 sm:items-center"
+          role="presentation"
+          onClick={() => setPaymentEmptyOpen(false)}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="payment-empty-title"
+            className="relative w-full max-w-md border border-stone bg-mist p-6 text-ink shadow-[0_16px_48px_rgba(20,53,44,0.2)] sm:p-7"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <p className="text-[0.65rem] font-medium uppercase tracking-[0.16em] text-celadon">
+              Programme fee
+            </p>
+            <h3
+              id="payment-empty-title"
+              className="mt-3 font-display text-2xl tracking-[-0.02em] text-pine"
+            >
+              No payment yet
+            </h3>
+            <p className="mt-3 text-sm leading-relaxed text-ink/70">
+              <span className="font-medium text-ink">{name}</span> has not
+              started the £350 programme fee. There is nothing waiting on the
+              Payments desk for this student.
+            </p>
+            <dl className="mt-5 space-y-2 border border-stone bg-white/60 px-4 py-3 text-sm">
+              <div className="flex justify-between gap-3">
+                <dt className="text-ink/55">Due</dt>
+                <dd className="font-medium tabular-nums text-pine">
+                  {formatGbp(dueGbp > 0 ? dueGbp : 350)}
+                </dd>
+              </div>
+              <div className="flex justify-between gap-3">
+                <dt className="text-ink/55">Paid</dt>
+                <dd className="tabular-nums text-ink/70">
+                  {formatGbp(paidGbp)}
+                </dd>
+              </div>
+              <div className="flex justify-between gap-3">
+                <dt className="text-ink/55">Left</dt>
+                <dd className="tabular-nums text-ink/70">
+                  {formatGbp(remainingGbp > 0 ? remainingGbp : dueGbp || 350)}
+                </dd>
+              </div>
+            </dl>
+            <p className="mt-4 text-xs leading-relaxed text-ink/50">
+              Fee progress also appears under Manage → Fees on this file. When
+              they pay by card or upload bank proof, use Payments to review.
+            </p>
+            <div className="mt-7 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setPaymentEmptyOpen(false)}
+                className="bg-pine px-4 py-2.5 text-sm font-medium text-mist transition-colors hover:bg-celadon"
+              >
+                Got it
               </button>
             </div>
           </div>
