@@ -5,9 +5,9 @@ import {
   ENROLMENT_STATUS_META,
   ENROLMENT_STATUSES,
   isEnrolmentStatus,
-  type EnrolmentStatus,
 } from "@/lib/admin/students";
 import { SATURDAY_SLOT_LABELS } from "@/lib/cohorts/saturday";
+import type { EnrolmentStatus } from "@/lib/student/types";
 import { formatBatchLabel, type Batch, type Parish } from "@/lib/parishes";
 
 export type ManualsLane = "all" | "not_sent" | "sent";
