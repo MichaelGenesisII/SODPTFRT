@@ -41,6 +41,50 @@ function unauthorized(): StudentActionResult {
   return { ok: false, message: "Unauthorized." };
 }
 
+function programmeLabelFromMode(mode: string | null | undefined): string {
+  if (mode === "ignite") return "SOD Ignite";
+  if (mode === "standard") return "Standard Program";
+  return "School of Disciples";
+}
+
+async function sendAcceptanceEmailForEnrolment(input: {
+  email: string;
+  firstName: string;
+  reference: string;
+  attendanceMode: string | null | undefined;
+}): Promise<{ ok: boolean; message?: string }> {
+  const to = input.email.trim();
+  if (!to) return { ok: false, message: "No email on file." };
+
+  const { sendEnrolmentAcceptanceEmail } = await import(
+    "@/lib/email/backend"
+  );
+  const base = portalBaseUrl();
+  try {
+    const mailed = await sendEnrolmentAcceptanceEmail({
+      to,
+      firstName: input.firstName.trim() || "Student",
+      reference: input.reference.trim() || "—",
+      programmeLabel: programmeLabelFromMode(input.attendanceMode),
+      portalLoginUrl: `${base}/login/student`,
+      portalPaymentsUrl: `${base}/student/payments`,
+      portalSupportUrl: `${base}/student/support`,
+      siteUrl: SOD_SITE,
+    });
+    if (!mailed.ok) {
+      console.error("[enrolment-acceptance]", mailed.message);
+      return { ok: false, message: mailed.message };
+    }
+    return { ok: true };
+  } catch (error) {
+    console.error("[enrolment-acceptance]", error);
+    return {
+      ok: false,
+      message: error instanceof Error ? error.message : "Email failed",
+    };
+  }
+}
+
 /**
  * Cookie/RLS gate — parish admins only reach students enrolled in their parish.
  * Service-role mutations must call this first.
@@ -544,6 +588,16 @@ export async function updateEnrolmentStatus(
     const access = await requireAccessibleEnrolment(enrolmentId);
     if (!access.ok) return { ok: false, message: access.message };
 
+    const { data: before } = await access.supabase
+      .from("enrolments")
+      .select(
+        "id, status, email, first_name, reference, attendance_mode",
+      )
+      .eq("id", enrolmentId)
+      .maybeSingle();
+
+    const previousStatus = (before?.status as string | undefined) ?? null;
+
     if (status === "paid") {
       await syncTuitionFeePaymentStatus({
         userId: access.enrolment.user_id,
@@ -570,11 +624,43 @@ export async function updateEnrolmentStatus(
       }
     }
 
+    let mailNote = "";
+    if (
+      status === "accepted" &&
+      previousStatus !== "accepted" &&
+      before?.email
+    ) {
+      const mailed = await sendAcceptanceEmailForEnrolment({
+        email: before.email as string,
+        firstName: (before.first_name as string | null) ?? "",
+        reference: (before.reference as string | null) ?? "",
+        attendanceMode: (before.attendance_mode as string | null) ?? "standard",
+      });
+      if (mailed.ok) {
+        mailNote = " Acceptance email sent.";
+      } else {
+        revalidatePath("/admin/students");
+        revalidatePath("/admin/payments");
+        revalidatePath("/student");
+        revalidatePath("/student/payments");
+        return {
+          ok: true,
+          message: publicEmailFailureMessage(
+            `Status moved to ${status.replace(/_/g, " ")}.`,
+            mailed.message,
+          ),
+        };
+      }
+    }
+
     revalidatePath("/admin/students");
     revalidatePath("/admin/payments");
     revalidatePath("/student");
     revalidatePath("/student/payments");
-    return { ok: true, message: `Status moved to ${status.replace(/_/g, " ")}.` };
+    return {
+      ok: true,
+      message: `Status moved to ${status.replace(/_/g, " ")}.${mailNote}`,
+    };
   } catch (error) {
     if (error instanceof Error && error.message === "Unauthorized") {
       return unauthorized();
@@ -1445,6 +1531,8 @@ export async function bulkUpdateEnrolmentStatus(
     const actor = await requireSessionAdmin();
     let updated = 0;
     let skipped = 0;
+    let emailed = 0;
+    let emailFailed = 0;
 
     for (const studentId of studentIds) {
       const access = await requireAccessibleStudent(studentId);
@@ -1455,7 +1543,9 @@ export async function bulkUpdateEnrolmentStatus(
 
       const { data: enrolment } = await access.supabase
         .from("enrolments")
-        .select("id, user_id")
+        .select(
+          "id, user_id, status, email, first_name, reference, attendance_mode",
+        )
         .eq("user_id", studentId)
         .order("created_at", { ascending: false })
         .limit(1)
@@ -1465,6 +1555,8 @@ export async function bulkUpdateEnrolmentStatus(
         skipped += 1;
         continue;
       }
+
+      const previousStatus = enrolment.status as string;
 
       if (status === "paid") {
         await syncTuitionFeePaymentStatus({
@@ -1487,18 +1579,51 @@ export async function bulkUpdateEnrolmentStatus(
       if (error) {
         console.error("[admin/students] bulk enrolment status", error.message);
         skipped += 1;
-      } else {
-        updated += 1;
+        continue;
+      }
+
+      updated += 1;
+
+      if (
+        status === "accepted" &&
+        previousStatus !== "accepted" &&
+        enrolment.email
+      ) {
+        const mailed = await sendAcceptanceEmailForEnrolment({
+          email: enrolment.email as string,
+          firstName: (enrolment.first_name as string | null) ?? "",
+          reference: (enrolment.reference as string | null) ?? "",
+          attendanceMode:
+            (enrolment.attendance_mode as string | null) ?? "standard",
+        });
+        if (mailed.ok) emailed += 1;
+        else emailFailed += 1;
       }
     }
 
     revalidatePath("/admin/students");
     revalidatePath("/admin/payments");
+
+    const parts = [
+      `Enrolment status updated for ${updated} student${updated === 1 ? "" : "s"}`,
+    ];
+    if (skipped) parts.push(`${skipped} skipped`);
+    if (status === "accepted") {
+      if (emailed) {
+        parts.push(
+          `${emailed} acceptance email${emailed === 1 ? "" : "s"} sent`,
+        );
+      }
+      if (emailFailed) {
+        parts.push(
+          `${emailFailed} email${emailFailed === 1 ? "" : "s"} could not be sent`,
+        );
+      }
+    }
+
     return {
       ok: true,
-      message: `Enrolment status updated for ${updated} student${updated === 1 ? "" : "s"}${
-        skipped ? ` · ${skipped} skipped` : ""
-      }.`,
+      message: `${parts.join(" · ")}.`,
     };
   } catch (error) {
     if (error instanceof Error && error.message === "Unauthorized") {

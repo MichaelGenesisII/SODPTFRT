@@ -10,9 +10,6 @@ import Link from "next/link";
 import {
   getAdminStudentPathDetail,
   unlockStudentExamMonth,
-  updateEnrolmentContact,
-  updateEnrolmentStatus,
-  updatePaymentStatus,
   type StudentActionResult,
   type StudentPathDetail,
   type SaturdayCohortOption,
@@ -28,6 +25,7 @@ import {
   type AdminEnrolmentRecord,
   type AdminStudentRecord,
 } from "@/lib/admin/students";
+import type { EnrolmentStatus, PaymentStatus } from "@/lib/student/types";
 import { isNationalAdmin, type AdminProfile } from "@/lib/admin/profile";
 import { ATTENDANCE_MODES } from "@/lib/enrol/schema";
 import { formatGbp } from "@/lib/payments/fees";
@@ -59,7 +57,34 @@ export type StudentPendingConfirm =
       batchId: string;
       saturdayCohortId: string | null;
       reason: string;
+    }
+  | {
+      kind: "saveStatus";
+      enrolmentId: string;
+      enrolmentStatus: EnrolmentStatus;
+      paymentStatus: PaymentStatus;
+      enrolmentStatusChanged: boolean;
+      paymentStatusChanged: boolean;
+    }
+  | {
+      kind: "saveContact";
+      enrolmentId: string;
+      values: EnrolmentContactValues;
     };
+
+export type EnrolmentContactValues = {
+  mobile_number: string;
+  home_telephone: string;
+  address_line1: string;
+  address_line2: string;
+  town_city: string;
+  county: string;
+  postcode: string;
+  country: string;
+  local_church: string;
+  church_leader: string;
+  church_activities: string;
+};
 
 type Props = {
   student: AdminStudentRecord;
@@ -413,7 +438,6 @@ export function StudentDossier({
             onAssignBatch={setAssignBatchId}
             onAssignSaturday={setAssignSaturdayId}
             onAssignReason={setAssignReason}
-            onRun={onRun}
             onRequestConfirm={onRequestConfirm}
             onCopyPassword={onCopyPassword}
           />
@@ -820,7 +844,6 @@ function ManagePane({
   onAssignBatch,
   onAssignSaturday,
   onAssignReason,
-  onRun,
   onRequestConfirm,
   onCopyPassword,
 }: {
@@ -843,14 +866,39 @@ function ManagePane({
   onAssignBatch: (id: string) => void;
   onAssignSaturday: (id: string) => void;
   onAssignReason: (value: string) => void;
-  onRun: (
-    action: () => Promise<StudentActionResult>,
-    options?: { clearPassword?: boolean; label?: string },
-  ) => void;
   onRequestConfirm: (confirm: StudentPendingConfirm) => void;
   onCopyPassword: (value: string) => void;
 }) {
   const enrol = student.enrolment;
+
+  const [draftEnrolStatus, setDraftEnrolStatus] = useState<EnrolmentStatus>(
+    enrol?.status ?? "submitted",
+  );
+  const [draftPayStatus, setDraftPayStatus] = useState<PaymentStatus>(
+    enrol?.payment_status ?? "unpaid",
+  );
+
+  useEffect(() => {
+    setDraftEnrolStatus(enrol?.status ?? "submitted");
+    setDraftPayStatus(enrol?.payment_status ?? "unpaid");
+  }, [enrol?.id, enrol?.status, enrol?.payment_status]);
+
+  const baselineParishId = enrol?.parish_id ?? "";
+  const baselineBatchId = enrol?.batch_id ?? "";
+  const baselineSaturdayId = enrol?.saturday_cohort_id ?? "";
+  const placementDirty =
+    Boolean(enrol) &&
+    (assignParishId !== baselineParishId ||
+      assignBatchId !== baselineBatchId ||
+      assignSaturdayId !== baselineSaturdayId);
+
+  const enrolmentStatusChanged = Boolean(
+    enrol && draftEnrolStatus !== enrol.status,
+  );
+  const paymentStatusChanged = Boolean(
+    enrol && draftPayStatus !== enrol.payment_status,
+  );
+  const statusDirty = enrolmentStatusChanged || paymentStatusChanged;
 
   return (
     <div className="grid gap-8 lg:grid-cols-2">
@@ -865,14 +913,10 @@ function ManagePane({
               <label className="block text-sm">
                 Enrolment status
                 <select
-                  value={enrol.status}
+                  value={draftEnrolStatus}
                   disabled={pending}
                   onChange={(event) =>
-                    onRun(
-                      () =>
-                        updateEnrolmentStatus(enrol.id, event.target.value),
-                      { label: "Updating enrolment…" },
-                    )
+                    setDraftEnrolStatus(event.target.value as EnrolmentStatus)
                   }
                   className={`mt-1 ${fieldClass}`}
                 >
@@ -886,13 +930,10 @@ function ManagePane({
               <label className="block text-sm">
                 Application payment (enrolment)
                 <select
-                  value={enrol.payment_status}
+                  value={draftPayStatus}
                   disabled={pending}
                   onChange={(event) =>
-                    onRun(
-                      () => updatePaymentStatus(enrol.id, event.target.value),
-                      { label: "Updating payment…" },
-                    )
+                    setDraftPayStatus(event.target.value as PaymentStatus)
                   }
                   className={`mt-1 ${fieldClass}`}
                 >
@@ -910,6 +951,31 @@ function ManagePane({
                 >
                   Review bank proof on Payments →
                 </Link>
+              ) : null}
+              {statusDirty ? (
+                <button
+                  type="button"
+                  disabled={pending}
+                  onClick={() =>
+                    onRequestConfirm({
+                      kind: "saveStatus",
+                      enrolmentId: enrol.id,
+                      enrolmentStatus: draftEnrolStatus,
+                      paymentStatus: draftPayStatus,
+                      enrolmentStatusChanged,
+                      paymentStatusChanged,
+                    })
+                  }
+                  className="inline-flex min-h-[2.5rem] min-w-[8.5rem] items-center justify-center border border-pine px-4 py-2.5 text-sm font-medium text-pine hover:bg-pine hover:text-mist disabled:opacity-50"
+                >
+                  {pending &&
+                  (busyLabel?.startsWith("Updating status") ||
+                    busyLabel?.startsWith("Accepting")) ? (
+                    <DeskLoader label={busyLabel} />
+                  ) : (
+                    "Save changes"
+                  )}
+                </button>
               ) : null}
             </div>
           ) : (
@@ -1043,9 +1109,11 @@ function ManagePane({
             enrol={enrol}
             pending={pending}
             busyLabel={busyLabel}
-            onSave={(values) => {
-              onRun(() => updateEnrolmentContact(enrol.id, values), {
-                label: "Saving contact…",
+            onRequestSave={(values) => {
+              onRequestConfirm({
+                kind: "saveContact",
+                enrolmentId: enrol.id,
+                values,
               });
             }}
           />
@@ -1127,28 +1195,30 @@ function ManagePane({
                   className={`mt-1 ${fieldClass}`}
                 />
               </label>
-              <button
-                type="button"
-                disabled={pending || !assignParishId || !assignBatchId}
-                onClick={() => {
-                  if (!enrol) return;
-                  onRequestConfirm({
-                    kind: "savePlacement",
-                    enrolmentId: enrol.id,
-                    parishId: assignParishId,
-                    batchId: assignBatchId,
-                    saturdayCohortId: assignSaturdayId || null,
-                    reason: assignReason,
-                  });
-                }}
-                className="inline-flex min-h-[2.5rem] min-w-[8.5rem] items-center justify-center border border-pine px-4 py-2.5 text-sm font-medium text-pine hover:bg-pine hover:text-mist disabled:opacity-50"
-              >
-                {pending && busyLabel?.startsWith("Saving placement") ? (
-                  <DeskLoader label={busyLabel} />
-                ) : (
-                  "Save placement"
-                )}
-              </button>
+              {placementDirty ? (
+                <button
+                  type="button"
+                  disabled={pending || !assignParishId || !assignBatchId}
+                  onClick={() => {
+                    if (!enrol) return;
+                    onRequestConfirm({
+                      kind: "savePlacement",
+                      enrolmentId: enrol.id,
+                      parishId: assignParishId,
+                      batchId: assignBatchId,
+                      saturdayCohortId: assignSaturdayId || null,
+                      reason: assignReason,
+                    });
+                  }}
+                  className="inline-flex min-h-[2.5rem] min-w-[8.5rem] items-center justify-center border border-pine px-4 py-2.5 text-sm font-medium text-pine hover:bg-pine hover:text-mist disabled:opacity-50"
+                >
+                  {pending && busyLabel?.startsWith("Saving placement") ? (
+                    <DeskLoader label={busyLabel} />
+                  ) : (
+                    "Save placement"
+                  )}
+                </button>
+              ) : null}
             </div>
           </div>
         ) : null}
@@ -1329,24 +1399,12 @@ function ContactEditor({
   enrol,
   pending,
   busyLabel,
-  onSave,
+  onRequestSave,
 }: {
   enrol: NonNullable<AdminStudentRecord["enrolment"]>;
   pending: boolean;
   busyLabel: string | null;
-  onSave: (values: {
-    mobile_number: string;
-    home_telephone: string;
-    address_line1: string;
-    address_line2: string;
-    town_city: string;
-    county: string;
-    postcode: string;
-    country: string;
-    local_church: string;
-    church_leader: string;
-    church_activities: string;
-  }) => void;
+  onRequestSave: (values: EnrolmentContactValues) => void;
 }) {
   const [mobile, setMobile] = useState(enrol.mobile_number);
   const [home, setHome] = useState(enrol.home_telephone ?? "");
@@ -1374,9 +1432,23 @@ function ContactEditor({
     setActivities(enrol.church_activities ?? "");
   }, [enrol]);
 
+  const contactDirty =
+    mobile !== enrol.mobile_number ||
+    home !== (enrol.home_telephone ?? "") ||
+    line1 !== enrol.address_line1 ||
+    line2 !== (enrol.address_line2 ?? "") ||
+    town !== enrol.town_city ||
+    county !== (enrol.county ?? "") ||
+    postcode !== enrol.postcode ||
+    country !== enrol.country ||
+    church !== (enrol.local_church ?? "") ||
+    leader !== enrol.church_leader ||
+    activities !== (enrol.church_activities ?? "");
+
   function submit(event: FormEvent) {
     event.preventDefault();
-    onSave({
+    if (!contactDirty) return;
+    onRequestSave({
       mobile_number: mobile,
       home_telephone: home,
       address_line1: line1,
@@ -1492,17 +1564,19 @@ function ContactEditor({
           />
         </label>
       </div>
-      <button
-        type="submit"
-        disabled={pending}
-        className="inline-flex min-h-[2.5rem] min-w-[7.5rem] items-center justify-center bg-pine px-4 py-2.5 text-sm font-medium text-mist disabled:opacity-60"
-      >
-        {pending && busyLabel?.startsWith("Saving contact") ? (
-          <DeskLoader label={busyLabel} tone="mist" />
-        ) : (
-          "Save contact"
-        )}
-      </button>
+      {contactDirty ? (
+        <button
+          type="submit"
+          disabled={pending}
+          className="inline-flex min-h-[2.5rem] min-w-[7.5rem] items-center justify-center bg-pine px-4 py-2.5 text-sm font-medium text-mist disabled:opacity-60"
+        >
+          {pending && busyLabel?.startsWith("Saving contact") ? (
+            <DeskLoader label={busyLabel} tone="mist" />
+          ) : (
+            "Save contact"
+          )}
+        </button>
+      ) : null}
     </form>
   );
 }

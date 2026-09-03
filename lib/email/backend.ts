@@ -51,6 +51,23 @@ export async function sendEnrolmentEmail(
   return sendTemplatedEmail("/api/email/enrolment-confirmation", payload);
 }
 
+export type SendEnrolmentAcceptanceEmailPayload = {
+  to: string;
+  firstName: string;
+  reference: string;
+  programmeLabel: string;
+  portalLoginUrl: string;
+  portalPaymentsUrl: string;
+  portalSupportUrl: string;
+  siteUrl: string;
+};
+
+export async function sendEnrolmentAcceptanceEmail(
+  payload: SendEnrolmentAcceptanceEmailPayload,
+): Promise<EmailResult> {
+  return sendTemplatedEmail("/api/email/enrolment-acceptance", payload);
+}
+
 export async function sendEnrolmentAccessRecoveryEmail(
   payload: SendEnrolmentEmailPayload,
 ): Promise<EmailResult> {

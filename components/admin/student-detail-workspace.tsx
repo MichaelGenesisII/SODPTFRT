@@ -10,6 +10,9 @@ import {
   sendManualsPart,
   setManualsSent,
   setStudentActive,
+  updateEnrolmentContact,
+  updateEnrolmentStatus,
+  updatePaymentStatus,
   upgradeAlumniToStudent,
   type SaturdayCohortOption,
   type StudentActionResult,
@@ -21,13 +24,16 @@ import {
 import { DeskLoader, DeskLoaderOverlay } from "@/components/ui/desk-loader";
 import { useToast } from "@/components/ui/toast";
 import {
+  ENROLMENT_STATUS_META,
   formatAdminDate,
+  PAYMENT_STATUS_META,
   studentFullName,
   type AdminStudentRecord,
 } from "@/lib/admin/students";
 import type { AdminProfile } from "@/lib/admin/profile";
+import { SATURDAY_SLOT_LABELS } from "@/lib/cohorts/saturday";
 import { formatGbp } from "@/lib/payments/fees";
-import type { Batch, Parish } from "@/lib/parishes";
+import { formatBatchPlacementLabel, type Batch, type Parish } from "@/lib/parishes";
 
 export type { StudentPendingConfirm };
 
@@ -181,6 +187,45 @@ export function StudentDetailWorkspace({
             ),
           { label: "Saving placement…" },
         );
+        return;
+      case "saveStatus":
+        run(async () => {
+          let last: StudentActionResult = {
+            ok: true,
+            message: "Status updated.",
+          };
+          if (pendingConfirm.enrolmentStatusChanged) {
+            last = await updateEnrolmentStatus(
+              pendingConfirm.enrolmentId,
+              pendingConfirm.enrolmentStatus,
+            );
+            if (!last.ok) return last;
+          }
+          if (pendingConfirm.paymentStatusChanged) {
+            last = await updatePaymentStatus(
+              pendingConfirm.enrolmentId,
+              pendingConfirm.paymentStatus,
+            );
+          }
+          return last;
+        }, {
+          label:
+            pendingConfirm.enrolmentStatusChanged &&
+            pendingConfirm.enrolmentStatus === "accepted"
+              ? "Accepting and sending email…"
+              : "Updating status…",
+        });
+        return;
+      case "saveContact":
+        run(
+          () =>
+            updateEnrolmentContact(
+              pendingConfirm.enrolmentId,
+              pendingConfirm.values,
+            ),
+          { label: "Saving contact…" },
+        );
+        return;
     }
   }
 
@@ -303,26 +348,102 @@ export function StudentDetailWorkspace({
         const parishName =
           parishes.find((p) => p.id === pendingConfirm.parishId)?.name ??
           "selected parish";
-        const batchName =
-          batches.find((b) => b.id === pendingConfirm.batchId)?.name ??
-          "selected batch";
+        const batch =
+          batches.find((b) => b.id === pendingConfirm.batchId) ?? null;
+        const batchName = batch
+          ? formatBatchPlacementLabel(batch)
+          : "selected batch";
+        const saturdayOption = pendingConfirm.saturdayCohortId
+          ? saturdayOptions.find((o) => o.id === pendingConfirm.saturdayCohortId)
+          : null;
+        const saturdayLabel = saturdayOption
+          ? saturdayOption.label ||
+            SATURDAY_SLOT_LABELS[saturdayOption.saturday_slot]
+          : null;
         return {
           eyebrow: "Change placement",
-          title: "Save this parish / batch move?",
+          title: "Save this placement change?",
           body: (
             <>
               <span className="font-medium text-ink">{name}</span> will move to{" "}
               <span className="font-medium text-ink">{parishName}</span> ·{" "}
               <span className="font-medium text-ink">{batchName}</span>
+              {saturdayLabel ? (
+                <>
+                  {" "}
+                  ·{" "}
+                  <span className="font-medium text-ink">{saturdayLabel}</span>
+                </>
+              ) : null}
               {pendingConfirm.reason.trim()
                 ? `. Reason: ${pendingConfirm.reason.trim()}`
-                : "."}
+                : "."}{" "}
+              Previous scorecards are kept.
             </>
           ),
           confirmLabel: "Save placement",
           destructive: false,
         };
       }
+      case "saveStatus": {
+        const bits: string[] = [];
+        if (pendingConfirm.enrolmentStatusChanged) {
+          bits.push(
+            `enrolment to ${ENROLMENT_STATUS_META[pendingConfirm.enrolmentStatus].label}`,
+          );
+        }
+        if (pendingConfirm.paymentStatusChanged) {
+          bits.push(
+            `payment to ${PAYMENT_STATUS_META[pendingConfirm.paymentStatus].label}`,
+          );
+        }
+        const accepting =
+          pendingConfirm.enrolmentStatusChanged &&
+          pendingConfirm.enrolmentStatus === "accepted";
+        return {
+          eyebrow: "Update status",
+          title: accepting
+            ? "Accept this student and send email?"
+            : "Save status changes?",
+          body: (
+            <>
+              This will update{" "}
+              <span className="font-medium text-ink">{name}</span>
+              {bits.length > 0 ? (
+                <>
+                  {" "}
+                  ({bits.join(" and ")})
+                </>
+              ) : (
+                "."
+              )}
+              {accepting
+                ? " An acceptance email will be sent — please wait until it finishes."
+                : ""}
+              {pendingConfirm.paymentStatus === "paid" &&
+              pendingConfirm.paymentStatusChanged
+                ? " Marking payment paid syncs the programme fee."
+                : ""}
+            </>
+          ),
+          confirmLabel: accepting ? "Accept and email" : "Save changes",
+          destructive: false,
+        };
+      }
+      case "saveContact":
+        return {
+          eyebrow: "Edit contact",
+          title: "Save contact details?",
+          body: (
+            <>
+              This updates the contact details on{" "}
+              <span className="font-medium text-ink">{name}</span>
+              &apos;s enrolment file.
+            </>
+          ),
+          confirmLabel: "Save contact",
+          destructive: false,
+        };
     }
   })();
 

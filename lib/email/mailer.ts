@@ -21,13 +21,17 @@ import {
   type AdminAccessRecoveryInput,
 } from "@/lib/email/templates/admin-access-recovery";
 import {
-  buildEnrolmentAccessRecoveryEmail,
-  type EnrolmentAccessRecoveryInput,
-} from "@/lib/email/templates/enrolment-access-recovery";
-import {
   buildEnrolmentConfirmationEmail,
   type EnrolmentConfirmationInput,
 } from "@/lib/email/templates/enrolment-confirmation";
+import {
+  buildEnrolmentAcceptanceEmail,
+  type EnrolmentAcceptanceInput,
+} from "@/lib/email/templates/enrolment-acceptance";
+import {
+  buildEnrolmentAccessRecoveryEmail,
+  type EnrolmentAccessRecoveryInput,
+} from "@/lib/email/templates/enrolment-access-recovery";
 import {
   buildPaymentApprovedEmail,
   buildPaymentProofReceivedEmail,
@@ -177,6 +181,23 @@ export async function sendEnrolmentConfirmationEmail(input: {
     to: input.to,
     ...built,
     channel: "enrolment",
+    reference: input.template.reference,
+  });
+}
+
+export async function sendEnrolmentAcceptanceEmail(input: {
+  to: string;
+  template: EnrolmentAcceptanceInput;
+  override?: TemplateOverride;
+}) {
+  const built = mergeTemplateOverride(
+    buildEnrolmentAcceptanceEmail(input.template),
+    input.override,
+  );
+  return dispatch({
+    to: input.to,
+    ...built,
+    channel: "enrolment-acceptance",
     reference: input.template.reference,
   });
 }

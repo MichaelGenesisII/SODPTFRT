@@ -5,6 +5,7 @@ import {
   sendSingleCampaignEmail,
   sendClassInviteEmail,
   sendEnrolmentAccessRecoveryEmail,
+  sendEnrolmentAcceptanceEmail,
   sendEnrolmentConfirmationEmail,
   sendExamResultCertificateEmail,
   sendManualsSentEmail,
@@ -105,6 +106,22 @@ export async function dispatchTemplateEmail(
           temporaryPassword: String(payload.temporaryPassword),
           programmeLabel: String(payload.programmeLabel),
           portalLoginUrl: String(payload.portalLoginUrl),
+          portalSupportUrl: String(payload.portalSupportUrl),
+          siteUrl: String(payload.siteUrl),
+        },
+        override: override ?? undefined,
+      });
+
+    case "/api/email/enrolment-acceptance":
+      return sendEnrolmentAcceptanceEmail({
+        to: String(payload.to),
+        template: {
+          firstName: String(payload.firstName),
+          email: String(payload.to),
+          reference: String(payload.reference),
+          programmeLabel: String(payload.programmeLabel),
+          portalLoginUrl: String(payload.portalLoginUrl),
+          portalPaymentsUrl: String(payload.portalPaymentsUrl),
           portalSupportUrl: String(payload.portalSupportUrl),
           siteUrl: String(payload.siteUrl),
         },

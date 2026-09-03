@@ -59,7 +59,8 @@ type BulkConfirm =
   | { kind: "pause" }
   | { kind: "reactivate" }
   | { kind: "manuals" }
-  | { kind: "delete" };
+  | { kind: "delete" }
+  | { kind: "export" };
 
 type StudentsManagerProps = {
   students: AdminStudentRecord[];
@@ -287,8 +288,14 @@ export function StudentsManager({
         return false;
       }
       if (filters.programmeFee !== "all") {
-        const lane = studentProgrammeFeeLane(student);
-        if (lane !== filters.programmeFee) return false;
+        const feeLane = studentProgrammeFeeLane(student);
+        if (feeLane !== filters.programmeFee) return false;
+      }
+      if (
+        filters.enrolmentStatus &&
+        student.enrolment?.status !== filters.enrolmentStatus
+      ) {
+        return false;
       }
       if (!q) return true;
       return studentSearchHaystacks.get(student.id)?.includes(q) ?? false;
@@ -404,7 +411,9 @@ export function StudentsManager({
       case "enrolment":
         runBulk(
           () => bulkUpdateEnrolmentStatus(ids, pendingConfirm.status),
-          "Updating enrolment…",
+          pendingConfirm.status === "accepted"
+            ? "Accepting students and sending emails…"
+            : "Updating enrolment…",
         );
         return;
       case "payment":
@@ -428,6 +437,18 @@ export function StudentsManager({
           "Removing students…",
         );
         return;
+      case "export": {
+        downloadStudentsCsv(
+          selectedStudents,
+          `sod-students-${new Date().toISOString().slice(0, 10)}.csv`,
+        );
+        success(
+          `Exported ${selectedStudents.length} student${selectedStudents.length === 1 ? "" : "s"}.`,
+          "Students",
+        );
+        setPendingConfirm(null);
+        return;
+      }
     }
   }
 
@@ -449,10 +470,16 @@ export function StudentsManager({
           body: (
             <>
               This updates enrolment status for{" "}
-              <span className="font-medium text-ink">{who}</span>.
+              <span className="font-medium text-ink">{who}</span>
+              {pendingConfirm.status === "accepted"
+                ? ". Each student moving to Accepted will receive an acceptance email — please wait while those are sent."
+                : "."}
             </>
           ),
-          confirmLabel: "Update status",
+          confirmLabel:
+            pendingConfirm.status === "accepted"
+              ? "Accept and email"
+              : "Update status",
         };
       case "payment":
         return {
@@ -511,6 +538,18 @@ export function StudentsManager({
           ),
           confirmLabel: count === 1 ? "Delete student" : "Delete students",
           destructive: true,
+        };
+      case "export":
+        return {
+          eyebrow: "Export CSV",
+          title: `Export ${who}?`,
+          body: (
+            <>
+              Downloads a CSV of the selected students with enrolment and
+              payment fields for your records.
+            </>
+          ),
+          confirmLabel: "Download CSV",
         };
     }
   })();
@@ -751,16 +790,7 @@ export function StudentsManager({
                   <button
                     type="button"
                     disabled={busy || selectedStudents.length === 0}
-                    onClick={() => {
-                      downloadStudentsCsv(
-                        selectedStudents,
-                        `sod-students-${new Date().toISOString().slice(0, 10)}.csv`,
-                      );
-                      success(
-                        `Exported ${selectedStudents.length} student${selectedStudents.length === 1 ? "" : "s"}.`,
-                        "Students",
-                      );
-                    }}
+                    onClick={() => setPendingConfirm({ kind: "export" })}
                     className="border border-stone px-3 py-2 text-sm text-ink/75 hover:border-pine hover:text-pine disabled:opacity-50"
                   >
                     Export CSV

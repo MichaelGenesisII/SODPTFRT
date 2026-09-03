@@ -1,5 +1,6 @@
 export type EmailTemplateSlug =
   | "enrolment-confirmation"
+  | "enrolment-acceptance"
   | "enrolment-access-recovery"
   | "payment-received"
   | "payment-approved"
@@ -54,6 +55,7 @@ export const EMAIL_TEMPLATE_CATEGORY: Record<
   EmailTemplateCategory
 > = {
   "enrolment-confirmation": "enrolment",
+  "enrolment-acceptance": "enrolment",
   "enrolment-access-recovery": "enrolment",
   "payment-received": "payments",
   "payment-approved": "payments",
@@ -204,6 +206,32 @@ export const EMAIL_TEMPLATE_CATALOG: EmailTemplateCatalogEntry[] = [
 <p style="margin:0 0 14px;">Reference: <strong>{{reference}}</strong></p>
 <p style="margin:0 0 14px;">Sign in: <a href="{{portalLoginUrl}}" style="color:#14352c;">{{portalLoginUrl}}</a></p>
 <p style="margin:0;">Temporary password: <strong>{{temporaryPassword}}</strong></p>`,
+    ),
+  },
+  {
+    slug: "enrolment-acceptance",
+    label: "Enrolment acceptance",
+    description:
+      "Sent when an admin marks an application as Accepted (including bulk).",
+    variables: [
+      "{{firstName}}",
+      "{{email}}",
+      "{{reference}}",
+      "{{programmeLabel}}",
+      "{{portalLoginUrl}}",
+      "{{portalPaymentsUrl}}",
+      "{{portalSupportUrl}}",
+    ],
+    defaultSubject:
+      "{{firstName}}, your School of Disciples application is accepted — {{reference}}",
+    defaultHtml: wrapEmailHtml(
+      "Application accepted",
+      `<p style="margin:0 0 14px;">Dear {{firstName}},</p>
+<p style="margin:0 0 14px;">Your application to {{programmeLabel}} has been accepted.</p>
+<p style="margin:0 0 14px;">Reference: <strong>{{reference}}</strong></p>
+<p style="margin:0 0 14px;">Complete your £350 programme fee to secure your place.</p>
+<p style="margin:0 0 14px;"><a href="{{portalPaymentsUrl}}" style="color:#14352c;">Pay programme fee</a></p>
+<p style="margin:0;">Sign in: <a href="{{portalLoginUrl}}" style="color:#14352c;">{{portalLoginUrl}}</a></p>`,
     ),
   },
   {
@@ -465,6 +493,7 @@ export function catalogEntryForSlug(
 
 export const EMAIL_SLUG_BY_ROUTE: Record<string, EmailTemplateSlug> = {
   "/api/email/enrolment-confirmation": "enrolment-confirmation",
+  "/api/email/enrolment-acceptance": "enrolment-acceptance",
   "/api/email/enrolment-access-recovery": "enrolment-access-recovery",
   "/api/email/payment-received": "payment-received",
   "/api/email/payment-approved": "payment-approved",

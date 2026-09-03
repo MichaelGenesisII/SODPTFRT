@@ -1,12 +1,19 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import {
+  ENROLMENT_STATUS_META,
+  ENROLMENT_STATUSES,
+  isEnrolmentStatus,
+  type EnrolmentStatus,
+} from "@/lib/admin/students";
 import { SATURDAY_SLOT_LABELS } from "@/lib/cohorts/saturday";
 import { formatBatchLabel, type Batch, type Parish } from "@/lib/parishes";
 
 export type ManualsLane = "all" | "not_sent" | "sent";
 export type ProgrammeFeeFilter = "all" | "paid_full" | "paid_part" | "not_paid";
 export type IntakeFilter = "" | "november" | "january" | "february";
+export type EnrolmentStatusFilter = "" | EnrolmentStatus;
 
 export type StudentDeskFilterState = {
   intake: IntakeFilter;
@@ -17,6 +24,8 @@ export type StudentDeskFilterState = {
   saturday: string;
   manuals: ManualsLane;
   programmeFee: ProgrammeFeeFilter;
+  /** Application / enrolment status (Submitted, Accepted, …). */
+  enrolmentStatus: EnrolmentStatusFilter;
 };
 
 export function defaultStudentDeskFilters(
@@ -31,6 +40,7 @@ export function defaultStudentDeskFilters(
     saturday: "",
     manuals: "all",
     programmeFee: "all",
+    enrolmentStatus: "",
   };
 }
 
@@ -57,6 +67,9 @@ export function studentDeskListQuery(input: {
   if (input.filters.programmeFee !== "all") {
     params.set("pfee", input.filters.programmeFee);
   }
+  if (input.filters.enrolmentStatus) {
+    params.set("estatus", input.filters.enrolmentStatus);
+  }
   const text = params.toString();
   return text ? `?${text}` : "";
 }
@@ -80,7 +93,8 @@ export function studentDeskListQueriesEqual(
     left.filters.batchYear === right.filters.batchYear &&
     left.filters.saturday === right.filters.saturday &&
     left.filters.manuals === right.filters.manuals &&
-    left.filters.programmeFee === right.filters.programmeFee
+    left.filters.programmeFee === right.filters.programmeFee &&
+    left.filters.enrolmentStatus === right.filters.enrolmentStatus
   );
 }
 
@@ -105,6 +119,7 @@ export function parseStudentDeskListQuery(
       : "all";
   const manualsRaw = params.get("manuals");
   const pfeeRaw = params.get("pfee");
+  const estatusRaw = params.get("estatus");
   const pageRaw = params.get("page");
   const page = pageRaw ? Math.max(1, Number(pageRaw) || 1) : 1;
   const intakeRaw = params.get("intake");
@@ -133,6 +148,8 @@ export function parseStudentDeskListQuery(
         pfeeRaw === "not_paid"
           ? pfeeRaw
           : "all",
+      enrolmentStatus:
+        estatusRaw && isEnrolmentStatus(estatusRaw) ? estatusRaw : "",
     },
   };
 }
@@ -202,6 +219,7 @@ function countActiveFilters(
   if (filters.saturday) count += 1;
   if (filters.manuals !== "all") count += 1;
   if (filters.programmeFee !== "all") count += 1;
+  if (filters.enrolmentStatus) count += 1;
   return count;
 }
 
@@ -287,6 +305,13 @@ function buildActiveChips(
             ? "Part paid"
             : "Not paid yet",
       reset: { programmeFee: "all" },
+    });
+  }
+  if (filters.enrolmentStatus) {
+    chips.push({
+      key: "enrolmentStatus",
+      label: `Status · ${ENROLMENT_STATUS_META[filters.enrolmentStatus].label}`,
+      reset: { enrolmentStatus: "" },
     });
   }
 
@@ -559,6 +584,26 @@ export function StudentDeskFilters({
             <legend className="text-[0.65rem] font-medium uppercase tracking-[0.12em] text-ink/45">
               Desk
             </legend>
+            <label className="block text-xs text-ink/50">
+              Enrolment status
+              <select
+                value={filters.enrolmentStatus}
+                onChange={(event) =>
+                  patch({
+                    enrolmentStatus: event.target
+                      .value as EnrolmentStatusFilter,
+                  })
+                }
+                className={`mt-1 ${fieldClass}`}
+              >
+                <option value="">All statuses</option>
+                {ENROLMENT_STATUSES.map((status) => (
+                  <option key={status} value={status}>
+                    {ENROLMENT_STATUS_META[status].label}
+                  </option>
+                ))}
+              </select>
+            </label>
             <label className="block text-xs text-ink/50">
               Roster status
               <select
