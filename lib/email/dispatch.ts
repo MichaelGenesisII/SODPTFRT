@@ -2,6 +2,7 @@ import { isEmailConfigured } from "@/lib/email/config";
 import {
   sendAdminAccessRecoveryEmail,
   sendAdminWelcomeEmail,
+  sendTeacherWelcomeEmail,
   sendSingleCampaignEmail,
   sendClassInviteEmail,
   sendEnrolmentAccessRecoveryEmail,
@@ -164,6 +165,21 @@ export async function dispatchTemplateEmail(
             | "national"
             | "parish"
             | undefined,
+        },
+        override: override ?? undefined,
+      });
+
+    case "/api/email/teacher-welcome":
+      return sendTeacherWelcomeEmail({
+        to: String(payload.to),
+        template: {
+          fullName: payload.fullName ? String(payload.fullName) : "",
+          email: String(payload.to),
+          temporaryPassword: String(payload.temporaryPassword),
+          inviterName: String(payload.inviterName),
+          teacherLoginUrl: String(payload.teacherLoginUrl),
+          portalSupportUrl: String(payload.portalSupportUrl),
+          siteUrl: String(payload.siteUrl),
         },
         override: override ?? undefined,
       });

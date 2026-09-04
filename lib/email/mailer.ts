@@ -21,6 +21,10 @@ import {
   type AdminAccessRecoveryInput,
 } from "@/lib/email/templates/admin-access-recovery";
 import {
+  buildTeacherWelcomeEmail,
+  type TeacherWelcomeInput,
+} from "@/lib/email/templates/teacher-welcome";
+import {
   buildEnrolmentConfirmationEmail,
   type EnrolmentConfirmationInput,
 } from "@/lib/email/templates/enrolment-confirmation";
@@ -368,6 +372,22 @@ export async function sendAdminWelcomeEmail(input: {
     to: input.to,
     ...built,
     channel: "admin-welcome",
+  });
+}
+
+export async function sendTeacherWelcomeEmail(input: {
+  to: string;
+  template: TeacherWelcomeInput;
+  override?: TemplateOverride;
+}) {
+  const built = mergeTemplateOverride(
+    buildTeacherWelcomeEmail(input.template),
+    input.override,
+  );
+  return dispatch({
+    to: input.to,
+    ...built,
+    channel: "teacher-welcome",
   });
 }
 

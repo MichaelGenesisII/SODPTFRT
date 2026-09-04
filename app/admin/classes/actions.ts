@@ -168,6 +168,7 @@ type ClassRow = {
   zoom_passcode: string | null;
   status: ZoomClassStatus;
   created_by: string | null;
+  primary_teacher_id: string | null;
   last_synced_at: string | null;
   created_at: string;
   updated_at: string;
@@ -386,6 +387,7 @@ function mapClass(row: Record<string, unknown>): ZoomClass {
     zoom_passcode: (row.zoom_passcode as string | null) ?? null,
     status: row.status as ZoomClassStatus,
     created_by: (row.created_by as string | null) ?? null,
+    primary_teacher_id: (row.primary_teacher_id as string | null) ?? null,
     last_synced_at: (row.last_synced_at as string | null) ?? null,
     created_at: row.created_at as string,
     updated_at: row.updated_at as string,
@@ -857,6 +859,36 @@ export async function listAdminClasses(): Promise<ZoomClass[]> {
   const ids = classes.map((c) => c.id);
   if (!ids.length) return classes;
 
+  const teacherIds = [
+    ...new Set(
+      classes
+        .map((c) => c.primary_teacher_id)
+        .filter((id): id is string => Boolean(id)),
+    ),
+  ];
+  const teacherNameById = new Map<string, string>();
+  if (teacherIds.length > 0) {
+    const { data: teachers } = await supabase
+      .from("teacher_profiles")
+      .select("id, full_name, email")
+      .in("id", teacherIds);
+    for (const t of teachers ?? []) {
+      const name =
+        String(t.full_name ?? "").trim() ||
+        String(t.email ?? "").split("@")[0] ||
+        "Teacher";
+      teacherNameById.set(t.id as string, name);
+    }
+  }
+
+  const { data: deliveries } = await supabase
+    .from("class_teaching_deliveries")
+    .select("class_id, status")
+    .in("class_id", ids);
+  const deliveryByClass = new Map(
+    (deliveries ?? []).map((d) => [d.class_id as string, d.status as string]),
+  );
+
   const { data: attendance } = await supabase
     .from("zoom_class_attendance")
     .select("class_id, present, user_id")
@@ -878,11 +910,150 @@ export async function listAdminClasses(): Promise<ZoomClass[]> {
     const s = stats.get(c.id);
     return {
       ...c,
+      primary_teacher_name: c.primary_teacher_id
+        ? teacherNameById.get(c.primary_teacher_id) ?? null
+        : null,
+      teaching_delivery_status: deliveryByClass.get(c.id) ?? null,
       attendance_rows: s?.rows ?? 0,
       present_count: s?.present ?? 0,
       matched_count: s?.matched ?? 0,
     };
   });
+}
+
+export async function assignClassTeacher(input: {
+  classId: string;
+  teacherId: string | null;
+}): Promise<ClassActionResult> {
+  const access = await requireAccessibleClass(input.classId);
+  if (!access.ok) return { ok: false, message: access.message };
+
+  const teacherId = input.teacherId?.trim() || null;
+  const service = createServiceSupabaseClient();
+
+  if (teacherId) {
+    const { data: teacher } = await service
+      .from("teacher_profiles")
+      .select("id, is_active")
+      .eq("id", teacherId)
+      .maybeSingle();
+    if (!teacher?.is_active) {
+      return { ok: false, message: "Choose an active teacher." };
+    }
+  }
+
+  const { error } = await service
+    .from("zoom_classes")
+    .update({
+      primary_teacher_id: teacherId,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", input.classId);
+
+  if (error) return fail(error);
+
+  const {
+    upsertScheduledDelivery,
+    clearDeliveryIfScheduled,
+  } = await import("@/lib/teacher/delivery");
+
+  if (teacherId) {
+    const seeded = await upsertScheduledDelivery({
+      classId: input.classId,
+      teacherId,
+    });
+    if (!seeded.ok) {
+      console.error("[assignClassTeacher] delivery", seeded.message);
+    }
+  } else {
+    await clearDeliveryIfScheduled(input.classId);
+  }
+
+  revalidatePath("/admin/classes");
+  revalidatePath(`/admin/classes/${input.classId}`);
+  revalidatePath("/teacher");
+  revalidatePath("/teacher/classes");
+  return {
+    ok: true,
+    message: teacherId
+      ? "Teacher assigned."
+      : "Teacher cleared for this class.",
+    classId: input.classId,
+  };
+}
+
+export async function setClassTeachingDelivery(input: {
+  classId: string;
+  status: string;
+  notes?: string | null;
+}): Promise<ClassActionResult> {
+  const access = await requireAccessibleClass(input.classId);
+  if (!access.ok) return { ok: false, message: access.message };
+
+  const { isTeachingDeliveryStatus } = await import("@/lib/teacher/types");
+  if (!isTeachingDeliveryStatus(input.status)) {
+    return { ok: false, message: "Choose a valid teaching status." };
+  }
+
+  const klass = access.klass as { primary_teacher_id?: string | null };
+  const teacherId = klass.primary_teacher_id?.trim() || null;
+  if (!teacherId && input.status !== "cancelled") {
+    return {
+      ok: false,
+      message: "Assign a teacher before confirming delivery.",
+    };
+  }
+
+  const service = createServiceSupabaseClient();
+  const now = new Date().toISOString();
+  const notes = input.notes?.trim() || null;
+
+  const { data: existing } = await service
+    .from("class_teaching_deliveries")
+    .select("id")
+    .eq("class_id", input.classId)
+    .maybeSingle();
+
+  if (!existing) {
+    if (!teacherId) {
+      return { ok: false, message: "Assign a teacher first." };
+    }
+    const { error } = await service.from("class_teaching_deliveries").insert({
+      class_id: input.classId,
+      teacher_id: teacherId,
+      status: input.status,
+      confirmed_at:
+        input.status === "delivered" || input.status === "covered"
+          ? now
+          : null,
+      confirmed_by: access.actor.id,
+      notes,
+      updated_at: now,
+    });
+    if (error) return fail(error);
+  } else {
+    const { error } = await service
+      .from("class_teaching_deliveries")
+      .update({
+        status: input.status,
+        teacher_id: teacherId ?? undefined,
+        confirmed_at:
+          input.status === "delivered" || input.status === "covered"
+            ? now
+            : null,
+        confirmed_by: access.actor.id,
+        notes,
+        updated_at: now,
+      })
+      .eq("id", existing.id);
+    if (error) return fail(error);
+  }
+
+  revalidatePath("/admin/classes");
+  revalidatePath(`/admin/classes/${input.classId}`);
+  revalidatePath("/teacher");
+  revalidatePath("/teacher/history");
+  return { ok: true, message: "Teaching status updated.", classId: input.classId };
 }
 
 export async function getClassAttendance(
@@ -998,7 +1169,41 @@ export async function getAdminClassById(
     .select("present, user_id")
     .eq("class_id", classId);
 
-  return attachClassStats(klass, attendance ?? []);
+  let primary_teacher_name: string | null = null;
+  let primary_teacher_email: string | null = null;
+  let primary_teacher_avatar_url: string | null = null;
+  if (klass.primary_teacher_id) {
+    const { data: teacher } = await supabase
+      .from("teacher_profiles")
+      .select("full_name, email, avatar_path")
+      .eq("id", klass.primary_teacher_id)
+      .maybeSingle();
+    primary_teacher_name =
+      teacher?.full_name?.trim() ||
+      teacher?.email?.split("@")[0] ||
+      null;
+    primary_teacher_email = teacher?.email ?? null;
+    if (teacher?.avatar_path) {
+      const { cachedSignStaffPhotoUrl } = await import("@/lib/staff/photos");
+      primary_teacher_avatar_url = await cachedSignStaffPhotoUrl(
+        teacher.avatar_path as string,
+      );
+    }
+  }
+
+  const { data: delivery } = await supabase
+    .from("class_teaching_deliveries")
+    .select("status")
+    .eq("class_id", classId)
+    .maybeSingle();
+
+  return {
+    ...attachClassStats(klass, attendance ?? []),
+    primary_teacher_name,
+    primary_teacher_email,
+    primary_teacher_avatar_url,
+    teaching_delivery_status: (delivery?.status as string | null) ?? null,
+  };
 }
 
 export async function getClassAttendanceRollup(
@@ -1234,6 +1439,7 @@ export async function createZoomClass(input: {
   show_checkin_code_to_students?: boolean;
   send_email?: boolean;
   email_notes?: string;
+  primary_teacher_id?: string | null;
 }): Promise<ClassActionResult> {
   let actor: AdminProfile;
   try {
@@ -1358,6 +1564,7 @@ export async function createZoomClass(input: {
       zoom_passcode: zoomPasscode,
       status: "scheduled",
       created_by: actor.id,
+      primary_teacher_id: input.primary_teacher_id?.trim() || null,
     })
     .select("id, attendance_code")
     .single();
@@ -1368,6 +1575,14 @@ export async function createZoomClass(input: {
       error,
       "Could not save the class. Check the schedule and audience, then try again.",
     );
+  }
+
+  if (input.primary_teacher_id?.trim()) {
+    const { upsertScheduledDelivery } = await import("@/lib/teacher/delivery");
+    await upsertScheduledDelivery({
+      classId: data.id,
+      teacherId: input.primary_teacher_id.trim(),
+    });
   }
 
   let emailed = 0;

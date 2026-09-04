@@ -23,6 +23,8 @@ import {
 import { AdminTourProvider } from "@/components/admin/admin-tour-provider";
 import { AdminWelcome } from "@/components/admin/admin-welcome";
 import { NavProgress } from "@/components/ui/nav-progress";
+import { SignOutConfirmModal } from "@/components/ui/sign-out-confirm";
+import { StaffAvatar } from "@/components/ui/staff-avatar";
 import { useToast } from "@/components/ui/toast";
 import type { AdminProfile } from "@/lib/admin/profile";
 import { isNationalAdmin, isParishAdmin } from "@/lib/admin/profile";
@@ -49,7 +51,7 @@ type NavChild = {
   href: string;
   label: string;
   hint: string;
-  feature?: "parishAdmin";
+  feature?: "parishAdmin" | "nationalOnly";
 };
 
 type NavLink = {
@@ -58,6 +60,7 @@ type NavLink = {
   label: string;
   hint: string;
   icon: NavIcon;
+  feature?: "parishAdmin" | "nationalOnly";
 };
 
 type NavGroup = {
@@ -139,6 +142,14 @@ const nav: NavEntry[] = [
     ],
   },
   {
+    kind: "link",
+    href: "/admin/finance",
+    label: "Finance",
+    hint: "Teacher session pay",
+    icon: AccessIcon,
+    feature: "nationalOnly",
+  },
+  {
     kind: "group",
     id: "reach",
     label: "Communications",
@@ -181,7 +192,7 @@ const nav: NavEntry[] = [
     kind: "link",
     href: "/admin/access",
     label: "Access",
-    hint: "Password & team",
+    hint: "Admins & teachers",
     icon: AccessIcon,
   },
 ];
@@ -203,11 +214,24 @@ function filterNav(
 ): NavEntry[] {
   return entries
     .map((entry) => {
-      if (entry.kind === "link") return entry;
-      const children = entry.children.filter(
-        (child) =>
-          child.feature !== "parishAdmin" || parishAdminsOn || nationalDesk,
-      );
+      if (entry.kind === "link") {
+        if (entry.feature === "parishAdmin") {
+          return parishAdminsOn || nationalDesk ? entry : null;
+        }
+        if (entry.feature === "nationalOnly") {
+          return nationalDesk ? entry : null;
+        }
+        return entry;
+      }
+      const children = entry.children.filter((child) => {
+        if (child.feature === "parishAdmin") {
+          return parishAdminsOn || nationalDesk;
+        }
+        if (child.feature === "nationalOnly") {
+          return nationalDesk;
+        }
+        return true;
+      });
       if (children.length === 0) return null;
       return { ...entry, children };
     })
@@ -562,6 +586,7 @@ function ProfileMenu({
   mobile?: boolean;
 }) {
   const [open, setOpen] = useState(false);
+  const [confirmSignOut, setConfirmSignOut] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   const displayName = profile.full_name || profile.email;
 
@@ -604,20 +629,16 @@ function ProfileMenu({
             : "gap-3 border border-stone bg-white/55 py-1.5 pl-1.5 pr-3 text-ink hover:border-pine/30 hover:bg-white/80"
         }`}
       >
-        <span
-          className={`relative shrink-0 overflow-hidden rounded-full ${
-            mobile ? "h-8 w-8" : "h-9 w-9"
-          }`}
-        >
-          <Image
-            src="/lion.png"
-            alt=""
-            fill
-            sizes={mobile ? "32px" : "36px"}
-            className="object-cover"
+        <span className="relative shrink-0">
+          <StaffAvatar
+            name={displayName}
+            imageUrl={profile.avatarUrl}
+            size={mobile ? "sm" : "md"}
           />
           <span
-            className="absolute bottom-0 right-0 h-2.5 w-2.5 rounded-full border-2 border-mist bg-celadon"
+            className={`absolute bottom-0 right-0 h-2.5 w-2.5 rounded-full border-2 ${
+              mobile ? "border-pine" : "border-white"
+            } bg-celadon`}
             aria-hidden
           />
         </span>
@@ -652,15 +673,12 @@ function ProfileMenu({
               aria-hidden
             />
             <div className="relative flex items-center gap-3">
-              <span className="relative h-10 w-10 shrink-0 overflow-hidden rounded-full ring-2 ring-celadon/45">
-                <Image
-                  src="/lion.png"
-                  alt=""
-                  fill
-                  sizes="40px"
-                  className="object-cover"
-                />
-              </span>
+              <StaffAvatar
+                name={displayName}
+                imageUrl={profile.avatarUrl}
+                size="lg"
+                className="ring-2 ring-celadon/45"
+              />
               <div className="min-w-0">
                 <p className="truncate font-display text-lg leading-tight">
                   {displayName}
@@ -708,18 +726,29 @@ function ProfileMenu({
             </Link>
           </div>
 
-          <form action={signOutAdmin} className="border-t border-stone p-1.5">
+          <div className="border-t border-stone p-1.5">
             <button
-              type="submit"
+              type="button"
               role="menuitem"
+              onClick={() => {
+                setOpen(false);
+                setConfirmSignOut(true);
+              }}
               className="flex w-full items-center justify-between px-3 py-2.5 text-left text-sm font-medium text-[#8c3b2f] transition-colors hover:bg-[#8c3b2f]/5"
             >
               Sign out
               <span aria-hidden>→</span>
             </button>
-          </form>
+          </div>
         </div>
       ) : null}
+
+      <SignOutConfirmModal
+        open={confirmSignOut}
+        onClose={() => setConfirmSignOut(false)}
+        signOut={signOutAdmin}
+        portalLabel="the admin desk"
+      />
     </div>
   );
 }
@@ -748,6 +777,7 @@ export function AdminShell({
   const [paymentsPulse, setPaymentsPulse] =
     useState<PaymentsPulse>(initialPaymentsPulse);
   const [openGroupId, setOpenGroupId] = useState<string | null>(null);
+  const [confirmSignOut, setConfirmSignOut] = useState(false);
   const visibleNav = useMemo(
     () => filterNav(nav, parishAdminEnabled, isNationalAdmin(profile)),
     [parishAdminEnabled, profile],
@@ -1335,23 +1365,22 @@ export function AdminShell({
             desktopOpen ? "" : "lg:invisible"
           }`}
         >
-          <form action={signOutAdmin}>
-            <button
-              type="submit"
-              tabIndex={desktopOpen ? undefined : -1}
-              className="group flex w-full items-center gap-3 px-3 py-3 text-left text-mist/70 transition-colors hover:bg-mist/[0.06] hover:text-mist"
-            >
-              <LogoutIcon className="h-5 w-5 shrink-0 text-mist/45 transition-colors group-hover:text-mist/80" />
-              <span className="min-w-0 flex-1">
-                <span className="block text-sm font-medium tracking-wide">
-                  Log out
-                </span>
-                <span className="mt-0.5 block text-xs text-mist/40 group-hover:text-mist/50">
-                  End this desk session
-                </span>
+          <button
+            type="button"
+            tabIndex={desktopOpen ? undefined : -1}
+            onClick={() => setConfirmSignOut(true)}
+            className="group flex w-full items-center gap-3 px-3 py-3 text-left text-mist/70 transition-colors hover:bg-mist/[0.06] hover:text-mist"
+          >
+            <LogoutIcon className="h-5 w-5 shrink-0 text-mist/45 transition-colors group-hover:text-mist/80" />
+            <span className="min-w-0 flex-1">
+              <span className="block text-sm font-medium tracking-wide">
+                Log out
               </span>
-            </button>
-          </form>
+              <span className="mt-0.5 block text-xs text-mist/40 group-hover:text-mist/50">
+                End this desk session
+              </span>
+            </span>
+          </button>
         </div>
       </aside>
 
@@ -1429,6 +1458,12 @@ export function AdminShell({
       </div>
 
       <AdminWelcome profile={profile} deskLabel={deskLabel} />
+      <SignOutConfirmModal
+        open={confirmSignOut}
+        onClose={() => setConfirmSignOut(false)}
+        signOut={signOutAdmin}
+        portalLabel="the admin desk"
+      />
     </div>
     </AdminTourProvider>
     </Suspense>

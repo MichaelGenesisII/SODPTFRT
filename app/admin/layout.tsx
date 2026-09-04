@@ -3,6 +3,7 @@ import { AdminShell } from "@/components/admin/admin-shell";
 import { getSessionAdmin } from "@/lib/admin/auth";
 import { parishAdminEnabled } from "@/lib/admin/features";
 import { adminDeskScopeLabel } from "@/lib/admin/profile";
+import { cachedSignStaffPhotoUrl } from "@/lib/staff/photos";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 
 /** Auth — never statically prerender (needs Supabase at request time). */
@@ -30,12 +31,13 @@ export default async function AdminLayout({
   }
 
   const deskLabel = adminDeskScopeLabel(profile, parishName);
+  const avatarUrl = await cachedSignStaffPhotoUrl(profile.avatar_path);
 
   // Desk / payments badges load on the client — awaiting them here made every
   // /admin/* soft navigation pay for pulse queries before the page could paint.
   return (
     <AdminShell
-      profile={profile}
+      profile={{ ...profile, avatarUrl }}
       deskLabel={deskLabel}
       parishAdminEnabled={parishAdminEnabled()}
     >

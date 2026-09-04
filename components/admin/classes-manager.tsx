@@ -35,6 +35,8 @@ import type { IntakeKey } from "@/lib/cohorts/intake";
 import { formatBatchLabel, type Batch, type Parish } from "@/lib/parishes";
 import { formatCohortLabel, type Cohort } from "@/lib/cohorts";
 import { DeskPagination } from "@/lib/ui/desk-pagination";
+import type { TeacherProfile } from "@/lib/teacher/types";
+import { teacherDisplayName } from "@/lib/teacher/types";
 
 const fieldClass =
   "w-full border border-stone bg-white/70 px-3 py-2 text-sm outline-none focus:border-pine";
@@ -47,6 +49,7 @@ type Props = {
   parishes: Pick<Parish, "id" | "name">[];
   batches: Batch[];
   cohorts: Cohort[];
+  teachers: Pick<TeacherProfile, "id" | "email" | "full_name">[];
   zoomReady: boolean;
 };
 
@@ -56,6 +59,7 @@ export function ClassesManager({
   parishes,
   batches,
   cohorts,
+  teachers,
   zoomReady,
 }: Props) {
   const router = useRouter();
@@ -207,16 +211,16 @@ export function ClassesManager({
               hint="Not yet ended"
             />
             <ClassStatTile
+              label="Needs teacher"
+              shortLabel="No teacher"
+              value={classes.filter((c) => !c.primary_teacher_id).length}
+              hint="Unassigned"
+            />
+            <ClassStatTile
               label="With codes"
               shortLabel="Codes"
               value={classes.filter((c) => c.attendance_code).length}
               hint="Physical check-in"
-            />
-            <ClassStatTile
-              label="Present marks"
-              shortLabel="Present"
-              value={classes.reduce((n, c) => n + (c.present_count ?? 0), 0)}
-              hint="Across all rosters"
             />
           </section>
 
@@ -228,6 +232,7 @@ export function ClassesManager({
                 parishes={parishes}
                 batches={batches}
                 cohorts={cohorts}
+                teachers={teachers}
                 national={national}
                 zoomReady={zoomReady}
                 pending={busy}
@@ -307,6 +312,11 @@ export function ClassesManager({
                         <span className="min-w-0">
                           <span className="block truncate font-medium text-ink group-hover:text-pine">
                             {item.title}
+                          </span>
+                          <span className="mt-0.5 block text-xs text-ink/45">
+                            {item.primary_teacher_name
+                              ? `Teacher · ${item.primary_teacher_name}`
+                              : "Needs teacher"}
                           </span>
                           {item.attendance_code ? (
                             <span className="mt-0.5 block font-mono text-xs text-ink/45">
@@ -407,6 +417,7 @@ function CreateClassForm({
   parishes,
   batches,
   cohorts,
+  teachers,
   national,
   zoomReady,
   pending,
@@ -418,6 +429,7 @@ function CreateClassForm({
   parishes: Pick<Parish, "id" | "name">[];
   batches: Batch[];
   cohorts: Cohort[];
+  teachers: Pick<TeacherProfile, "id" | "email" | "full_name">[];
   national: boolean;
   zoomReady: boolean;
   pending: boolean;
@@ -443,6 +455,7 @@ function CreateClassForm({
     show_checkin_code_to_students?: boolean;
     send_email?: boolean;
     email_notes?: string;
+    primary_teacher_id?: string | null;
   }) => void;
 }) {
   const [title, setTitle] = useState("");
@@ -466,6 +479,7 @@ function CreateClassForm({
   const [showCodeOnPortal, setShowCodeOnPortal] = useState(false);
   const [sendEmail, setSendEmail] = useState(false);
   const [emailNotes, setEmailNotes] = useState("");
+  const [teacherId, setTeacherId] = useState("");
   const [verifyOpen, setVerifyOpen] = useState(false);
   const [preview, setPreview] = useState<ClassInvitePreview | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
@@ -563,6 +577,7 @@ function CreateClassForm({
       show_checkin_code_to_students: generateCode && showCodeOnPortal,
       send_email: sendEmail,
       email_notes: emailNotes.trim() || undefined,
+      primary_teacher_id: teacherId || null,
     };
   }
 
@@ -657,6 +672,28 @@ function CreateClassForm({
           onChange={(e) => setDescription(e.target.value)}
           className={`mt-1 ${fieldClass}`}
         />
+      </label>
+
+      <label className="block text-sm">
+        Assigned teacher
+        <select
+          value={teacherId}
+          onChange={(e) => setTeacherId(e.target.value)}
+          className={`mt-1 ${fieldClass}`}
+        >
+          <option value="">Assign later</option>
+          {teachers.map((teacher) => (
+            <option key={teacher.id} value={teacher.id}>
+              {teacherDisplayName(teacher)} ({teacher.email})
+            </option>
+          ))}
+        </select>
+        {teachers.length === 0 ? (
+          <span className="mt-1 block text-xs text-ink/45">
+            No active teachers yet. National desk can invite them under Finance
+            → Teachers.
+          </span>
+        ) : null}
       </label>
 
       <fieldset>

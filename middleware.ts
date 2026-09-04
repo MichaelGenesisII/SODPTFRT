@@ -7,8 +7,8 @@ function redirectAuthenticatedToDesk(
   nextPath: string,
 ) {
   const url = request.nextUrl.clone();
-  url.pathname = "/auth/continue";
-  url.search = `?next=${encodeURIComponent(nextPath)}`;
+  url.pathname = nextPath;
+  url.search = "";
   return NextResponse.redirect(url);
 }
 
@@ -38,6 +38,19 @@ async function getActiveStudentProfile(
   return data && data.is_active ? data : null;
 }
 
+async function getActiveTeacherProfile(
+  supabase: SupabaseClient,
+  userId: string,
+) {
+  const { data } = await supabase
+    .from("teacher_profiles")
+    .select("id, is_active")
+    .eq("id", userId)
+    .maybeSingle();
+
+  return data && data.is_active ? data : null;
+}
+
 /**
  * Auth gate only. Profile / role checks live in layouts so every soft
  * navigation does not pay an extra Supabase round-trip here.
@@ -51,6 +64,16 @@ export async function middleware(request: NextRequest) {
       const profile = await getActiveAdminProfile(supabase, user.id);
       if (profile) {
         return redirectAuthenticatedToDesk(request, "/admin");
+      }
+    }
+    return response;
+  }
+
+  if (pathname === "/login/teacher") {
+    if (supabase && user) {
+      const profile = await getActiveTeacherProfile(supabase, user.id);
+      if (profile) {
+        return redirectAuthenticatedToDesk(request, "/teacher");
       }
     }
     return response;
@@ -81,15 +104,18 @@ export async function middleware(request: NextRequest) {
   if (
     pathname.startsWith("/alumni") ||
     pathname.startsWith("/student") ||
-    pathname.startsWith("/admin")
+    pathname.startsWith("/admin") ||
+    pathname.startsWith("/teacher")
   ) {
     if (!supabase) {
       const login = request.nextUrl.clone();
       login.pathname = pathname.startsWith("/admin")
         ? "/login/admin"
-        : pathname.startsWith("/alumni")
-          ? "/login/alumni"
-          : "/login/student";
+        : pathname.startsWith("/teacher")
+          ? "/login/teacher"
+          : pathname.startsWith("/alumni")
+            ? "/login/alumni"
+            : "/login/student";
       login.searchParams.set("error", "config");
       return NextResponse.redirect(login);
     }
@@ -98,10 +124,24 @@ export async function middleware(request: NextRequest) {
       const login = request.nextUrl.clone();
       login.pathname = pathname.startsWith("/admin")
         ? "/login/admin"
-        : pathname.startsWith("/alumni")
-          ? "/login/alumni"
-          : "/login/student";
+        : pathname.startsWith("/teacher")
+          ? "/login/teacher"
+          : pathname.startsWith("/alumni")
+            ? "/login/alumni"
+            : "/login/student";
       return NextResponse.redirect(login);
+    }
+
+    // Teachers must not use the admin desk (fail closed).
+    if (pathname.startsWith("/admin") && supabase) {
+      const teacher = await getActiveTeacherProfile(supabase, user.id);
+      const admin = await getActiveAdminProfile(supabase, user.id);
+      if (teacher && !admin) {
+        const teacherHome = request.nextUrl.clone();
+        teacherHome.pathname = "/teacher";
+        teacherHome.search = "";
+        return NextResponse.redirect(teacherHome);
+      }
     }
 
     return response;
@@ -118,5 +158,7 @@ export const config = {
     "/login/student",
     "/alumni/:path*",
     "/login/alumni",
+    "/teacher/:path*",
+    "/login/teacher",
   ],
 };

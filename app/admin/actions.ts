@@ -125,6 +125,19 @@ export async function createAdminAccount(
       };
     }
 
+    const { data: existingTeacher } = await service
+      .from("teacher_profiles")
+      .select("id")
+      .eq("email", email)
+      .maybeSingle();
+    if (existingTeacher) {
+      return {
+        ok: false,
+        message:
+          "This email belongs to a teacher account. Use a different email for admin access.",
+      };
+    }
+
     let userId: string | null = null;
     const existingAuthId = await findAuthUserIdByEmail(service, email);
 

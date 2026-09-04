@@ -10,8 +10,9 @@ import {
   setAdminParishScope,
   type AdminActionResult,
 } from "@/app/admin/actions";
-import { useToast } from "@/components/ui/toast";
 import { DeskLoader, DeskLoaderOverlay } from "@/components/ui/desk-loader";
+import { StaffAvatar } from "@/components/ui/staff-avatar";
+import { useToast } from "@/components/ui/toast";
 import {
   isNationalAdmin,
   isParishAdmin,
@@ -21,13 +22,15 @@ import { createTemporaryPassword } from "@/lib/enrol/reference";
 import { parishAdminEnabled } from "@/lib/admin/features";
 import type { Parish } from "@/lib/parishes";
 import { DeskPagination } from "@/lib/ui/desk-pagination";
+import { TeachersFinanceManager } from "@/components/admin/teachers-finance-manager";
+import type { TeacherProfile } from "@/lib/teacher/types";
 
 const fieldClass =
   "w-full border border-stone bg-white/70 px-4 py-3 text-sm outline-none transition-[border-color,background-color] duration-300 focus:border-pine focus:bg-mist";
 
 const DIRECTORY_PAGE_SIZE = 8;
 
-type PageView = "desk" | "insight";
+type PageView = "admins" | "teachers" | "insight";
 type DeskTab = "directory" | "password";
 
 type PendingConfirm =
@@ -48,6 +51,8 @@ type AccessManagerProps = {
   profile: AdminProfile;
   admins: AdminProfile[];
   parishes: Pick<Parish, "id" | "name" | "region">[];
+  teachers?: TeacherProfile[];
+  initialStaffTab?: "admins" | "teachers";
 };
 
 function TrashIcon({ className }: { className?: string }) {
@@ -115,12 +120,16 @@ export function AccessManager({
   profile,
   admins,
   parishes,
+  teachers = [],
+  initialStaffTab = "admins",
 }: AccessManagerProps) {
   const { success, error, info } = useToast();
   const national = isNationalAdmin(profile);
   const parishDesk = isParishAdmin(profile);
   const parishInvitesEnabled = parishAdminEnabled();
-  const [pageView, setPageView] = useState<PageView>("desk");
+  const [pageView, setPageView] = useState<PageView>(
+    national && initialStaffTab === "teachers" ? "teachers" : "admins",
+  );
   const [deskTab, setDeskTab] = useState<DeskTab>("directory");
   const [inviting, setInviting] = useState(false);
   const [pending, startTransition] = useTransition();
@@ -321,7 +330,10 @@ export function AccessManager({
           >
             {(
               [
-                { id: "desk" as const, label: "Desk" },
+                { id: "admins" as const, label: "Admins" },
+                ...(national
+                  ? [{ id: "teachers" as const, label: "Teachers" }]
+                  : []),
                 { id: "insight" as const, label: "Insight" },
               ] as const
             ).map((tab) => {
@@ -349,6 +361,8 @@ export function AccessManager({
 
           {pageView === "insight" ? (
             <AccessInsightGuide profile={profile} />
+          ) : pageView === "teachers" && national ? (
+            <TeachersFinanceManager initialTeachers={teachers} />
           ) : (
             <>
               <div className="grid gap-px border border-stone bg-stone sm:grid-cols-2 lg:grid-cols-4">
@@ -489,17 +503,11 @@ export function AccessManager({
                                 className="flex w-full cursor-pointer items-center gap-3 px-4 py-3.5 text-left transition-colors hover:bg-pine/[0.03] sm:gap-4 sm:px-5"
                                 aria-expanded={open}
                               >
-                                <span
-                                  className={`flex h-9 w-9 shrink-0 items-center justify-center text-[0.65rem] font-medium uppercase tracking-wide ${
-                                    admin.is_active
-                                      ? "bg-pine text-mist"
-                                      : "bg-stone text-ink/50"
-                                  }`}
-                                >
-                                  {(admin.full_name || admin.email)
-                                    .slice(0, 1)
-                                    .toUpperCase()}
-                                </span>
+                                <StaffAvatar
+                                  name={adminDisplayName(admin)}
+                                  imageUrl={admin.avatarUrl}
+                                  active={admin.is_active}
+                                />
                                 <span className="min-w-0 flex-1">
                                   <span className="flex flex-wrap items-center gap-2">
                                     <span className="font-medium text-pine">
@@ -1193,8 +1201,8 @@ function AccessInsightGuide({ profile }: { profile: AdminProfile }) {
                 : "Full UK access. Invite staff and set each person to National or a parish.",
           },
           {
-            title: "Invites",
-            body: "New admins get a welcome email with their temporary password and desk label.",
+            title: "Admins & teachers",
+            body: "Use the Admins tab for desk staff. Use Teachers for teacher portal accounts (invite, activate, delete). Assign teachers on Classes.",
           },
           {
             title: "The three desks",

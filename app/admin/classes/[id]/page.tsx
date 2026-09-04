@@ -7,6 +7,7 @@ import {
   meetingSdkIntegrationReady,
   zoomIntegrationReady,
 } from "@/app/admin/classes/actions";
+import { listActiveTeachersForAssign } from "@/app/admin/finance/teachers/actions";
 import { ClassDetailWorkspace } from "@/components/admin/class-detail-workspace";
 import {
   audienceLabel,
@@ -49,18 +50,21 @@ export default async function AdminClassDetailPage({
   let loadError: string | null = null;
   let zoomReady = false;
   let meetingSdkReady = false;
+  let teachers: Awaited<ReturnType<typeof listActiveTeachersForAssign>> = [];
 
   try {
-    const [classRow, roll, zoomOk, sdkOk] = await Promise.all([
+    const [classRow, roll, zoomOk, sdkOk, teacherRows] = await Promise.all([
       getAdminClassById(id),
       getClassAttendanceRollup(id),
       zoomIntegrationReady(),
       meetingSdkIntegrationReady(),
+      listActiveTeachersForAssign().catch(() => []),
     ]);
     klass = classRow;
     rollup = roll;
     zoomReady = zoomOk;
     meetingSdkReady = sdkOk;
+    teachers = teacherRows;
   } catch (error) {
     console.error("[admin/classes/detail]", error);
     loadError = publicActionMessage(
@@ -105,6 +109,9 @@ export default async function AdminClassDetailPage({
             klass.cohort_name,
             klass.year,
           )}
+          {klass.primary_teacher_name
+            ? ` · Teacher · ${klass.primary_teacher_name}`
+            : " · Needs teacher"}
           {" · "}
           <Link
             href={backHref}
@@ -118,6 +125,7 @@ export default async function AdminClassDetailPage({
       <ClassDetailWorkspace
         initialClass={klass}
         initialRollup={rollup}
+        teachers={teachers}
         backHref={backHref}
         zoomReady={zoomReady}
         meetingSdkReady={meetingSdkReady}

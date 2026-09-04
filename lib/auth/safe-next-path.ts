@@ -1,4 +1,4 @@
-const ALLOWED_PREFIXES = ["/admin", "/student", "/alumni"] as const;
+const ALLOWED_PREFIXES = ["/admin", "/student", "/alumni", "/teacher"] as const;
 
 /** Prevent open redirects from /auth/continue?next=… */
 export function safeAuthContinuePath(raw: string | null | undefined): string {

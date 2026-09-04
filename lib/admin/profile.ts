@@ -9,6 +9,9 @@ export type AdminProfile = {
   created_at: string;
   /** null = national desk; set = parish-scoped admin */
   parish_id: string | null;
+  avatar_path?: string | null;
+  /** Signed URL for UI — set in layout, not stored in DB. */
+  avatarUrl?: string | null;
 };
 
 export function isNationalAdmin(profile: AdminProfile): boolean {

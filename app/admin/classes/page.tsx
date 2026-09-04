@@ -13,6 +13,7 @@ import { listCohortsForAdmin } from "@/app/admin/cohorts/actions";
 import { ClassesManager } from "@/components/admin/classes-manager";
 import type { ZoomClass } from "@/lib/classes/types";
 import { getSessionAdmin, isNationalAdmin } from "@/lib/admin/auth";
+import { listActiveTeachersForAssign } from "@/app/admin/finance/teachers/actions";
 import {
   publicActionMessage,
   publicUnavailableMessage,
@@ -33,6 +34,7 @@ export default async function AdminClassesPage() {
   let parishes: Awaited<ReturnType<typeof listParishesForAdmin>> = [];
   let batches: Awaited<ReturnType<typeof listBatchesForAdmin>> = [];
   let cohorts: Awaited<ReturnType<typeof listCohortsForAdmin>> = [];
+  let teachers: Awaited<ReturnType<typeof listActiveTeachersForAssign>> = [];
 
   try {
     const [
@@ -42,6 +44,7 @@ export default async function AdminClassesPage() {
       parishRows,
       batchRows,
       cohortRows,
+      teacherRows,
     ] = await Promise.all([
       listAdminClasses(),
       zoomIntegrationReady(),
@@ -53,6 +56,7 @@ export default async function AdminClassesPage() {
       isNationalAdmin(profile)
         ? listCohortsForAdmin().catch(() => [])
         : Promise.resolve([]),
+      listActiveTeachersForAssign().catch(() => []),
     ]);
     classes = classRows;
     zoomReady = zoomOk;
@@ -60,6 +64,7 @@ export default async function AdminClassesPage() {
     parishes = parishRows;
     batches = batchRows;
     cohorts = cohortRows;
+    teachers = teacherRows;
   } catch (error) {
     console.error("admin classes:", error);
     loadError = publicActionMessage(error, publicUnavailableMessage("Classes"));
@@ -94,6 +99,7 @@ export default async function AdminClassesPage() {
           parishes={parishes}
           batches={batches}
           cohorts={cohorts}
+          teachers={teachers}
           zoomReady={zoomReady}
         />
       )}

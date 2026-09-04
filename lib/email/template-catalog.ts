@@ -15,6 +15,7 @@ export type EmailTemplateSlug =
   | "ticket-reply"
   | "admin-welcome"
   | "admin-access-recovery"
+  | "teacher-welcome"
   | "campaign"
   | "manuals-sent";
 
@@ -25,6 +26,7 @@ export type EmailTemplateCategory =
   | "classes"
   | "support"
   | "admin"
+  | "teachers"
   | "marketing";
 
 export const EMAIL_TEMPLATE_CATEGORY_LABELS: Record<
@@ -37,6 +39,7 @@ export const EMAIL_TEMPLATE_CATEGORY_LABELS: Record<
   classes: "Classes & records",
   support: "Support",
   admin: "Admin access",
+  teachers: "Teachers",
   marketing: "Campaigns",
 };
 
@@ -47,6 +50,7 @@ export const EMAIL_TEMPLATE_CATEGORIES: EmailTemplateCategory[] = [
   "classes",
   "support",
   "admin",
+  "teachers",
   "marketing",
 ];
 
@@ -71,6 +75,7 @@ export const EMAIL_TEMPLATE_CATEGORY: Record<
   "ticket-reply": "support",
   "admin-welcome": "admin",
   "admin-access-recovery": "admin",
+  "teacher-welcome": "teachers",
   campaign: "marketing",
 };
 
@@ -432,6 +437,19 @@ export const EMAIL_TEMPLATE_CATALOG: EmailTemplateCatalogEntry[] = [
     ),
   },
   {
+    slug: "teacher-welcome",
+    label: "Teacher welcome",
+    description: "New teacher portal invite.",
+    variables: ["{{fullName}}", "{{temporaryPassword}}", "{{teacherLoginUrl}}"],
+    defaultSubject: "Your School of Disciples teacher portal access",
+    defaultHtml: wrapEmailHtml(
+      "Teacher welcome",
+      `<p style="margin:0 0 14px;">Dear {{fullName}},</p>
+<p style="margin:0 0 14px;">Your teacher portal is ready.</p>
+<p style="margin:0;">Sign in: <a href="{{teacherLoginUrl}}" style="color:#14352c;">{{teacherLoginUrl}}</a></p>`,
+    ),
+  },
+  {
     slug: "campaign",
     label: "Email campaign",
     description: "Custom outbound campaign to students.",
@@ -509,6 +527,7 @@ export const EMAIL_SLUG_BY_ROUTE: Record<string, EmailTemplateSlug> = {
   "/api/email/ticket-reply": "ticket-reply",
   "/api/email/admin-welcome": "admin-welcome",
   "/api/email/admin-access-recovery": "admin-access-recovery",
+  "/api/email/teacher-welcome": "teacher-welcome",
   "/api/email/campaign": "campaign",
 };
 

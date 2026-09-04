@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useState, type FormEvent } from "react";
 import { requestAdminPasswordReset } from "@/app/login/admin/actions";
 import { requestEnrolmentPasswordReset } from "@/app/enrol/actions";
+import { requestTeacherPasswordReset } from "@/app/teacher/actions";
 import { DeskLoader, DeskLoaderOverlay } from "@/components/ui/desk-loader";
 import { useToast } from "@/components/ui/toast";
 import {
@@ -13,11 +14,12 @@ import {
 } from "@/lib/safe-action-message";
 import { createBrowserSupabaseClient } from "@/lib/supabase/client";
 
-export type LoginRole = "student" | "admin" | "alumni";
+export type LoginRole = "student" | "admin" | "alumni" | "teacher";
 
 const OTHER_LOGINS: { role: LoginRole; href: string; label: string }[] = [
   { role: "student", href: "/login/student", label: "Student sign-in" },
   { role: "alumni", href: "/login/alumni", label: "Alumni sign-in" },
+  { role: "teacher", href: "/login/teacher", label: "Teacher sign-in" },
   { role: "admin", href: "/login/admin", label: "Admin sign-in" },
 ];
 
@@ -79,6 +81,24 @@ const copy = {
     forbidden: "This account is not authorised for admin access.",
     notAuthorised: "This account is not authorised for admin access.",
   },
+  teacher: {
+    eyebrow: "Teacher portal",
+    title: "Welcome back",
+    lead: "Sign in to see classes assigned to you and confirm when you have taught.",
+    submit: "Sign in as teacher",
+    asideTitle: "Teach with clarity",
+    asideBody:
+      "Your schedule, register, and teaching history — without the admin desk.",
+    hints: ["Assigned classes", "Register", "Confirm taught"],
+    passwordPlaceholder: "Temporary or account password",
+    deskLabel: "Teacher portal",
+    forgotTitle: "Forgot password",
+    resetFailTitle: "Could not send reset",
+    resetOkTitle: "Check your inbox",
+    forbidden: "This account is not registered as a teacher.",
+    notAuthorised:
+      "This account is not registered as a teacher. Contact the national desk if you believe this is an error.",
+  },
 } as const;
 
 function signInFailureMessage(raw?: string): string {
@@ -103,6 +123,7 @@ export function LoginPanel({ role }: LoginPanelProps) {
   const content = copy[role];
   const isAdmin = role === "admin";
   const isAlumni = role === "alumni";
+  const isTeacher = role === "teacher";
   const router = useRouter();
   const searchParams = useSearchParams();
   const { success: toastSuccess, error: toastError } = useToast();
@@ -186,6 +207,33 @@ export function LoginPanel({ role }: LoginPanelProps) {
         return;
       }
 
+      if (isTeacher) {
+        const { data: profile, error: profileError } = await supabase
+          .from("teacher_profiles")
+          .select("id, is_active")
+          .eq("id", data.user.id)
+          .maybeSingle();
+
+        if (profileError) {
+          console.error("[login/teacher] profile load failed", profileError);
+          await supabase.auth.signOut();
+          setStatus("idle");
+          fail(publicUnavailableMessage(content.deskLabel));
+          return;
+        }
+
+        if (!profile || !profile.is_active) {
+          await supabase.auth.signOut();
+          setStatus("idle");
+          fail(content.notAuthorised, "Access denied");
+          return;
+        }
+
+        toastSuccess("You are signed in.", "Welcome");
+        router.replace("/teacher");
+        return;
+      }
+
       const { data: profile, error: profileError } = await supabase
         .from("student_profiles")
         .select("id, is_active, account_kind")
@@ -249,7 +297,9 @@ export function LoginPanel({ role }: LoginPanelProps) {
     if (!email.trim() || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
       const message = isAdmin
         ? "Enter your admin email, then try again."
-        : "Enter the email on your application, then try again.";
+        : isTeacher
+          ? "Enter your teacher email, then try again."
+          : "Enter the email on your application, then try again.";
       fail(message, content.forgotTitle);
       return;
     }
@@ -257,7 +307,9 @@ export function LoginPanel({ role }: LoginPanelProps) {
     try {
       const result = isAdmin
         ? await requestAdminPasswordReset(email.trim())
-        : await requestEnrolmentPasswordReset(email.trim());
+        : isTeacher
+          ? await requestTeacherPasswordReset(email.trim())
+          : await requestEnrolmentPasswordReset(email.trim());
       if (!result.ok) {
         fail(result.message, content.resetFailTitle);
         setStatus("idle");

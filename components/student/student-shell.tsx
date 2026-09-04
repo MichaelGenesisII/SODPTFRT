@@ -7,6 +7,7 @@ import { useEffect, useState, type MouseEvent, type ReactNode } from "react";
 import { signOutStudent } from "@/app/student/actions";
 import { useStudentSupportLive } from "@/components/student/support-live";
 import { NavProgress } from "@/components/ui/nav-progress";
+import { SignOutConfirmModal } from "@/components/ui/sign-out-confirm";
 import { SOD_STUDENT_TOUR_EXPAND_EVENT } from "@/lib/student/portal-tour-steps";
 import {
   studentDisplayName,
@@ -329,6 +330,7 @@ export function StudentShell({ profile, children }: StudentShellProps) {
   const [desktopOpen, setDesktopOpen] = useState(true);
   const [activeSection, setActiveSection] = useState("overview");
   const [openGroupId, setOpenGroupId] = useState<string | null>(null);
+  const [confirmSignOut, setConfirmSignOut] = useState(false);
 
   useEffect(() => {
     const stored = window.localStorage.getItem(SIDEBAR_KEY);
@@ -799,14 +801,13 @@ export function StudentShell({ profile, children }: StudentShellProps) {
           >
             Account settings
           </Link>
-          <form action={signOutStudent} className="mt-2">
-            <button
-              type="submit"
-              className="w-full border border-mist/20 px-4 py-2.5 text-sm font-medium text-mist/75 transition-colors hover:border-mist/45 hover:bg-mist/[0.06] hover:text-mist"
-            >
-              Sign out
-            </button>
-          </form>
+          <button
+            type="button"
+            onClick={() => setConfirmSignOut(true)}
+            className="mt-2 w-full border border-mist/20 px-4 py-2.5 text-sm font-medium text-mist/75 transition-colors hover:border-mist/45 hover:bg-mist/[0.06] hover:text-mist"
+          >
+            Sign out
+          </button>
         </div>
       </aside>
 
@@ -876,6 +877,13 @@ export function StudentShell({ profile, children }: StudentShellProps) {
           {children}
         </main>
       </div>
+
+      <SignOutConfirmModal
+        open={confirmSignOut}
+        onClose={() => setConfirmSignOut(false)}
+        signOut={signOutStudent}
+        portalLabel="the student portal"
+      />
     </div>
   );
 }

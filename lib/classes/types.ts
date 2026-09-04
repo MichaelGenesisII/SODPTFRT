@@ -34,6 +34,12 @@ export type ZoomClass = {
   zoom_passcode: string | null;
   status: ZoomClassStatus;
   created_by: string | null;
+  /** Assigned teacher for delivery / Finance (nullable until set). */
+  primary_teacher_id?: string | null;
+  primary_teacher_name?: string | null;
+  primary_teacher_email?: string | null;
+  /** Signed avatar URL for class detail UI (not stored). */
+  primary_teacher_avatar_url?: string | null;
   last_synced_at: string | null;
   created_at: string;
   updated_at: string;
@@ -44,6 +50,8 @@ export type ZoomClass = {
   present_count?: number;
   matched_count?: number;
   attendance_rows?: number;
+  /** From class_teaching_deliveries when joined. */
+  teaching_delivery_status?: string | null;
 };
 
 export type ZoomClassAttendance = {

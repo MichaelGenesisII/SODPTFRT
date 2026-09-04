@@ -1,7 +1,8 @@
 /**
  * Zoom Server-to-Server OAuth client.
  * Env: ZOOM_ACCOUNT_ID, ZOOM_CLIENT_ID, ZOOM_CLIENT_SECRET, ZOOM_HOST_USER_ID
- * (host user id or email used to create meetings)
+ * (host user id or email used to create meetings), optional ZOOM_HOST_PMI
+ * (personal meeting room number — avoids user:read when set)
  */
 
 export type ZoomMeetingCreated = {
@@ -590,10 +591,23 @@ function isZoomPmiError(error: unknown): boolean {
 
 let cachedHostPmi: { value: string | null; expiresAt: number } | null = null;
 
+function isZoomUserReadScopeError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /user:read:user|missing scopes|scopes \(user:/i.test(message);
+}
+
 /** Host personal meeting room number — permanent; Zoom forbids DELETE on it (3018). */
 async function getHostPersonalMeetingId(): Promise<string | null> {
   if (cachedHostPmi && cachedHostPmi.expiresAt > Date.now()) {
     return cachedHostPmi.value;
+  }
+
+  // Prefer explicit env so delete works without user:read scopes on App A.
+  const fromEnv =
+    normalizeZoomMeetingNumber(process.env.ZOOM_HOST_PMI ?? "") || null;
+  if (fromEnv) {
+    cachedHostPmi = { value: fromEnv, expiresAt: Date.now() + 300_000 };
+    return fromEnv;
   }
 
   const host = process.env.ZOOM_HOST_USER_ID;
@@ -607,7 +621,21 @@ async function getHostPersonalMeetingId(): Promise<string | null> {
     cachedHostPmi = { value: pmi, expiresAt: Date.now() + 300_000 };
     return pmi;
   } catch (error) {
-    console.warn("[zoom] load host PMI:", error);
+    // Cache the miss so one class delete does not spam App A / logs.
+    cachedHostPmi = {
+      value: null,
+      expiresAt: Date.now() + (isZoomUserReadScopeError(error) ? 600_000 : 60_000),
+    };
+    if (isZoomUserReadScopeError(error)) {
+      console.warn(
+        "[zoom] host PMI unavailable (add user:read:user / user:read:user:admin on App A, or set ZOOM_HOST_PMI). Continuing without PMI pre-check.",
+      );
+    } else {
+      console.warn(
+        "[zoom] load host PMI failed:",
+        error instanceof Error ? error.message : error,
+      );
+    }
     return null;
   }
 }
@@ -893,10 +921,16 @@ export async function removeZoomMeetingsFromHost(input: {
       stillExists = null;
     } else if (stillExists) {
       const last = await deleteZoomMeetingWithRetry(stillExists.id);
-      if (last === "deleted") removedAny = true;
-      if (last === "pmi") pmiSkipped = true;
-      if (last === "already_gone") stillExists = null;
-      else if (last === "in_progress") {
+      if (last === "deleted") {
+        removedAny = true;
+        stillExists = null;
+      } else if (last === "pmi") {
+        // Zoom refused DELETE on personal room — treat as handled, not leftover.
+        pmiSkipped = true;
+        stillExists = null;
+      } else if (last === "already_gone") {
+        stillExists = null;
+      } else if (last === "in_progress") {
         console.warn("[zoom] meeting still live during class delete", {
           id: stillExists.id,
         });

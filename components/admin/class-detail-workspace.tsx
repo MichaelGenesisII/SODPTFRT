@@ -4,12 +4,14 @@ import { useCallback, useEffect, useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
+  assignClassTeacher,
   deleteZoomClass,
   getAdminClassById,
   getClassAttendanceRollup,
   markManualAttendance,
   regenerateClassAttendanceCode,
   setClassCheckinCodeVisibility,
+  setClassTeachingDelivery,
   searchClassStudents,
   setZoomClassStatus,
   syncZoomClassAttendance,
@@ -21,6 +23,12 @@ import { DeskLoader, DeskLoaderOverlay } from "@/components/ui/desk-loader";
 import { useToast } from "@/components/ui/toast";
 import type { ClassAttendanceRollup } from "@/lib/admin/class-roll";
 import type { ZoomClass } from "@/lib/classes/types";
+import {
+  TEACHING_DELIVERY_STATUSES,
+  TEACHING_DELIVERY_STATUS_META,
+  teacherDisplayName,
+  type TeacherProfile,
+} from "@/lib/teacher/types";
 
 type PendingConfirm =
   | { kind: "delete" }
@@ -30,6 +38,7 @@ type PendingConfirm =
 type ClassDetailWorkspaceProps = {
   initialClass: ZoomClass;
   initialRollup: ClassAttendanceRollup;
+  teachers: Pick<TeacherProfile, "id" | "email" | "full_name">[];
   backHref: string;
   zoomReady: boolean;
   meetingSdkReady: boolean;
@@ -38,6 +47,7 @@ type ClassDetailWorkspaceProps = {
 export function ClassDetailWorkspace({
   initialClass,
   initialRollup,
+  teachers,
   backHref,
   zoomReady,
   meetingSdkReady,
@@ -49,6 +59,12 @@ export function ClassDetailWorkspace({
   const [refreshing, setRefreshing] = useState(false);
   const [item, setItem] = useState(initialClass);
   const [rollup, setRollup] = useState(initialRollup);
+  const [teacherId, setTeacherId] = useState(
+    initialClass.primary_teacher_id ?? "",
+  );
+  const [deliveryStatus, setDeliveryStatus] = useState(
+    initialClass.teaching_delivery_status ?? "scheduled",
+  );
   const [pendingConfirm, setPendingConfirm] = useState<PendingConfirm | null>(
     null,
   );
@@ -61,7 +77,11 @@ export function ClassDetailWorkspace({
         getAdminClassById(item.id),
         getClassAttendanceRollup(item.id),
       ]);
-      if (nextClass) setItem(nextClass);
+      if (nextClass) {
+        setItem(nextClass);
+        setTeacherId(nextClass.primary_teacher_id ?? "");
+        setDeliveryStatus(nextClass.teaching_delivery_status ?? "scheduled");
+      }
       if (nextRollup) setRollup(nextRollup);
       router.refresh();
     } finally {
@@ -149,6 +169,146 @@ export function ClassDetailWorkspace({
       >
         <span aria-hidden>←</span> Back to Classes
       </Link>
+
+      <section className="relative border border-stone bg-mist/30 p-4 sm:p-5">
+        <DeskLoaderOverlay active={busy} label={busyLabel ?? "Working…"} />
+        <p className="text-[0.65rem] font-medium uppercase tracking-[0.14em] text-celadon">
+          Teaching
+        </p>
+        <h2 className="mt-1 font-display text-lg text-pine">
+          Assigned teacher & delivery
+        </h2>
+
+        {item.primary_teacher_id && item.primary_teacher_name ? (
+          <div className="mt-4 flex items-center gap-4 border border-pine/20 bg-white/70 px-4 py-3.5">
+            {item.primary_teacher_avatar_url ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={item.primary_teacher_avatar_url}
+                alt=""
+                className="size-14 shrink-0 rounded-full object-cover ring-2 ring-pine/15"
+              />
+            ) : (
+              <span
+                className="flex size-14 shrink-0 items-center justify-center rounded-full bg-pine/10 font-display text-lg text-pine"
+                aria-hidden
+              >
+                {item.primary_teacher_name
+                  .split(/\s+/)
+                  .filter(Boolean)
+                  .slice(0, 2)
+                  .map((part) => part[0]?.toUpperCase() ?? "")
+                  .join("") || "T"}
+              </span>
+            )}
+            <div className="min-w-0 flex-1">
+              <p className="text-[0.6rem] font-medium uppercase tracking-[0.14em] text-celadon">
+                Featured teacher
+              </p>
+              <p className="mt-1 truncate font-display text-xl text-pine">
+                {item.primary_teacher_name}
+              </p>
+              {item.primary_teacher_email ? (
+                <p className="mt-0.5 truncate text-sm text-ink/55">
+                  {item.primary_teacher_email}
+                </p>
+              ) : null}
+              <p className="mt-1.5 text-xs text-ink/45">
+                Delivery ·{" "}
+                {TEACHING_DELIVERY_STATUS_META[
+                  item.teaching_delivery_status &&
+                  item.teaching_delivery_status in TEACHING_DELIVERY_STATUS_META
+                    ? (item.teaching_delivery_status as keyof typeof TEACHING_DELIVERY_STATUS_META)
+                    : "scheduled"
+                ].label}
+              </p>
+            </div>
+          </div>
+        ) : (
+          <div className="mt-4 border border-dashed border-stone bg-white/40 px-4 py-3.5 text-sm text-ink/55">
+            No teacher assigned yet. Choose one below so this class appears on
+            their schedule.
+          </div>
+        )}
+
+        <div className="mt-4 grid gap-3 sm:grid-cols-2">
+          <label className="block text-sm">
+            Teacher
+            <select
+              value={teacherId}
+              onChange={(e) => setTeacherId(e.target.value)}
+              className="mt-1.5 w-full border border-stone bg-white/70 px-3 py-2 text-sm outline-none focus:border-pine"
+              disabled={busy}
+            >
+              <option value="">Needs teacher</option>
+              {teachers.map((teacher) => (
+                <option key={teacher.id} value={teacher.id}>
+                  {teacherDisplayName(teacher)}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="block text-sm">
+            Delivery status
+            <select
+              value={deliveryStatus}
+              onChange={(e) => setDeliveryStatus(e.target.value)}
+              className="mt-1.5 w-full border border-stone bg-white/70 px-3 py-2 text-sm outline-none focus:border-pine"
+              disabled={busy}
+            >
+              {TEACHING_DELIVERY_STATUSES.map((status) => (
+                <option key={status} value={status}>
+                  {TEACHING_DELIVERY_STATUS_META[status].label}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+        <div className="mt-3 flex flex-wrap gap-2">
+          <button
+            type="button"
+            disabled={busy || teacherId === (item.primary_teacher_id ?? "")}
+            onClick={() =>
+              run(
+                () =>
+                  assignClassTeacher({
+                    classId: item.id,
+                    teacherId: teacherId || null,
+                  }),
+                undefined,
+                "Saving teacher…",
+              )
+            }
+            className="border border-pine/30 px-3 py-2 text-sm font-medium text-pine hover:border-pine disabled:opacity-50"
+          >
+            Save teacher
+          </button>
+          <button
+            type="button"
+            disabled={
+              busy ||
+              deliveryStatus === (item.teaching_delivery_status ?? "scheduled")
+            }
+            onClick={() =>
+              run(
+                () =>
+                  setClassTeachingDelivery({
+                    classId: item.id,
+                    status: deliveryStatus,
+                  }),
+                undefined,
+                "Updating delivery…",
+              )
+            }
+            className="border border-pine/30 px-3 py-2 text-sm font-medium text-pine hover:border-pine disabled:opacity-50"
+          >
+            Save delivery status
+          </button>
+        </div>
+        <p className="mt-2 text-xs text-ink/50">
+          Payable for Finance later: delivered or covered only.
+        </p>
+      </section>
 
       <section className="relative border border-stone bg-mist/30">
         <ClassWorkspace

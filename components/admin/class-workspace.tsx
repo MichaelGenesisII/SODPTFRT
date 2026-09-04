@@ -363,6 +363,48 @@ export function ClassWorkspace({
           </div>
         </div>
 
+        {item.primary_teacher_name ? (
+          <div className="mt-3 flex items-center gap-3 border border-pine/20 bg-pine/[0.04] px-3 py-2.5">
+            {item.primary_teacher_avatar_url ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={item.primary_teacher_avatar_url}
+                alt=""
+                className="size-10 shrink-0 rounded-full object-cover ring-2 ring-pine/15"
+              />
+            ) : (
+              <span
+                className="flex size-10 shrink-0 items-center justify-center rounded-full bg-pine/10 font-display text-sm text-pine"
+                aria-hidden
+              >
+                {item.primary_teacher_name
+                  .split(/\s+/)
+                  .filter(Boolean)
+                  .slice(0, 2)
+                  .map((part) => part[0]?.toUpperCase() ?? "")
+                  .join("") || "T"}
+              </span>
+            )}
+            <div className="min-w-0">
+              <p className="text-[0.6rem] font-medium uppercase tracking-[0.14em] text-celadon">
+                Teacher
+              </p>
+              <p className="mt-0.5 truncate text-sm font-medium text-pine">
+                {item.primary_teacher_name}
+              </p>
+              {item.primary_teacher_email ? (
+                <p className="truncate text-xs text-ink/50">
+                  {item.primary_teacher_email}
+                </p>
+              ) : null}
+            </div>
+          </div>
+        ) : (
+          <div className="mt-3 border border-dashed border-stone px-3 py-2.5 text-sm text-ink/50">
+            No teacher assigned for this class.
+          </div>
+        )}
+
         <div className="mt-3 border border-pine/20 bg-white/70 px-3 py-2.5">
           <p className="text-[0.6rem] font-medium uppercase tracking-[0.14em] text-ink/45">
             Check-in code

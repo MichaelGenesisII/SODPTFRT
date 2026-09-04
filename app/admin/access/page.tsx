@@ -1,22 +1,39 @@
 import type { Metadata } from "next";
 import { redirect } from "next/navigation";
+import { listTeachersForFinance } from "@/app/admin/finance/teachers/actions";
 import { AccessManager } from "@/components/admin/access-manager";
-import { getSessionAdmin, type AdminProfile } from "@/lib/admin/auth";
+import {
+  getSessionAdmin,
+  isNationalAdmin,
+  type AdminProfile,
+} from "@/lib/admin/auth";
+import { cachedSignStaffPhotoUrl } from "@/lib/staff/photos";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
+import type { TeacherProfile } from "@/lib/teacher/types";
 
 export const metadata: Metadata = {
   title: "Access | School of Disciples Portal",
 };
 
-export default async function AdminAccessPage() {
+type Props = {
+  searchParams: Promise<{ staff?: string }>;
+};
+
+export default async function AdminAccessPage({ searchParams }: Props) {
   const profile = await getSessionAdmin();
   if (!profile) redirect("/login/admin");
+
+  const sp = await searchParams;
+  const initialStaffTab =
+    sp.staff === "teachers" && isNationalAdmin(profile) ? "teachers" : "admins";
 
   const supabase = await createServerSupabaseClient();
   const [{ data }, { data: parishRows }] = await Promise.all([
     supabase
       .from("admin_profiles")
-      .select("id, email, full_name, role, is_active, created_at, parish_id")
+      .select(
+        "id, email, full_name, role, is_active, created_at, parish_id, avatar_path",
+      )
       .order("created_at", { ascending: true }),
     supabase
       .from("parishes")
@@ -25,10 +42,33 @@ export default async function AdminAccessPage() {
       .order("name", { ascending: true }),
   ]);
 
-  const admins = (data ?? []).map((row) => ({
-    ...(row as Omit<AdminProfile, "parish_id">),
-    parish_id: (row as { parish_id?: string | null }).parish_id ?? null,
-  })) as AdminProfile[];
+  const admins = await Promise.all(
+    (data ?? []).map(async (row) => {
+      const base = {
+        ...(row as Omit<AdminProfile, "parish_id" | "avatarUrl">),
+        parish_id: (row as { parish_id?: string | null }).parish_id ?? null,
+        avatar_path:
+          (row as { avatar_path?: string | null }).avatar_path ?? null,
+      };
+      const avatarUrl = await cachedSignStaffPhotoUrl(base.avatar_path);
+      return { ...base, avatarUrl } as AdminProfile;
+    }),
+  );
+
+  let teachers: TeacherProfile[] = [];
+  if (isNationalAdmin(profile)) {
+    try {
+      const rows = await listTeachersForFinance();
+      teachers = await Promise.all(
+        rows.map(async (teacher) => ({
+          ...teacher,
+          avatarUrl: await cachedSignStaffPhotoUrl(teacher.avatar_path),
+        })),
+      );
+    } catch (error) {
+      console.error("[admin/access/teachers]", error);
+    }
+  }
 
   return (
     <div className="mx-auto max-w-6xl">
@@ -40,14 +80,17 @@ export default async function AdminAccessPage() {
           Access
         </h1>
         <p className="mt-1.5 max-w-2xl text-sm leading-relaxed text-ink/70">
-          Staff credentials, invites, and your password. Open Insight for a
-          short guide to desks.
+          {isNationalAdmin(profile)
+            ? "Admin and teacher credentials, invites, and your password. Open Insight for a short guide to desks."
+            : "Staff credentials, invites, and your password. Open Insight for a short guide to desks."}
         </p>
       </section>
       <AccessManager
         profile={profile}
         admins={admins}
         parishes={parishRows ?? []}
+        teachers={teachers}
+        initialStaffTab={initialStaffTab}
       />
     </div>
   );
