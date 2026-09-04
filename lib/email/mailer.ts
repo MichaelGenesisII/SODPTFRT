@@ -53,6 +53,10 @@ import {
   type ClassInviteInput,
 } from "@/lib/email/templates/class-invite";
 import {
+  buildClassTeacherAssignmentEmail,
+  type ClassTeacherAssignmentInput,
+} from "@/lib/email/templates/class-teacher-assignment";
+import {
   buildTicketReplyEmail,
   type TicketReplyTemplateInput,
 } from "@/lib/email/templates/ticket-reply";
@@ -420,6 +424,22 @@ export async function sendClassInviteEmail(input: {
     to: input.to,
     ...built,
     channel: "class-invite",
+  });
+}
+
+export async function sendClassTeacherAssignmentEmail(input: {
+  to: string;
+  template: ClassTeacherAssignmentInput;
+  override?: TemplateOverride;
+}) {
+  const built = mergeTemplateOverride(
+    buildClassTeacherAssignmentEmail(input.template),
+    input.override,
+  );
+  return dispatch({
+    to: input.to,
+    ...built,
+    channel: "class-teacher-assignment",
   });
 }
 

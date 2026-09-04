@@ -36,6 +36,8 @@ import {
   classPortalUrl,
   formatClassWhenLabel,
   sendClassInviteEmail,
+  sendClassTeacherAssignmentEmail,
+  teacherClassPortalUrl,
 } from "@/lib/email/class-mail";
 import { portalBaseUrl } from "@/lib/email/backend";
 import { publicActionMessage } from "@/lib/safe-action-message";
@@ -924,6 +926,7 @@ export async function listAdminClasses(): Promise<ZoomClass[]> {
 export async function assignClassTeacher(input: {
   classId: string;
   teacherId: string | null;
+  notify_teacher?: boolean;
 }): Promise<ClassActionResult> {
   const access = await requireAccessibleClass(input.classId);
   if (!access.ok) return { ok: false, message: access.message };
@@ -934,30 +937,24 @@ export async function assignClassTeacher(input: {
   if (teacherId) {
     const { data: teacher } = await service
       .from("teacher_profiles")
-      .select("id, is_active")
+      .select("id, is_active, email, full_name")
       .eq("id", teacherId)
       .maybeSingle();
     if (!teacher?.is_active) {
       return { ok: false, message: "Choose an active teacher." };
     }
-  }
 
-  const { error } = await service
-    .from("zoom_classes")
-    .update({
-      primary_teacher_id: teacherId,
-      updated_at: new Date().toISOString(),
-    })
-    .eq("id", input.classId);
+    const { error } = await service
+      .from("zoom_classes")
+      .update({
+        primary_teacher_id: teacherId,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", input.classId);
 
-  if (error) return fail(error);
+    if (error) return fail(error);
 
-  const {
-    upsertScheduledDelivery,
-    clearDeliveryIfScheduled,
-  } = await import("@/lib/teacher/delivery");
-
-  if (teacherId) {
+    const { upsertScheduledDelivery } = await import("@/lib/teacher/delivery");
     const seeded = await upsertScheduledDelivery({
       classId: input.classId,
       teacherId,
@@ -965,9 +962,96 @@ export async function assignClassTeacher(input: {
     if (!seeded.ok) {
       console.error("[assignClassTeacher] delivery", seeded.message);
     }
-  } else {
-    await clearDeliveryIfScheduled(input.classId);
+
+    let teacherEmailed = false;
+    if (input.notify_teacher && teacher.email) {
+      const klass = access.klass;
+      let parishName: string | null = null;
+      let batchName: string | null = null;
+      let cohortName: string | null = null;
+      if (klass.parish_id) {
+        const { data: parish } = await service
+          .from("parishes")
+          .select("name")
+          .eq("id", klass.parish_id)
+          .maybeSingle();
+        parishName = parish?.name ?? null;
+      }
+      if (klass.batch_id) {
+        const { data: batch } = await service
+          .from("batches")
+          .select("name")
+          .eq("id", klass.batch_id)
+          .maybeSingle();
+        batchName = batch?.name ?? null;
+      }
+      if (klass.cohort_id) {
+        const { data: cohort } = await service
+          .from("cohorts")
+          .select("name")
+          .eq("id", klass.cohort_id)
+          .maybeSingle();
+        cohortName = cohort?.name ?? null;
+      }
+
+      const firstName =
+        teacher.full_name?.trim().split(/\s+/)[0] ||
+        teacher.email.split("@")[0] ||
+        "colleague";
+      const sent = await sendClassTeacherAssignmentEmail({
+        to: teacher.email,
+        firstName,
+        classTitle: klass.title,
+        whenLabel: formatClassWhenLabel(klass.scheduled_start),
+        durationMinutes: klass.duration_minutes,
+        audienceLabel: audienceLabel(
+          klass.audience,
+          parishName,
+          batchName,
+          cohortName,
+          klass.year,
+        ),
+        teacherPortalUrl: teacherClassPortalUrl(),
+        joinUrl: klass.zoom_join_url || undefined,
+        passcode: klass.zoom_passcode || undefined,
+        notes: klass.description || undefined,
+        assignedByName: access.actor.full_name?.trim() || access.actor.email,
+        portalSupportUrl: `${portalBaseUrl()}/support`,
+        siteUrl: SOD_SITE,
+      });
+      teacherEmailed = sent.ok;
+      if (!sent.ok) {
+        console.error("[assignClassTeacher] notify", sent.message);
+      }
+    }
+
+    revalidatePath("/admin/classes");
+    revalidatePath(`/admin/classes/${input.classId}`);
+    revalidatePath("/teacher");
+    revalidatePath("/teacher/classes");
+    return {
+      ok: true,
+      message: teacherEmailed
+        ? "Teacher assigned and notified by email."
+        : input.notify_teacher
+          ? "Teacher assigned, but the email could not be sent."
+          : "Teacher assigned.",
+      classId: input.classId,
+    };
   }
+
+  const { error } = await service
+    .from("zoom_classes")
+    .update({
+      primary_teacher_id: null,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", input.classId);
+
+  if (error) return fail(error);
+
+  const { clearDeliveryIfScheduled } = await import("@/lib/teacher/delivery");
+  await clearDeliveryIfScheduled(input.classId);
 
   revalidatePath("/admin/classes");
   revalidatePath(`/admin/classes/${input.classId}`);
@@ -975,9 +1059,7 @@ export async function assignClassTeacher(input: {
   revalidatePath("/teacher/classes");
   return {
     ok: true,
-    message: teacherId
-      ? "Teacher assigned."
-      : "Teacher cleared for this class.",
+    message: "Teacher cleared for this class.",
     classId: input.classId,
   };
 }
@@ -1440,6 +1522,7 @@ export async function createZoomClass(input: {
   send_email?: boolean;
   email_notes?: string;
   primary_teacher_id?: string | null;
+  notify_teacher?: boolean;
 }): Promise<ClassActionResult> {
   let actor: AdminProfile;
   try {
@@ -1587,6 +1670,79 @@ export async function createZoomClass(input: {
 
   let emailed = 0;
   let emailFailed = 0;
+  let teacherNotified = false;
+  let teacherNotifyFailed = false;
+
+  if (input.notify_teacher && input.primary_teacher_id?.trim()) {
+    const { data: teacher } = await supabase
+      .from("teacher_profiles")
+      .select("email, full_name")
+      .eq("id", input.primary_teacher_id.trim())
+      .maybeSingle();
+
+    if (teacher?.email) {
+      let parishName: string | null = null;
+      let batchName: string | null = null;
+      let cohortName: string | null = null;
+      if (resolved.parish_id) {
+        const { data: parish } = await supabase
+          .from("parishes")
+          .select("name")
+          .eq("id", resolved.parish_id)
+          .maybeSingle();
+        parishName = parish?.name ?? null;
+      }
+      if (resolved.batch_id) {
+        const { data: batch } = await supabase
+          .from("batches")
+          .select("name")
+          .eq("id", resolved.batch_id)
+          .maybeSingle();
+        batchName = batch?.name ?? null;
+      }
+      if (resolved.cohort_id) {
+        const { data: cohort } = await supabase
+          .from("cohorts")
+          .select("name")
+          .eq("id", resolved.cohort_id)
+          .maybeSingle();
+        cohortName = cohort?.name ?? null;
+      }
+
+      const firstName =
+        teacher.full_name?.trim().split(/\s+/)[0] ||
+        teacher.email.split("@")[0] ||
+        "colleague";
+      const sent = await sendClassTeacherAssignmentEmail({
+        to: teacher.email,
+        firstName,
+        classTitle: title,
+        whenLabel: formatClassWhenLabel(start.toISOString()),
+        durationMinutes: duration,
+        audienceLabel: audienceLabel(
+          input.audience,
+          parishName,
+          batchName,
+          cohortName,
+          resolved.year,
+        ),
+        teacherPortalUrl: teacherClassPortalUrl(),
+        joinUrl: zoomJoinUrl || undefined,
+        passcode: zoomPasscode || undefined,
+        notes: input.description?.trim() || undefined,
+        assignedByName: actor.full_name?.trim() || actor.email,
+        portalSupportUrl: `${portalBaseUrl()}/support`,
+        siteUrl: SOD_SITE,
+      });
+      if (sent.ok) teacherNotified = true;
+      else {
+        teacherNotifyFailed = true;
+        console.error("[classes/create] teacher notify", sent.message);
+      }
+    } else {
+      teacherNotifyFailed = true;
+    }
+  }
 
   if (input.send_email) {
     const recipients = await listClassAudienceRecipients({
@@ -1666,6 +1822,11 @@ export async function createZoomClass(input: {
     input.send_email
       ? `emailed ${emailed}${emailFailed ? ` (${emailFailed} failed)` : ""}`
       : null,
+    teacherNotified
+      ? "teacher notified"
+      : teacherNotifyFailed
+        ? "teacher email failed"
+        : null,
   ].filter(Boolean);
 
   return {

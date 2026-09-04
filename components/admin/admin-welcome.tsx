@@ -19,7 +19,7 @@ function welcomeBody(profile: AdminProfile, deskLabel: string) {
   if (isNationalAdmin(profile)) {
     return `You’re signed in to ${deskLabel}. You can work across every UK parish from this desk.`;
   }
-  return "You’re signed in to the staff portal. Open Access to manage your password and team.";
+  return "You’re signed in to the staff portal. Open My account for your password, or Access for your team.";
 }
 
 export function AdminWelcome({

@@ -708,7 +708,7 @@ function ProfileMenu({
               onClick={() => setOpen(false)}
               className="group flex items-center justify-between px-3 py-2.5 text-sm font-medium transition-colors hover:bg-pine/5 hover:text-pine"
             >
-              Access &amp; security
+              Access
               <span className="text-ink/30 transition-transform group-hover:translate-x-0.5">
                 →
               </span>

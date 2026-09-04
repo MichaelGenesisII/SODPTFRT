@@ -5,6 +5,7 @@ import {
   sendTeacherWelcomeEmail,
   sendSingleCampaignEmail,
   sendClassInviteEmail,
+  sendClassTeacherAssignmentEmail,
   sendEnrolmentAccessRecoveryEmail,
   sendEnrolmentAcceptanceEmail,
   sendEnrolmentConfirmationEmail,
@@ -313,6 +314,28 @@ export async function dispatchTemplateEmail(
             ? String(payload.attendanceCode)
             : undefined,
           notes: payload.notes ? String(payload.notes) : undefined,
+          portalSupportUrl: String(payload.portalSupportUrl),
+          siteUrl: String(payload.siteUrl),
+        },
+        override: override ?? undefined,
+      });
+
+    case "/api/email/class-teacher-assignment":
+      return sendClassTeacherAssignmentEmail({
+        to: String(payload.to),
+        template: {
+          firstName: String(payload.firstName),
+          classTitle: String(payload.classTitle),
+          whenLabel: String(payload.whenLabel),
+          durationMinutes: Number(payload.durationMinutes),
+          audienceLabel: String(payload.audienceLabel),
+          teacherPortalUrl: String(payload.teacherPortalUrl),
+          joinUrl: payload.joinUrl ? String(payload.joinUrl) : undefined,
+          passcode: payload.passcode ? String(payload.passcode) : undefined,
+          notes: payload.notes ? String(payload.notes) : undefined,
+          assignedByName: payload.assignedByName
+            ? String(payload.assignedByName)
+            : undefined,
           portalSupportUrl: String(payload.portalSupportUrl),
           siteUrl: String(payload.siteUrl),
         },

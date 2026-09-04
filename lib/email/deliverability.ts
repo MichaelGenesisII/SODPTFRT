@@ -7,6 +7,7 @@ const NOREPLY_CHANNELS = new Set([
   "exam-result-certificate",
   "campaign",
   "class-invite",
+  "class-teacher-assignment",
 ]);
 
 const BULK_CHANNELS = new Set(["campaign"]);

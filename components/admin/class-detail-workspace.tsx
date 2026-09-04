@@ -62,6 +62,7 @@ export function ClassDetailWorkspace({
   const [teacherId, setTeacherId] = useState(
     initialClass.primary_teacher_id ?? "",
   );
+  const [notifyTeacher, setNotifyTeacher] = useState(true);
   const [deliveryStatus, setDeliveryStatus] = useState(
     initialClass.teaching_delivery_status ?? "scheduled",
   );
@@ -264,6 +265,23 @@ export function ClassDetailWorkspace({
             </select>
           </label>
         </div>
+        {teacherId && teacherId !== (item.primary_teacher_id ?? "") ? (
+          <label className="mt-3 flex items-start gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={notifyTeacher}
+              onChange={(e) => setNotifyTeacher(e.target.checked)}
+              className="mt-1"
+              disabled={busy}
+            />
+            <span>
+              Email the teacher about this class
+              <span className="mt-0.5 block text-xs text-ink/50">
+                Sends schedule details and a link to their teacher portal.
+              </span>
+            </span>
+          </label>
+        ) : null}
         <div className="mt-3 flex flex-wrap gap-2">
           <button
             type="button"
@@ -274,6 +292,7 @@ export function ClassDetailWorkspace({
                   assignClassTeacher({
                     classId: item.id,
                     teacherId: teacherId || null,
+                    notify_teacher: Boolean(teacherId) && notifyTeacher,
                   }),
                 undefined,
                 "Saving teacher…",

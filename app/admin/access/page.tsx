@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 import { redirect } from "next/navigation";
 import { listTeachersForFinance } from "@/app/admin/finance/teachers/actions";
 import { AccessManager } from "@/components/admin/access-manager";
@@ -72,18 +73,26 @@ export default async function AdminAccessPage({ searchParams }: Props) {
 
   return (
     <div className="mx-auto max-w-6xl">
-      <section className="animate-fade-rise mb-4 sm:mb-6">
-        <p className="text-[0.65rem] font-medium uppercase tracking-[0.18em] text-celadon">
-          Administration
-        </p>
-        <h1 className="mt-1.5 font-display text-[clamp(1.6rem,5vw,2.4rem)] tracking-[-0.02em] text-pine">
-          Access
-        </h1>
-        <p className="mt-1.5 max-w-2xl text-sm leading-relaxed text-ink/70">
-          {isNationalAdmin(profile)
-            ? "Admin and teacher credentials, invites, and your password. Open Insight for a short guide to desks."
-            : "Staff credentials, invites, and your password. Open Insight for a short guide to desks."}
-        </p>
+      <section className="animate-fade-rise mb-4 flex flex-col gap-4 sm:mb-6 sm:flex-row sm:items-end sm:justify-between">
+        <div className="min-w-0">
+          <p className="text-[0.65rem] font-medium uppercase tracking-[0.18em] text-celadon">
+            Administration
+          </p>
+          <h1 className="mt-1.5 font-display text-[clamp(1.6rem,5vw,2.4rem)] tracking-[-0.02em] text-pine">
+            Access
+          </h1>
+          <p className="mt-1.5 max-w-2xl text-sm leading-relaxed text-ink/70">
+            {isNationalAdmin(profile)
+              ? "Admin and teacher credentials and invites. Change your own password in My account. Open Insight for a short guide to desks."
+              : "Staff credentials and invites. Change your own password in My account. Open Insight for a short guide to desks."}
+          </p>
+        </div>
+        <Link
+          href="/admin/account"
+          className="inline-flex min-h-[2.5rem] shrink-0 items-center justify-center border border-pine/35 bg-white px-4 py-2.5 text-sm font-medium text-pine transition-colors hover:border-pine hover:bg-mist"
+        >
+          My account
+        </Link>
       </section>
       <AccessManager
         profile={profile}

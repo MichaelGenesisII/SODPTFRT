@@ -480,6 +480,7 @@ function CreateClassForm({
   const [sendEmail, setSendEmail] = useState(false);
   const [emailNotes, setEmailNotes] = useState("");
   const [teacherId, setTeacherId] = useState("");
+  const [notifyTeacher, setNotifyTeacher] = useState(true);
   const [verifyOpen, setVerifyOpen] = useState(false);
   const [preview, setPreview] = useState<ClassInvitePreview | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
@@ -578,6 +579,7 @@ function CreateClassForm({
       send_email: sendEmail,
       email_notes: emailNotes.trim() || undefined,
       primary_teacher_id: teacherId || null,
+      notify_teacher: Boolean(teacherId) && notifyTeacher,
     };
   }
 
@@ -690,11 +692,28 @@ function CreateClassForm({
         </select>
         {teachers.length === 0 ? (
           <span className="mt-1 block text-xs text-ink/45">
-            No active teachers yet. National desk can invite them under Finance
-            → Teachers.
+            No active teachers yet. National desk can invite them under Access →
+            Teachers.
           </span>
         ) : null}
       </label>
+
+      {teacherId ? (
+        <label className="flex items-start gap-2 text-sm">
+          <input
+            type="checkbox"
+            checked={notifyTeacher}
+            onChange={(e) => setNotifyTeacher(e.target.checked)}
+            className="mt-1"
+          />
+          <span>
+            Email the teacher about this class
+            <span className="mt-0.5 block text-xs text-ink/50">
+              Sends schedule details and a link to their teacher portal Classes.
+            </span>
+          </span>
+        </label>
+      ) : null}
 
       <fieldset>
         <legend className="text-sm">Who is this for?</legend>

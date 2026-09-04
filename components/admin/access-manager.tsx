@@ -1,8 +1,8 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useMemo, useState, useTransition } from "react";
 import {
-  changeOwnPassword,
   createAdminAccount,
   deleteAdminAccount,
   resetAdminPassword,
@@ -31,7 +31,6 @@ const fieldClass =
 const DIRECTORY_PAGE_SIZE = 8;
 
 type PageView = "admins" | "teachers" | "insight";
-type DeskTab = "directory" | "password";
 
 type PendingConfirm =
   | { kind: "delete"; admin: AdminProfile }
@@ -130,12 +129,11 @@ export function AccessManager({
   const [pageView, setPageView] = useState<PageView>(
     national && initialStaffTab === "teachers" ? "teachers" : "admins",
   );
-  const [deskTab, setDeskTab] = useState<DeskTab>("directory");
   const [inviting, setInviting] = useState(false);
+  const [teacherInviting, setTeacherInviting] = useState(false);
   const [pending, startTransition] = useTransition();
   const [busyLabel, setBusyLabel] = useState<string | null>(null);
   const busy = pending || Boolean(busyLabel);
-  const [showPassword, setShowPassword] = useState(false);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [pendingConfirm, setPendingConfirm] = useState<PendingConfirm | null>(
     null,
@@ -214,6 +212,7 @@ export function AccessManager({
 
   function openInvite() {
     setInviting(true);
+    setTeacherInviting(false);
     setExpandedId(null);
     setPageView("admins");
   }
@@ -221,6 +220,11 @@ export function AccessManager({
   function closeInvite() {
     setInviting(false);
     setInvitePassword("");
+  }
+
+  function setPageViewSafe(next: PageView) {
+    setTeacherInviting(false);
+    setPageView(next);
   }
 
   function goToPage(next: number) {
@@ -316,6 +320,7 @@ export function AccessManager({
             ),
           { label: "Updating desk…" },
         );
+        return;
     }
   }
 
@@ -323,46 +328,51 @@ export function AccessManager({
     <div className="relative space-y-4" aria-busy={busy}>
       {!inviting ? (
         <>
-          <nav
-            data-tour="access-tabs"
-            className="flex gap-1 overflow-x-auto border-b border-stone pb-px"
-            aria-label="Access page"
-          >
-            {(
-              [
-                { id: "admins" as const, label: "Admins" },
-                ...(national
-                  ? [{ id: "teachers" as const, label: "Teachers" }]
-                  : []),
-                { id: "insight" as const, label: "Insight" },
-              ] as const
-            ).map((tab) => {
-              const active = pageView === tab.id;
-              return (
-                <button
-                  key={tab.id}
-                  type="button"
-                  onClick={() => setPageView(tab.id)}
-                  className={`relative shrink-0 px-3 py-1.5 text-sm font-medium tracking-wide transition-colors ${
-                    active ? "text-pine" : "text-ink/50 hover:text-ink/80"
-                  }`}
-                >
-                  {tab.label}
-                  <span
-                    className={`absolute inset-x-2 bottom-0 h-0.5 bg-celadon transition-opacity ${
-                      active ? "opacity-100" : "opacity-0"
+          {!teacherInviting ? (
+            <nav
+              data-tour="access-tabs"
+              className="flex gap-1 overflow-x-auto border-b border-stone pb-px"
+              aria-label="Access page"
+            >
+              {(
+                [
+                  { id: "admins" as const, label: "Admins" },
+                  ...(national
+                    ? [{ id: "teachers" as const, label: "Teachers" }]
+                    : []),
+                  { id: "insight" as const, label: "Insight" },
+                ] as const
+              ).map((tab) => {
+                const active = pageView === tab.id;
+                return (
+                  <button
+                    key={tab.id}
+                    type="button"
+                    onClick={() => setPageViewSafe(tab.id)}
+                    className={`relative shrink-0 px-3 py-1.5 text-sm font-medium tracking-wide transition-colors ${
+                      active ? "text-pine" : "text-ink/50 hover:text-ink/80"
                     }`}
-                    aria-hidden
-                  />
-                </button>
-              );
-            })}
-          </nav>
+                  >
+                    {tab.label}
+                    <span
+                      className={`absolute inset-x-2 bottom-0 h-0.5 bg-celadon transition-opacity ${
+                        active ? "opacity-100" : "opacity-0"
+                      }`}
+                      aria-hidden
+                    />
+                  </button>
+                );
+              })}
+            </nav>
+          ) : null}
 
           {pageView === "insight" ? (
             <AccessInsightGuide profile={profile} />
           ) : pageView === "teachers" && national ? (
-            <TeachersFinanceManager initialTeachers={teachers} />
+            <TeachersFinanceManager
+              initialTeachers={teachers}
+              onInviteSurfaceChange={setTeacherInviting}
+            />
           ) : (
             <>
               <div className="grid gap-px border border-stone bg-stone sm:grid-cols-2 lg:grid-cols-4">
@@ -437,104 +447,68 @@ export function AccessManager({
                 data-tour="access-desk"
                 className="border border-stone bg-mist/40 p-4 sm:p-5"
               >
-                <nav
-                  className="mb-4 flex gap-1 overflow-x-auto border-b border-stone pb-px"
-                  aria-label="Access desk"
-                >
-                  {(
-                    [
-                      { id: "directory" as const, label: "Directory" },
-                      { id: "password" as const, label: "My password" },
-                    ] as const
-                  ).map((tab) => {
-                    const active = deskTab === tab.id;
-                    return (
-                      <button
-                        key={tab.id}
-                        type="button"
-                        onClick={() => {
-                          setDeskTab(tab.id);
-                          setExpandedId(null);
-                        }}
-                        className={`relative shrink-0 px-3 py-1.5 text-sm font-medium tracking-wide transition-colors ${
-                          active ? "text-pine" : "text-ink/50 hover:text-ink/80"
-                        }`}
-                      >
-                        {tab.label}
-                        <span
-                          className={`absolute inset-x-2 bottom-0 h-0.5 bg-celadon transition-opacity ${
-                            active ? "opacity-100" : "opacity-0"
-                          }`}
-                          aria-hidden
-                        />
-                      </button>
-                    );
-                  })}
-                </nav>
+                <div>
+                  <p className="mb-4 text-sm text-ink/60">
+                    {national
+                      ? "Open a staff member to set their desk, reset a password, or remove access."
+                      : "People on your parish desk. You can invite more for this parish only."}
+                  </p>
 
-                {deskTab === "directory" ? (
-                  <div>
-                    <p className="mb-4 text-sm text-ink/60">
-                      {national
-                        ? "Open a staff member to set their desk, reset a password, or remove access."
-                        : "People on your parish desk. You can invite more for this parish only."}
-                    </p>
+                  <ul className="divide-y divide-stone border border-stone bg-white/50">
+                    {pageAdmins.length === 0 ? (
+                      <li className="px-4 py-10 text-center text-sm text-ink/50">
+                        {visibleAdmins.length === 0
+                          ? "No staff accounts yet."
+                          : "No staff match your search."}
+                      </li>
+                    ) : (
+                      pageAdmins.map((admin) => {
+                        const isSelf = admin.id === profile.id;
+                        const open = expandedId === admin.id;
+                        const canManage = national && admin.role !== "master";
 
-                    <ul className="divide-y divide-stone border border-stone bg-white/50">
-                      {pageAdmins.length === 0 ? (
-                        <li className="px-4 py-10 text-center text-sm text-ink/50">
-                          {visibleAdmins.length === 0
-                            ? "No staff accounts yet."
-                            : "No staff match your search."}
-                        </li>
-                      ) : (
-                        pageAdmins.map((admin) => {
-                          const isSelf = admin.id === profile.id;
-                          const open = expandedId === admin.id;
-                          const canManage = national && admin.role !== "master";
-
-                          return (
-                            <li key={admin.id}>
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  setExpandedId(open ? null : admin.id)
-                                }
-                                className="flex w-full cursor-pointer items-center gap-3 px-4 py-3.5 text-left transition-colors hover:bg-pine/[0.03] sm:gap-4 sm:px-5"
-                                aria-expanded={open}
-                              >
-                                <StaffAvatar
-                                  name={adminDisplayName(admin)}
-                                  imageUrl={admin.avatarUrl}
-                                  active={admin.is_active}
-                                />
-                                <span className="min-w-0 flex-1">
-                                  <span className="flex flex-wrap items-center gap-2">
-                                    <span className="font-medium text-pine">
-                                      {admin.full_name || "Unnamed admin"}
-                                    </span>
-                                    {isSelf ? (
-                                      <span className="text-xs text-ink/45">
-                                        (you)
-                                      </span>
-                                    ) : null}
-                                    <span className="text-[0.65rem] font-medium uppercase tracking-[0.12em] text-celadon">
-                                      {deskBadge(admin, parishes)}
-                                    </span>
-                                    {!admin.is_active ? (
-                                      <span className="text-[0.65rem] font-medium uppercase tracking-[0.12em] text-ink/40">
-                                        Inactive
-                                      </span>
-                                    ) : null}
+                        return (
+                          <li key={admin.id}>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setExpandedId(open ? null : admin.id)
+                              }
+                              className="flex w-full cursor-pointer items-center gap-3 px-4 py-3.5 text-left transition-colors hover:bg-pine/[0.03] sm:gap-4 sm:px-5"
+                              aria-expanded={open}
+                            >
+                              <StaffAvatar
+                                name={adminDisplayName(admin)}
+                                imageUrl={admin.avatarUrl}
+                                active={admin.is_active}
+                              />
+                              <span className="min-w-0 flex-1">
+                                <span className="flex flex-wrap items-center gap-2">
+                                  <span className="font-medium text-pine">
+                                    {admin.full_name || "Unnamed admin"}
                                   </span>
-                                  <span className="mt-1 block truncate font-mono text-xs text-ink/55 sm:text-sm">
-                                    {admin.email}
+                                  {isSelf ? (
+                                    <span className="text-xs text-ink/45">
+                                      (you)
+                                    </span>
+                                  ) : null}
+                                  <span className="text-[0.65rem] font-medium uppercase tracking-[0.12em] text-celadon">
+                                    {deskBadge(admin, parishes)}
                                   </span>
+                                  {!admin.is_active ? (
+                                    <span className="text-[0.65rem] font-medium uppercase tracking-[0.12em] text-ink/40">
+                                      Inactive
+                                    </span>
+                                  ) : null}
                                 </span>
-                                <span className="text-ink/40">
-                                  <ChevronIcon open={open} />
+                                <span className="mt-1 block truncate font-mono text-xs text-ink/55 sm:text-sm">
+                                  {admin.email}
                                 </span>
-                              </button>
+                              </span>
+                              <span className="text-ink/40">
+                                <ChevronIcon open={open} />
+                              </span>
+                            </button>
 
                               <div
                                 className={`grid transition-[grid-template-rows] duration-300 ease-out ${
@@ -546,21 +520,31 @@ export function AccessManager({
                                     {admin.role === "master" ? (
                                       <p className="text-sm text-ink/55">
                                         Protected master account. Change your own
-                                        password under{" "}
-                                        <button
-                                          type="button"
-                                          onClick={() => setDeskTab("password")}
+                                        password in{" "}
+                                        <Link
+                                          href="/admin/account"
                                           className="font-medium text-pine underline decoration-pine/30 underline-offset-4"
                                         >
-                                          My password
-                                        </button>
+                                          My account
+                                        </Link>
                                         .
                                       </p>
                                     ) : !national ? (
                                       <p className="text-sm text-ink/55">
-                                        {isSelf
-                                          ? "Use My password to update your login."
-                                          : "Ask a national desk to change this person’s access, password, or status."}
+                                        {isSelf ? (
+                                          <>
+                                            Update your login in{" "}
+                                            <Link
+                                              href="/admin/account"
+                                              className="font-medium text-pine underline decoration-pine/30 underline-offset-4"
+                                            >
+                                              My account
+                                            </Link>
+                                            .
+                                          </>
+                                        ) : (
+                                          "Ask a national desk to change this person’s access, password, or status."
+                                        )}
                                       </p>
                                     ) : canManage ? (
                                       <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
@@ -688,106 +672,6 @@ export function AccessManager({
                       itemLabel="staff"
                     />
                   </div>
-                ) : null}
-
-                {deskTab === "password" ? (
-                  <div>
-                    <p className="mb-4 text-sm text-ink/60">
-                      Update the password for this signed-in account.
-                    </p>
-                    <form
-                      className="relative grid max-w-md gap-4"
-                      onSubmit={(event) => {
-                        event.preventDefault();
-                        const form = event.currentTarget;
-                        run(() => changeOwnPassword(new FormData(form)), {
-                          form,
-                          label: "Updating password…",
-                          closeInvite: false,
-                        });
-                      }}
-                    >
-                      <DeskLoaderOverlay
-                        active={busy && !pendingConfirm}
-                        label="Securing your key…"
-                      />
-                      <div>
-                        <div className="mb-2 flex items-center justify-between gap-3">
-                          <label
-                            className="block text-sm font-medium text-ink"
-                            htmlFor="currentPassword"
-                          >
-                            Current password
-                          </label>
-                          <button
-                            type="button"
-                            disabled={busy}
-                            onClick={() => setShowPassword((value) => !value)}
-                            className="text-xs font-medium text-pine underline decoration-pine/30 underline-offset-4 disabled:opacity-50"
-                          >
-                            {showPassword ? "Hide" : "Show"}
-                          </button>
-                        </div>
-                        <input
-                          id="currentPassword"
-                          name="currentPassword"
-                          type={showPassword ? "text" : "password"}
-                          required
-                          disabled={busy}
-                          autoComplete="current-password"
-                          className={fieldClass}
-                        />
-                      </div>
-                      <div>
-                        <label
-                          className="mb-2 block text-sm font-medium text-ink"
-                          htmlFor="newPassword"
-                        >
-                          New password
-                        </label>
-                        <input
-                          id="newPassword"
-                          name="newPassword"
-                          type={showPassword ? "text" : "password"}
-                          required
-                          minLength={8}
-                          disabled={busy}
-                          autoComplete="new-password"
-                          className={fieldClass}
-                        />
-                      </div>
-                      <div>
-                        <label
-                          className="mb-2 block text-sm font-medium text-ink"
-                          htmlFor="confirmPassword"
-                        >
-                          Confirm new password
-                        </label>
-                        <input
-                          id="confirmPassword"
-                          name="confirmPassword"
-                          type={showPassword ? "text" : "password"}
-                          required
-                          minLength={8}
-                          disabled={busy}
-                          autoComplete="new-password"
-                          className={fieldClass}
-                        />
-                      </div>
-                      <button
-                        type="submit"
-                        disabled={busy}
-                        className="mt-1 inline-flex min-h-[2.75rem] min-w-[10rem] items-center justify-center bg-pine px-5 py-3 text-sm font-medium text-mist transition-colors hover:bg-celadon disabled:opacity-60"
-                      >
-                        {busy ? (
-                          <DeskLoader label="Updating…" tone="mist" />
-                        ) : (
-                          "Update password"
-                        )}
-                      </button>
-                    </form>
-                  </div>
-                ) : null}
               </div>
             </>
           )}
@@ -1092,8 +976,8 @@ function AccessConfirmDialog({
               title: "Move to another desk?",
               body: (
                 <>
-                  <span className="font-medium text-ink">{name}</span> will move
-                  from{" "}
+                  <span className="font-medium text-ink">{name}</span> will
+                  move from{" "}
                   <span className="font-medium text-ink">
                     {deskScopeLabel(admin.parish_id ?? null, parishes)}
                   </span>{" "}
@@ -1188,8 +1072,8 @@ function AccessInsightGuide({ profile }: { profile: AdminProfile }) {
             body: "You may invite another admin to your own parish only — not to another church, and not to National. We email them a temporary password.",
           },
           {
-            title: "Directory & password",
-            body: "View people on your parish desk. Change your own password here. National staff handle deactivate, reset, or delete.",
+            title: "Directory",
+            body: "View people on your parish desk. Change your own password in My account. National staff handle deactivate, reset, or delete.",
           },
         ]
       : [

@@ -10,6 +10,7 @@ export type EmailTemplateSlug =
   | "student-removed"
   | "student-temp-password"
   | "class-invite"
+  | "class-teacher-assignment"
   | "student-scorecard"
   | "exam-result-certificate"
   | "ticket-reply"
@@ -70,6 +71,7 @@ export const EMAIL_TEMPLATE_CATEGORY: Record<
   "student-temp-password": "student",
   "manuals-sent": "student",
   "class-invite": "classes",
+  "class-teacher-assignment": "teachers",
   "student-scorecard": "classes",
   "exam-result-certificate": "classes",
   "ticket-reply": "support",
@@ -372,6 +374,24 @@ export const EMAIL_TEMPLATE_CATALOG: EmailTemplateCatalogEntry[] = [
     ),
   },
   {
+    slug: "class-teacher-assignment",
+    label: "Teacher class assignment",
+    description: "Notifies a teacher they have been assigned to teach a class.",
+    variables: [
+      "{{firstName}}",
+      "{{classTitle}}",
+      "{{whenLabel}}",
+      "{{teacherPortalUrl}}",
+    ],
+    defaultSubject: "{{firstName}}, you are scheduled to teach: {{classTitle}}",
+    defaultHtml: wrapEmailHtml(
+      "Teaching assignment",
+      `<p style="margin:0 0 14px;">Hello {{firstName}},</p>
+<p style="margin:0 0 14px;">You are scheduled to teach <strong>{{classTitle}}</strong> on {{whenLabel}}.</p>
+<p style="margin:0;"><a href="{{teacherPortalUrl}}" style="color:#14352c;">Open teacher Classes</a></p>`,
+    ),
+  },
+  {
     slug: "student-scorecard",
     label: "Scorecard released",
     description: "Records / scorecard available.",
@@ -522,6 +542,7 @@ export const EMAIL_SLUG_BY_ROUTE: Record<string, EmailTemplateSlug> = {
   "/api/email/student-temp-password": "student-temp-password",
   "/api/email/manuals-sent": "manuals-sent",
   "/api/email/class-invite": "class-invite",
+  "/api/email/class-teacher-assignment": "class-teacher-assignment",
   "/api/email/student-scorecard": "student-scorecard",
   "/api/email/exam-result-certificate": "exam-result-certificate",
   "/api/email/ticket-reply": "ticket-reply",
