@@ -450,7 +450,7 @@ export function TeacherClassDetailClient({
                   teacher_id: prev.klass.primary_teacher_id ?? "",
                   status: "delivered",
                   confirmed_at: now,
-                  confirmed_by: prev.klass.primary_teacher_id,
+                  confirmed_by: prev.klass.primary_teacher_id ?? null,
                   notes: prev.delivery?.notes ?? null,
                   created_at: prev.delivery?.created_at ?? now,
                   updated_at: now,
