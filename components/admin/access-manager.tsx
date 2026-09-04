@@ -215,7 +215,7 @@ export function AccessManager({
   function openInvite() {
     setInviting(true);
     setExpandedId(null);
-    setPageView("desk");
+    setPageView("admins");
   }
 
   function closeInvite() {
