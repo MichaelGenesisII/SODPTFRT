@@ -2,12 +2,14 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { listTeachersForFinance } from "@/app/admin/finance/teachers/actions";
+import { listFinanceStaff } from "@/app/admin/finance/staff/actions";
 import { AccessManager } from "@/components/admin/access-manager";
 import {
   getSessionAdmin,
   isNationalAdmin,
   type AdminProfile,
 } from "@/lib/admin/auth";
+import type { FinanceProfile } from "@/lib/finance/types";
 import { cachedSignStaffPhotoUrl } from "@/lib/staff/photos";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import type { TeacherProfile } from "@/lib/teacher/types";
@@ -25,8 +27,13 @@ export default async function AdminAccessPage({ searchParams }: Props) {
   if (!profile) redirect("/login/admin");
 
   const sp = await searchParams;
+  const national = isNationalAdmin(profile);
   const initialStaffTab =
-    sp.staff === "teachers" && isNationalAdmin(profile) ? "teachers" : "admins";
+    national && sp.staff === "teachers"
+      ? "teachers"
+      : national && sp.staff === "finance"
+        ? "finance"
+        : "admins";
 
   const supabase = await createServerSupabaseClient();
   const [{ data }, { data: parishRows }] = await Promise.all([
@@ -57,7 +64,8 @@ export default async function AdminAccessPage({ searchParams }: Props) {
   );
 
   let teachers: TeacherProfile[] = [];
-  if (isNationalAdmin(profile)) {
+  let financeStaff: FinanceProfile[] = [];
+  if (national) {
     try {
       const rows = await listTeachersForFinance();
       teachers = await Promise.all(
@@ -68,6 +76,17 @@ export default async function AdminAccessPage({ searchParams }: Props) {
       );
     } catch (error) {
       console.error("[admin/access/teachers]", error);
+    }
+    try {
+      const rows = await listFinanceStaff();
+      financeStaff = await Promise.all(
+        rows.map(async (user) => ({
+          ...user,
+          avatarUrl: await cachedSignStaffPhotoUrl(user.avatar_path),
+        })),
+      );
+    } catch (error) {
+      console.error("[admin/access/finance]", error);
     }
   }
 
@@ -82,8 +101,8 @@ export default async function AdminAccessPage({ searchParams }: Props) {
             Access
           </h1>
           <p className="mt-1.5 max-w-2xl text-sm leading-relaxed text-ink/70">
-            {isNationalAdmin(profile)
-              ? "Admin and teacher credentials and invites. Change your own password in My account. Open Insight for a short guide to desks."
+            {national
+              ? "Admin, teacher, and Finance Admin credentials and invites. Change your own password in My account. Open Insight for a short guide to desks."
               : "Staff credentials and invites. Change your own password in My account. Open Insight for a short guide to desks."}
           </p>
         </div>
@@ -99,6 +118,7 @@ export default async function AdminAccessPage({ searchParams }: Props) {
         admins={admins}
         parishes={parishRows ?? []}
         teachers={teachers}
+        financeStaff={financeStaff}
         initialStaffTab={initialStaffTab}
       />
     </div>

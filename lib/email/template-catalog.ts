@@ -17,6 +17,7 @@ export type EmailTemplateSlug =
   | "admin-welcome"
   | "admin-access-recovery"
   | "teacher-welcome"
+  | "finance-welcome"
   | "campaign"
   | "manuals-sent";
 
@@ -78,6 +79,7 @@ export const EMAIL_TEMPLATE_CATEGORY: Record<
   "admin-welcome": "admin",
   "admin-access-recovery": "admin",
   "teacher-welcome": "teachers",
+  "finance-welcome": "admin",
   campaign: "marketing",
 };
 
@@ -470,6 +472,19 @@ export const EMAIL_TEMPLATE_CATALOG: EmailTemplateCatalogEntry[] = [
     ),
   },
   {
+    slug: "finance-welcome",
+    label: "Finance welcome",
+    description: "New Finance Admin invite.",
+    variables: ["{{fullName}}", "{{temporaryPassword}}", "{{financeLoginUrl}}"],
+    defaultSubject: "Your School of Disciples teacher finance access",
+    defaultHtml: wrapEmailHtml(
+      "Teacher finance",
+      `<p style="margin:0 0 14px;">Dear {{fullName}},</p>
+<p style="margin:0 0 14px;">You have been invited to finance on the School of Disciples portal.</p>
+<p style="margin:0;">Sign in: <a href="{{financeLoginUrl}}" style="color:#14352c;">{{financeLoginUrl}}</a></p>`,
+    ),
+  },
+  {
     slug: "campaign",
     label: "Email campaign",
     description: "Custom outbound campaign to students.",
@@ -510,6 +525,8 @@ export const EMAIL_SAMPLE_VALUES: Record<string, string> = {
   message: "Thank you for your patience — we are looking into this.",
   fullName: "Jordan Smith",
   adminLoginUrl: "https://portal.schoolofdisciples.org/login/admin",
+  teacherLoginUrl: "https://portal.schoolofdisciples.org/login/teacher",
+  financeLoginUrl: "https://portal.schoolofdisciples.org/login/finance",
   deskScopeLabel: "National desk",
   headline: "Important update for your cohort",
   bodyHtml:
@@ -549,6 +566,7 @@ export const EMAIL_SLUG_BY_ROUTE: Record<string, EmailTemplateSlug> = {
   "/api/email/admin-welcome": "admin-welcome",
   "/api/email/admin-access-recovery": "admin-access-recovery",
   "/api/email/teacher-welcome": "teacher-welcome",
+  "/api/email/finance-welcome": "finance-welcome",
   "/api/email/campaign": "campaign",
 };
 

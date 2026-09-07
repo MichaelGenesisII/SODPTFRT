@@ -362,62 +362,12 @@ export async function markTeacherAttendance(input: {
 }
 
 export async function confirmTeacherDelivered(
-  classId: string,
+  _classId: string,
 ): Promise<TeacherActionResult> {
-  const access = await requireAssignedClass(classId);
-  if (!access.ok) return { ok: false, message: access.message };
-
-  const service = createServiceSupabaseClient();
-  const now = new Date().toISOString();
-
-  const { data: delivery } = await service
-    .from("class_teaching_deliveries")
-    .select("id, status, teacher_id")
-    .eq("class_id", classId)
-    .maybeSingle();
-
-  if (!delivery) {
-    const { error: insertError } = await service
-      .from("class_teaching_deliveries")
-      .insert({
-        class_id: classId,
-        teacher_id: access.teacherId,
-        status: "delivered" satisfies TeachingDeliveryStatus,
-        confirmed_at: now,
-        confirmed_by: access.teacherId,
-        updated_at: now,
-      });
-    if (insertError) return fail(insertError);
-  } else {
-    if (delivery.teacher_id !== access.teacherId) {
-      return { ok: false, message: "You are not credited for this class." };
-    }
-    if (delivery.status === "delivered" || delivery.status === "covered") {
-      return { ok: true, message: "Already marked as taught." };
-    }
-    if (delivery.status === "cancelled" || delivery.status === "no_show") {
-      return {
-        ok: false,
-        message: "This class was closed by the desk and cannot be confirmed.",
-      };
-    }
-    const { error } = await service
-      .from("class_teaching_deliveries")
-      .update({
-        status: "delivered",
-        confirmed_at: now,
-        confirmed_by: access.teacherId,
-        updated_at: now,
-      })
-      .eq("id", delivery.id);
-    if (error) return fail(error);
-  }
-
-  revalidatePath("/teacher");
-  revalidatePath("/teacher/classes");
-  revalidatePath(`/teacher/classes/${classId}`);
-  revalidatePath("/teacher/history");
-  return { ok: true, message: "Marked as taught. Thank you." };
+  return {
+    ok: false,
+    message: "Only the desk can confirm that a class was taught.",
+  };
 }
 
 export async function listTeacherHistory(): Promise<

@@ -20,6 +20,7 @@ import {
 } from "@/app/admin/students/actions";
 import {
   defaultStudentDeskFilters,
+  enrolmentMatchesDateFilter,
   parseStudentDeskListQuery,
   StudentDeskFilters,
   studentDeskListQuery,
@@ -294,6 +295,18 @@ export function StudentsManager({
       if (
         filters.enrolmentStatus &&
         student.enrolment?.status !== filters.enrolmentStatus
+      ) {
+        return false;
+      }
+      if (
+        filters.dateKind &&
+        filters.dateFrom &&
+        !enrolmentMatchesDateFilter(
+          student.enrolment,
+          filters.dateKind,
+          filters.dateFrom,
+          filters.dateTo,
+        )
       ) {
         return false;
       }

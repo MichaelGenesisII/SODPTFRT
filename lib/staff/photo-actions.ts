@@ -12,7 +12,10 @@ export type StaffPhotoActionResult = {
   message: string;
 };
 
-type StaffProfileTable = "admin_profiles" | "teacher_profiles";
+type StaffProfileTable =
+  | "admin_profiles"
+  | "teacher_profiles"
+  | "finance_profiles";
 
 function fail(error: unknown, fallback: string): StaffPhotoActionResult {
   return { ok: false, message: publicActionMessage(error, fallback) };

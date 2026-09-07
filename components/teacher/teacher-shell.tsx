@@ -19,7 +19,7 @@ const nav = [
   {
     href: "/teacher",
     label: "Home",
-    hint: "Upcoming & to confirm",
+    hint: "Upcoming classes",
     icon: HomeIcon,
   },
   {

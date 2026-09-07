@@ -1,6 +1,8 @@
 import Image from "next/image";
 import Link from "next/link";
-import { contact, footerExplore, SOD_SITE } from "@/lib/site-nav";
+import { contact, footerExplore, loginNav, SOD_SITE } from "@/lib/site-nav";
+
+const footerLogins = loginNav.children ?? [];
 
 export function SiteFooter() {
   return (
@@ -34,7 +36,7 @@ export function SiteFooter() {
           </a>
         </div>
 
-        <div className="grid grid-cols-2 gap-6 sm:gap-8 lg:col-span-7 lg:gap-12">
+        <div className="grid grid-cols-2 gap-8 sm:grid-cols-3 lg:col-span-7 lg:gap-10">
           <div>
             <h2 className="text-[0.7rem] font-medium uppercase tracking-[0.18em] text-mist/55">
               Explore
@@ -65,6 +67,24 @@ export function SiteFooter() {
           </div>
 
           <div>
+            <h2 className="text-[0.7rem] font-medium uppercase tracking-[0.18em] text-mist/55">
+              Sign in
+            </h2>
+            <ul className="mt-4 flex flex-col gap-3">
+              {footerLogins.map((item) => (
+                <li key={item.href}>
+                  <Link
+                    href={item.href}
+                    className="nav-link-footer text-sm text-mist/80"
+                  >
+                    {item.label}
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          </div>
+
+          <div className="col-span-2 sm:col-span-1">
             <h2 className="text-[0.7rem] font-medium uppercase tracking-[0.18em] text-mist/55">
               Contact
             </h2>

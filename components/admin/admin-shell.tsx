@@ -142,14 +142,6 @@ const nav: NavEntry[] = [
     ],
   },
   {
-    kind: "link",
-    href: "/admin/finance",
-    label: "Finance",
-    hint: "Teacher session pay",
-    icon: AccessIcon,
-    feature: "nationalOnly",
-  },
-  {
     kind: "group",
     id: "reach",
     label: "Communications",

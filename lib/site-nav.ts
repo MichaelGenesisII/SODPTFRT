@@ -15,6 +15,7 @@ export const loginNav: NavItem = {
     { label: "Student", href: "/login/student" },
     { label: "Alumni", href: "/login/alumni" },
     { label: "Teacher", href: "/login/teacher" },
+    { label: "Finance", href: "/login/finance" },
     { label: "Admin", href: "/login/admin" },
   ],
 };

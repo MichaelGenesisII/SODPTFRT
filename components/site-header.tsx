@@ -139,7 +139,7 @@ function MobileLoginLinks({
       <p className="text-[0.65rem] font-medium uppercase tracking-[0.18em] text-celadon">
         Sign in
       </p>
-      <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
+      <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3">
         {children.map((child) => (
           <Link
             key={child.href}

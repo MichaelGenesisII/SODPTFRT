@@ -33,7 +33,8 @@ import {
 type PendingConfirm =
   | { kind: "delete" }
   | { kind: "regen" }
-  | { kind: "markLive" };
+  | { kind: "markLive" }
+  | { kind: "confirmTaught" };
 
 type ClassDetailWorkspaceProps = {
   initialClass: ZoomClass;
@@ -159,6 +160,18 @@ export function ClassDetailWorkspace({
           undefined,
           "Updating status…",
         );
+        return;
+      case "confirmTaught":
+        run(
+          () =>
+            setClassTeachingDelivery({
+              classId: item.id,
+              status: "delivered",
+            }),
+          () => setDeliveryStatus("delivered"),
+          "Confirming taught…",
+        );
+        return;
     }
   }
 
@@ -306,6 +319,19 @@ export function ClassDetailWorkspace({
             type="button"
             disabled={
               busy ||
+              !item.primary_teacher_id ||
+              (item.teaching_delivery_status ?? "scheduled") === "delivered" ||
+              (item.teaching_delivery_status ?? "scheduled") === "covered"
+            }
+            onClick={() => setPendingConfirm({ kind: "confirmTaught" })}
+            className="bg-pine px-3 py-2 text-sm font-medium text-mist hover:bg-celadon disabled:opacity-50"
+          >
+            Confirm taught
+          </button>
+          <button
+            type="button"
+            disabled={
+              busy ||
               deliveryStatus === (item.teaching_delivery_status ?? "scheduled")
             }
             onClick={() =>
@@ -325,7 +351,8 @@ export function ClassDetailWorkspace({
           </button>
         </div>
         <p className="mt-2 text-xs text-ink/50">
-          Payable for Finance later: delivered or covered only.
+          Only the desk confirms taught. Finance counts delivered or covered
+          classes.
         </p>
       </section>
 
@@ -460,19 +487,36 @@ export function ClassDetailWorkspace({
                         confirmLabel: "Regenerate code",
                         destructive: false,
                       }
-                    : {
-                        eyebrow: "Class status",
-                        title: "Mark this class live?",
-                        body: (
-                          <>
-                            “{item.title}” will show as live for staff and
-                            students. You can still sync Zoom and take
-                            attendance after.
-                          </>
-                        ),
-                        confirmLabel: "Mark live",
-                        destructive: false,
-                      };
+                    : pendingConfirm.kind === "confirmTaught"
+                      ? {
+                          eyebrow: "Teaching",
+                          title: "Confirm this class was taught?",
+                          body: (
+                            <>
+                              This marks the class as taught for{" "}
+                              <span className="font-medium text-ink">
+                                {item.primary_teacher_name ?? "the assigned teacher"}
+                              </span>
+                              . It updates their teaching record and counts for
+                              Finance.
+                            </>
+                          ),
+                          confirmLabel: "Confirm taught",
+                          destructive: false,
+                        }
+                      : {
+                          eyebrow: "Class status",
+                          title: "Mark this class live?",
+                          body: (
+                            <>
+                              “{item.title}” will show as live for staff and
+                              students. You can still sync Zoom and take
+                              attendance after.
+                            </>
+                          ),
+                          confirmLabel: "Mark live",
+                          destructive: false,
+                        };
 
               return (
                 <>

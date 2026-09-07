@@ -1134,8 +1134,20 @@ export async function setClassTeachingDelivery(input: {
   revalidatePath("/admin/classes");
   revalidatePath(`/admin/classes/${input.classId}`);
   revalidatePath("/teacher");
+  revalidatePath("/teacher/classes");
+  revalidatePath(`/teacher/classes/${input.classId}`);
   revalidatePath("/teacher/history");
-  return { ok: true, message: "Teaching status updated.", classId: input.classId };
+  revalidatePath("/finance");
+  revalidatePath("/finance/periods");
+
+  const message =
+    input.status === "delivered"
+      ? "Class confirmed as taught."
+      : input.status === "covered"
+        ? "Class marked as covered."
+        : "Teaching status updated.";
+
+  return { ok: true, message, classId: input.classId };
 }
 
 export async function getClassAttendance(

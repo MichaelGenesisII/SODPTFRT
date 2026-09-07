@@ -14,6 +14,8 @@ export type ManualsLane = "all" | "not_sent" | "sent";
 export type ProgrammeFeeFilter = "all" | "paid_full" | "paid_part" | "not_paid";
 export type IntakeFilter = "" | "november" | "january" | "february";
 export type EnrolmentStatusFilter = "" | EnrolmentStatus;
+/** Which enrolment timestamp the date filter uses. */
+export type StudentDateKind = "" | "submitted" | "accepted";
 
 export type StudentDeskFilterState = {
   intake: IntakeFilter;
@@ -26,6 +28,12 @@ export type StudentDeskFilterState = {
   programmeFee: ProgrammeFeeFilter;
   /** Application / enrolment status (Submitted, Accepted, …). */
   enrolmentStatus: EnrolmentStatusFilter;
+  /** Submitted = application created_at; Accepted = accepted_at (or updated_at fallback). */
+  dateKind: StudentDateKind;
+  /** YYYY-MM-DD inclusive start (required when dateKind is set). */
+  dateFrom: string;
+  /** YYYY-MM-DD inclusive end; blank = same day as dateFrom. */
+  dateTo: string;
 };
 
 export function defaultStudentDeskFilters(
@@ -41,6 +49,9 @@ export function defaultStudentDeskFilters(
     manuals: "all",
     programmeFee: "all",
     enrolmentStatus: "",
+    dateKind: "",
+    dateFrom: "",
+    dateTo: "",
   };
 }
 
@@ -70,6 +81,11 @@ export function studentDeskListQuery(input: {
   if (input.filters.enrolmentStatus) {
     params.set("estatus", input.filters.enrolmentStatus);
   }
+  if (input.filters.dateKind && input.filters.dateFrom) {
+    params.set("dkind", input.filters.dateKind);
+    params.set("dfrom", input.filters.dateFrom);
+    if (input.filters.dateTo) params.set("dto", input.filters.dateTo);
+  }
   const text = params.toString();
   return text ? `?${text}` : "";
 }
@@ -94,7 +110,10 @@ export function studentDeskListQueriesEqual(
     left.filters.saturday === right.filters.saturday &&
     left.filters.manuals === right.filters.manuals &&
     left.filters.programmeFee === right.filters.programmeFee &&
-    left.filters.enrolmentStatus === right.filters.enrolmentStatus
+    left.filters.enrolmentStatus === right.filters.enrolmentStatus &&
+    left.filters.dateKind === right.filters.dateKind &&
+    left.filters.dateFrom === right.filters.dateFrom &&
+    left.filters.dateTo === right.filters.dateTo
   );
 }
 
@@ -120,6 +139,11 @@ export function parseStudentDeskListQuery(
   const manualsRaw = params.get("manuals");
   const pfeeRaw = params.get("pfee");
   const estatusRaw = params.get("estatus");
+  const dkindRaw = params.get("dkind");
+  const dateKind: StudentDateKind =
+    dkindRaw === "submitted" || dkindRaw === "accepted" ? dkindRaw : "";
+  const dateFrom = params.get("dfrom") ?? "";
+  const dateTo = params.get("dto") ?? "";
   const pageRaw = params.get("page");
   const page = pageRaw ? Math.max(1, Number(pageRaw) || 1) : 1;
   const intakeRaw = params.get("intake");
@@ -150,6 +174,9 @@ export function parseStudentDeskListQuery(
           : "all",
       enrolmentStatus:
         estatusRaw && isEnrolmentStatus(estatusRaw) ? estatusRaw : "",
+      dateKind: dateKind && dateFrom ? dateKind : "",
+      dateFrom: dateKind && dateFrom ? dateFrom : "",
+      dateTo: dateKind && dateFrom ? dateTo : "",
     },
   };
 }
@@ -220,6 +247,7 @@ function countActiveFilters(
   if (filters.manuals !== "all") count += 1;
   if (filters.programmeFee !== "all") count += 1;
   if (filters.enrolmentStatus) count += 1;
+  if (filters.dateKind && filters.dateFrom) count += 1;
   return count;
 }
 
@@ -314,8 +342,67 @@ function buildActiveChips(
       reset: { enrolmentStatus: "" },
     });
   }
+  if (filters.dateKind && filters.dateFrom) {
+    const end = filters.dateTo || filters.dateFrom;
+    const range =
+      end === filters.dateFrom
+        ? filters.dateFrom
+        : `${filters.dateFrom} → ${end}`;
+    chips.push({
+      key: "date",
+      label: `${filters.dateKind === "submitted" ? "Submitted" : "Accepted"} · ${range}`,
+      reset: { dateKind: "", dateFrom: "", dateTo: "" },
+    });
+  }
 
   return chips;
+}
+
+/** London calendar day bounds for an inclusive YYYY-MM-DD filter. */
+export function studentDateFilterBounds(
+  dateFrom: string,
+  dateTo: string,
+): { startMs: number; endMs: number } | null {
+  const from = dateFrom.trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(from)) return null;
+  const toRaw = dateTo.trim() || from;
+  const to = /^\d{4}-\d{2}-\d{2}$/.test(toRaw) ? toRaw : from;
+  const start = new Date(`${from}T00:00:00+01:00`);
+  const end = new Date(`${to}T23:59:59.999+01:00`);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return null;
+  const startMs = Math.min(start.getTime(), end.getTime());
+  const endMs = Math.max(start.getTime(), end.getTime());
+  return { startMs, endMs };
+}
+
+export function enrolmentMatchesDateFilter(
+  enrolment: {
+    status: string;
+    created_at: string;
+    updated_at: string;
+    accepted_at?: string | null;
+  } | null,
+  kind: StudentDateKind,
+  dateFrom: string,
+  dateTo: string,
+): boolean {
+  if (!kind || !dateFrom) return true;
+  if (!enrolment) return false;
+  const bounds = studentDateFilterBounds(dateFrom, dateTo);
+  if (!bounds) return true;
+
+  let stamp: string | null = null;
+  if (kind === "submitted") {
+    stamp = enrolment.created_at;
+  } else if (kind === "accepted") {
+    stamp =
+      enrolment.accepted_at ??
+      (enrolment.status === "accepted" ? enrolment.updated_at : null);
+  }
+  if (!stamp) return false;
+  const ms = new Date(stamp).getTime();
+  if (Number.isNaN(ms)) return false;
+  return ms >= bounds.startMs && ms <= bounds.endMs;
 }
 
 const PROGRAMME_FEE_FILTER_LABELS: Record<
@@ -633,6 +720,63 @@ export function StudentDeskFilters({
                 <option value="sent">Sent</option>
               </select>
             </label>
+            <div className="space-y-2 border-t border-stone/70 pt-2">
+              <p className="text-[0.65rem] font-medium text-ink/50">
+                Date (Submit / Accepted)
+              </p>
+              <label className="block text-xs text-ink/50">
+                Field
+                <select
+                  value={filters.dateKind}
+                  onChange={(event) => {
+                    const next = event.target.value as StudentDateKind;
+                    patch(
+                      next
+                        ? { dateKind: next }
+                        : { dateKind: "", dateFrom: "", dateTo: "" },
+                    );
+                  }}
+                  className={`mt-1 ${fieldClass}`}
+                >
+                  <option value="">Any date</option>
+                  <option value="submitted">Submitted</option>
+                  <option value="accepted">Accepted</option>
+                </select>
+              </label>
+              {filters.dateKind ? (
+                <div className="grid grid-cols-2 gap-2">
+                  <label className="block text-xs text-ink/50">
+                    From
+                    <input
+                      type="date"
+                      value={filters.dateFrom}
+                      onChange={(event) =>
+                        patch({ dateFrom: event.target.value })
+                      }
+                      className={`mt-1 ${fieldClass}`}
+                    />
+                  </label>
+                  <label className="block text-xs text-ink/50">
+                    To
+                    <input
+                      type="date"
+                      value={filters.dateTo}
+                      min={filters.dateFrom || undefined}
+                      onChange={(event) =>
+                        patch({ dateTo: event.target.value })
+                      }
+                      className={`mt-1 ${fieldClass}`}
+                    />
+                  </label>
+                </div>
+              ) : null}
+              {filters.dateKind ? (
+                <p className="text-[0.7rem] leading-relaxed text-ink/45">
+                  Leave To blank for a single day. Submitted uses the
+                  application date; Accepted uses when the place was offered.
+                </p>
+              ) : null}
+            </div>
           </fieldset>
 
           <fieldset className="min-w-0 space-y-3">

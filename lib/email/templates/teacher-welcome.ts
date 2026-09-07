@@ -53,7 +53,7 @@ export function buildTeacherWelcomeEmail(input: TeacherWelcomeInput) {
     `Temporary password: ${input.temporaryPassword}`,
     "",
     "Please change your password after your first sign-in.",
-    "You will only see classes assigned to you.",
+    "You will only see classes assigned to you. The desk confirms when a class has been taught.",
     "",
     `Questions: ${input.portalSupportUrl}`,
     "",
@@ -73,7 +73,7 @@ export function buildTeacherWelcomeEmail(input: TeacherWelcomeInput) {
         </td></tr>
         <tr><td style="padding:24px 28px;">
           <p style="margin:0 0 14px;font-size:16px;line-height:1.55;">${displayName}, you have been invited by ${inviter} to teach on the School of Disciples portal.</p>
-          <p style="margin:0 0 18px;font-size:15px;line-height:1.55;color:#3d4a43;">You will see only the classes assigned to you — schedule, register, and confirm when you have taught.</p>
+          <p style="margin:0 0 18px;font-size:15px;line-height:1.55;color:#3d4a43;">You will see only the classes assigned to you — schedule and register. The desk confirms when a class has been taught.</p>
           <table role="presentation" width="100%" style="background:#f4f7f5;border:1px solid #d5ddd6;">
             <tr><td style="padding:16px 18px;">
               <p style="margin:0 0 8px;font-size:12px;letter-spacing:0.12em;text-transform:uppercase;color:#5f8f7a;">Sign-in details</p>

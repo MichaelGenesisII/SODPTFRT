@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useState, type FormEvent } from "react";
 import { requestAdminPasswordReset } from "@/app/login/admin/actions";
 import { requestEnrolmentPasswordReset } from "@/app/enrol/actions";
+import { requestFinancePasswordReset } from "@/app/finance/actions";
 import { requestTeacherPasswordReset } from "@/app/teacher/actions";
 import { DeskLoader, DeskLoaderOverlay } from "@/components/ui/desk-loader";
 import { useToast } from "@/components/ui/toast";
@@ -14,12 +15,13 @@ import {
 } from "@/lib/safe-action-message";
 import { createBrowserSupabaseClient } from "@/lib/supabase/client";
 
-export type LoginRole = "student" | "admin" | "alumni" | "teacher";
+export type LoginRole = "student" | "admin" | "alumni" | "teacher" | "finance";
 
 const OTHER_LOGINS: { role: LoginRole; href: string; label: string }[] = [
   { role: "student", href: "/login/student", label: "Student sign-in" },
   { role: "alumni", href: "/login/alumni", label: "Alumni sign-in" },
   { role: "teacher", href: "/login/teacher", label: "Teacher sign-in" },
+  { role: "finance", href: "/login/finance", label: "Finance sign-in" },
   { role: "admin", href: "/login/admin", label: "Admin sign-in" },
 ];
 
@@ -84,12 +86,12 @@ const copy = {
   teacher: {
     eyebrow: "Teacher portal",
     title: "Welcome back",
-    lead: "Sign in to see classes assigned to you and confirm when you have taught.",
+    lead: "Sign in to see classes assigned to you and take the register.",
     submit: "Sign in as teacher",
     asideTitle: "Teach with clarity",
     asideBody:
       "Your schedule, register, and teaching history — without the admin desk.",
-    hints: ["Assigned classes", "Register", "Confirm taught"],
+    hints: ["Assigned classes", "Register", "Teaching history"],
     passwordPlaceholder: "Temporary or account password",
     deskLabel: "Teacher portal",
     forgotTitle: "Forgot password",
@@ -98,6 +100,24 @@ const copy = {
     forbidden: "This account is not registered as a teacher.",
     notAuthorised:
       "This account is not registered as a teacher. Contact the national desk if you believe this is an error.",
+  },
+  finance: {
+    eyebrow: "Finance portal",
+    title: "Welcome back",
+    lead: "Sign in to manage teacher session rates, pay periods, and exports.",
+    submit: "Sign in as finance",
+    asideTitle: "Session pay, clearly",
+    asideBody:
+      "Rates, periods, and exports — based on confirmed teaching, not Zoom hosts.",
+    hints: ["Pay rates", "Period totals", "CSV export"],
+    passwordPlaceholder: "Temporary or account password",
+    deskLabel: "Finance portal",
+    forgotTitle: "Forgot password",
+    resetFailTitle: "Could not send reset",
+    resetOkTitle: "Check your inbox",
+    forbidden: "This account is not registered for Finance access.",
+    notAuthorised:
+      "This account is not registered for Finance access. Contact the national desk if you believe this is an error.",
   },
 } as const;
 
@@ -124,6 +144,7 @@ export function LoginPanel({ role }: LoginPanelProps) {
   const isAdmin = role === "admin";
   const isAlumni = role === "alumni";
   const isTeacher = role === "teacher";
+  const isFinance = role === "finance";
   const router = useRouter();
   const searchParams = useSearchParams();
   const { success: toastSuccess, error: toastError } = useToast();
@@ -234,6 +255,33 @@ export function LoginPanel({ role }: LoginPanelProps) {
         return;
       }
 
+      if (isFinance) {
+        const { data: profile, error: profileError } = await supabase
+          .from("finance_profiles")
+          .select("id, is_active")
+          .eq("id", data.user.id)
+          .maybeSingle();
+
+        if (profileError) {
+          console.error("[login/finance] profile load failed", profileError);
+          await supabase.auth.signOut();
+          setStatus("idle");
+          fail(publicUnavailableMessage(content.deskLabel));
+          return;
+        }
+
+        if (!profile || !profile.is_active) {
+          await supabase.auth.signOut();
+          setStatus("idle");
+          fail(content.notAuthorised, "Access denied");
+          return;
+        }
+
+        toastSuccess("You are signed in.", "Welcome");
+        router.replace("/finance");
+        return;
+      }
+
       const { data: profile, error: profileError } = await supabase
         .from("student_profiles")
         .select("id, is_active, account_kind")
@@ -299,7 +347,9 @@ export function LoginPanel({ role }: LoginPanelProps) {
         ? "Enter your admin email, then try again."
         : isTeacher
           ? "Enter your teacher email, then try again."
-          : "Enter the email on your application, then try again.";
+          : isFinance
+            ? "Enter your Finance email, then try again."
+            : "Enter the email on your application, then try again.";
       fail(message, content.forgotTitle);
       return;
     }
@@ -309,7 +359,9 @@ export function LoginPanel({ role }: LoginPanelProps) {
         ? await requestAdminPasswordReset(email.trim())
         : isTeacher
           ? await requestTeacherPasswordReset(email.trim())
-          : await requestEnrolmentPasswordReset(email.trim());
+          : isFinance
+            ? await requestFinancePasswordReset(email.trim())
+            : await requestEnrolmentPasswordReset(email.trim());
       if (!result.ok) {
         fail(result.message, content.resetFailTitle);
         setStatus("idle");

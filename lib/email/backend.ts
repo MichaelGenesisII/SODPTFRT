@@ -110,6 +110,22 @@ export async function sendTeacherWelcomeEmail(
   return sendTemplatedEmail("/api/email/teacher-welcome", payload);
 }
 
+export type SendFinanceWelcomeEmailPayload = {
+  to: string;
+  fullName?: string;
+  temporaryPassword: string;
+  inviterName: string;
+  financeLoginUrl: string;
+  portalSupportUrl: string;
+  siteUrl: string;
+};
+
+export async function sendFinanceWelcomeEmail(
+  payload: SendFinanceWelcomeEmailPayload,
+): Promise<EmailResult> {
+  return sendTemplatedEmail("/api/email/finance-welcome", payload);
+}
+
 export type SendAdminAccessRecoveryEmailPayload = {
   to: string;
   fullName?: string;

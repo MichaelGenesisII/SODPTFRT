@@ -34,8 +34,8 @@ export default async function TeacherClassesPage() {
           Classes
         </h1>
         <p className="mt-1.5 max-w-xl text-sm leading-relaxed text-ink/65">
-          Only sessions assigned to you. Open a class for the register and to
-          confirm you taught.
+          Only classes assigned to you. Open a class for the register and join
+          details.
         </p>
       </section>
 

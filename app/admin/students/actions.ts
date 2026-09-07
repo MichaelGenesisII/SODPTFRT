@@ -196,8 +196,13 @@ const ENROLMENT_SELECT = `
   holy_spirit_date, holy_spirit_where, baptised_water, water_baptism_date,
   water_baptism_where, schools_attended, occupations, occupation_other,
   parish_id, batch_id, cohort_id, saturday_cohort_id, intake_key, legacy_app_com_no, local_church, church_leader, church_activities,
-  declaration_accepted, declared_at, created_at, updated_at
+  declaration_accepted, declared_at, created_at, updated_at, accepted_at
 `;
+
+const ENROLMENT_SELECT_LEGACY_NO_ACCEPTED = ENROLMENT_SELECT.replace(
+  ", accepted_at",
+  "",
+);
 
 export type SaturdayCohortOption = {
   id: string;
@@ -236,7 +241,11 @@ export async function listAdminStudents(): Promise<AdminStudentRecord[]> {
 
   // Parish desks: force their parish even if RLS were misconfigured.
   const enrolmentSelectWithIntake = ENROLMENT_SELECT;
-  const enrolmentSelectLegacy = ENROLMENT_SELECT.replace(", intake_key", "");
+  const enrolmentSelectLegacy = ENROLMENT_SELECT_LEGACY_NO_ACCEPTED.replace(
+    ", intake_key",
+    "",
+  );
+  const enrolmentSelectNoAccepted = ENROLMENT_SELECT_LEGACY_NO_ACCEPTED;
 
   async function loadEnrolments(select: string) {
     let q = supabase
@@ -251,6 +260,12 @@ export async function listAdminStudents(): Promise<AdminStudentRecord[]> {
   }
 
   let enrolmentsResult = await loadEnrolments(enrolmentSelectWithIntake);
+  if (
+    enrolmentsResult.error &&
+    /accepted_at/i.test(enrolmentsResult.error.message)
+  ) {
+    enrolmentsResult = await loadEnrolments(enrolmentSelectNoAccepted);
+  }
   if (
     enrolmentsResult.error &&
     /intake_key/i.test(enrolmentsResult.error.message)
@@ -605,18 +620,52 @@ export async function updateEnrolmentStatus(
         reviewedBy: actor.id,
       });
     } else {
+      const now = new Date().toISOString();
+      const patch: Record<string, unknown> = {
+        status,
+        updated_at: now,
+      };
+      if (status === "accepted" && previousStatus !== "accepted") {
+        patch.accepted_at = now;
+      }
+
       const { data, error } = await access.supabase
         .from("enrolments")
-        .update({
-          status,
-          updated_at: new Date().toISOString(),
-        })
+        .update(patch)
         .eq("id", enrolmentId)
         .select("id")
         .maybeSingle();
 
-      if (error) return { ok: false, message: publicActionMessage(error.message) };
-      if (!data) {
+      if (error) {
+        if (
+          status === "accepted" &&
+          /accepted_at/i.test(error.message)
+        ) {
+          const retry = await access.supabase
+            .from("enrolments")
+            .update({ status, updated_at: now })
+            .eq("id", enrolmentId)
+            .select("id")
+            .maybeSingle();
+          if (retry.error) {
+            return {
+              ok: false,
+              message: publicActionMessage(retry.error.message),
+            };
+          }
+          if (!retry.data) {
+            return {
+              ok: false,
+              message: "Enrolment not found or outside your parish scope.",
+            };
+          }
+        } else {
+          return {
+            ok: false,
+            message: publicActionMessage(error.message),
+          };
+        }
+      } else if (!data) {
         return {
           ok: false,
           message: "Enrolment not found or outside your parish scope.",
@@ -1568,18 +1617,42 @@ export async function bulkUpdateEnrolmentStatus(
         continue;
       }
 
+      const now = new Date().toISOString();
+      const patch: Record<string, unknown> = {
+        status,
+        updated_at: now,
+      };
+      if (status === "accepted" && previousStatus !== "accepted") {
+        patch.accepted_at = now;
+      }
+
       const { error } = await access.supabase
         .from("enrolments")
-        .update({
-          status,
-          updated_at: new Date().toISOString(),
-        })
+        .update(patch)
         .eq("id", enrolment.id);
 
       if (error) {
-        console.error("[admin/students] bulk enrolment status", error.message);
-        skipped += 1;
-        continue;
+        if (
+          status === "accepted" &&
+          /accepted_at/i.test(error.message)
+        ) {
+          const retry = await access.supabase
+            .from("enrolments")
+            .update({ status, updated_at: now })
+            .eq("id", enrolment.id);
+          if (retry.error) {
+            console.error(
+              "[admin/students] bulk enrolment status",
+              retry.error.message,
+            );
+            skipped += 1;
+            continue;
+          }
+        } else {
+          console.error("[admin/students] bulk enrolment status", error.message);
+          skipped += 1;
+          continue;
+        }
       }
 
       updated += 1;

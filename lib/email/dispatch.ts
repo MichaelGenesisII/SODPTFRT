@@ -3,6 +3,7 @@ import {
   sendAdminAccessRecoveryEmail,
   sendAdminWelcomeEmail,
   sendTeacherWelcomeEmail,
+  sendFinanceWelcomeEmail,
   sendSingleCampaignEmail,
   sendClassInviteEmail,
   sendClassTeacherAssignmentEmail,
@@ -179,6 +180,21 @@ export async function dispatchTemplateEmail(
           temporaryPassword: String(payload.temporaryPassword),
           inviterName: String(payload.inviterName),
           teacherLoginUrl: String(payload.teacherLoginUrl),
+          portalSupportUrl: String(payload.portalSupportUrl),
+          siteUrl: String(payload.siteUrl),
+        },
+        override: override ?? undefined,
+      });
+
+    case "/api/email/finance-welcome":
+      return sendFinanceWelcomeEmail({
+        to: String(payload.to),
+        template: {
+          fullName: payload.fullName ? String(payload.fullName) : "",
+          email: String(payload.to),
+          temporaryPassword: String(payload.temporaryPassword),
+          inviterName: String(payload.inviterName),
+          financeLoginUrl: String(payload.financeLoginUrl),
           portalSupportUrl: String(payload.portalSupportUrl),
           siteUrl: String(payload.siteUrl),
         },

@@ -138,6 +138,19 @@ export async function inviteTeacher(
       };
     }
 
+    const { data: existingFinance } = await service
+      .from("finance_profiles")
+      .select("id")
+      .eq("email", email)
+      .maybeSingle();
+    if (existingFinance) {
+      return {
+        ok: false,
+        message:
+          "This email belongs to a Finance account. Use a different email for teacher access.",
+      };
+    }
+
     let userId: string | null = null;
     const existingAuthId = await findAuthUserIdByEmail(service, email);
 
@@ -175,6 +188,18 @@ export async function inviteTeacher(
           ok: false,
           message:
             "This email belongs to a student account. Use a different email for teacher access.",
+        };
+      }
+      const { data: financeById } = await service
+        .from("finance_profiles")
+        .select("id")
+        .eq("id", existingAuthId)
+        .maybeSingle();
+      if (financeById) {
+        return {
+          ok: false,
+          message:
+            "This email belongs to a Finance account. Use a different email for teacher access.",
         };
       }
 
@@ -245,7 +270,7 @@ export async function inviteTeacher(
       siteUrl: SOD_SITE,
     });
 
-    revalidatePath("/admin/finance");
+    revalidatePath("/admin/access");
     revalidatePath("/admin/access");
     revalidatePath("/admin/classes");
 
@@ -418,7 +443,7 @@ export async function deleteTeacher(input: {
       };
     }
 
-    revalidatePath("/admin/finance");
+    revalidatePath("/admin/access");
     revalidatePath("/admin/access");
     revalidatePath("/admin/classes");
     return { ok: true, message: "Teacher deleted." };

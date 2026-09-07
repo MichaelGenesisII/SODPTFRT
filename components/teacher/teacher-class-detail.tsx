@@ -4,12 +4,10 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState, useTransition } from "react";
 import {
-  confirmTeacherDelivered,
   markTeacherAttendance,
   type TeacherClassDetail,
   type TeacherRegisterRow,
 } from "@/app/teacher/classes/actions";
-import { DeskConfirmModal } from "@/components/ui/desk-confirm-modal";
 import { DeskLoaderOverlay } from "@/components/ui/desk-loader";
 import { useToast } from "@/components/ui/toast";
 import {
@@ -36,7 +34,6 @@ export function TeacherClassDetailClient({
   const [pending, startTransition] = useTransition();
   const [busyLabel, setBusyLabel] = useState<string | null>(null);
   const [detail, setDetail] = useState(initial);
-  const [confirmOpen, setConfirmOpen] = useState(false);
   const [registerQuery, setRegisterQuery] = useState("");
   const [registerTab, setRegisterTab] = useState<"all" | "present" | "absent">(
     "all",
@@ -56,9 +53,6 @@ export function TeacherClassDetailClient({
   const deliveryStatus = (detail.delivery?.status ??
     "scheduled") as TeachingDeliveryStatus;
   const statusMeta = TEACHING_DELIVERY_STATUS_META[deliveryStatus];
-  const canConfirm =
-    deliveryStatus === "scheduled" ||
-    (!detail.delivery && Boolean(detail.klass.primary_teacher_id));
   const phase = classSessionPhase(detail.klass, new Date(clock));
   const phaseLabel = classSessionPhaseLabel(phase);
   const audience = audienceLabel(
@@ -114,7 +108,6 @@ export function TeacherClassDetailClient({
         error("Something went wrong. Please try again.", "Classes");
       } finally {
         setBusyLabel(null);
-        setConfirmOpen(false);
       }
     });
   }
@@ -283,28 +276,7 @@ export function TeacherClassDetailClient({
         </section>
       )}
 
-      {canConfirm ? (
-        <section className="border border-pine/25 bg-pine/[0.04] px-5 py-5 sm:px-6">
-          <p className="text-[0.65rem] font-medium uppercase tracking-[0.14em] text-celadon">
-            Delivery
-          </p>
-          <h2 className="mt-1 font-display text-lg text-pine">
-            Confirm you taught this class
-          </h2>
-          <p className="mt-2 max-w-xl text-sm leading-relaxed text-ink/65">
-            Mark the session when teaching is complete. Pay stays with the
-            national desk — you will not see amounts here.
-          </p>
-          <button
-            type="button"
-            disabled={busy}
-            onClick={() => setConfirmOpen(true)}
-            className="mt-4 inline-flex min-h-11 items-center justify-center bg-pine px-4 py-2.5 text-sm font-medium text-mist hover:bg-celadon disabled:opacity-60"
-          >
-            I taught this class
-          </button>
-        </section>
-      ) : deliveryStatus === "delivered" || deliveryStatus === "covered" ? (
+      {deliveryStatus === "delivered" || deliveryStatus === "covered" ? (
         <section className="border border-stone/80 bg-white/55 px-5 py-4 sm:px-6">
           <p className="text-[0.65rem] font-medium uppercase tracking-[0.14em] text-celadon">
             Delivery
@@ -313,7 +285,7 @@ export function TeacherClassDetailClient({
             Marked as {statusMeta.label.toLowerCase()}
           </p>
           <p className="mt-1 text-sm text-ink/55">
-            Thank you. The desk can see this confirmation on the class file.
+            The desk confirmed this class was taught.
           </p>
         </section>
       ) : deliveryStatus === "cancelled" || deliveryStatus === "no_show" ? (
@@ -321,7 +293,20 @@ export function TeacherClassDetailClient({
           This class was closed by the desk as{" "}
           <span className="font-medium text-ink">{statusMeta.label}</span>.
         </section>
-      ) : null}
+      ) : (
+        <section className="border border-stone/80 bg-white/50 px-5 py-4 sm:px-6">
+          <p className="text-[0.65rem] font-medium uppercase tracking-[0.14em] text-celadon">
+            Delivery
+          </p>
+          <p className="mt-1 font-display text-lg text-pine">
+            {statusMeta.label}
+          </p>
+          <p className="mt-1 text-sm text-ink/55">
+            The desk confirms when this class has been taught. You only need
+            your schedule and register.
+          </p>
+        </section>
+      )}
 
       <section className="border border-stone/80 bg-white/55 px-5 py-5 sm:px-6">
         <div className="flex flex-wrap items-end justify-between gap-3">
@@ -432,40 +417,6 @@ export function TeacherClassDetailClient({
           )}
         </div>
       </section>
-
-      <DeskConfirmModal
-        open={confirmOpen}
-        onClose={() => !busy && setConfirmOpen(false)}
-        onConfirm={() =>
-          run(
-            () => confirmTeacherDelivered(detail.klass.id),
-            "Confirming…",
-            () => {
-              const now = new Date().toISOString();
-              setDetail((prev) => ({
-                ...prev,
-                delivery: {
-                  id: prev.delivery?.id ?? "local",
-                  class_id: prev.klass.id,
-                  teacher_id: prev.klass.primary_teacher_id ?? "",
-                  status: "delivered",
-                  confirmed_at: now,
-                  confirmed_by: prev.klass.primary_teacher_id ?? null,
-                  notes: prev.delivery?.notes ?? null,
-                  created_at: prev.delivery?.created_at ?? now,
-                  updated_at: now,
-                },
-              }));
-            },
-          )
-        }
-        eyebrow="Teaching"
-        title="Confirm you taught this class?"
-        body="This records delivery for the national desk. You will not see pay amounts here."
-        confirmLabel="Confirm taught"
-        busy={busy}
-        busyLabel={busyLabel ?? "Working…"}
-      />
     </div>
   );
 }

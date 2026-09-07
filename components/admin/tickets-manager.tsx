@@ -8,6 +8,7 @@ import {
   useSyncExternalStore,
   useTransition,
   type FormEvent,
+  type ReactNode,
 } from "react";
 import { useRouter } from "next/navigation";
 import {
@@ -16,6 +17,7 @@ import {
   deleteTicket,
   releaseTicket,
   sendTicketEmailReply,
+  updateTicketNote,
   updateTicketPriority,
   updateTicketStatus,
   type TicketActionResult,
@@ -654,6 +656,11 @@ export function TicketsManager({
         setPendingConfirm({ kind: "delete", ticket: selected })
       }
       onCopy={copyValue}
+      onEditNote={(noteId, body) =>
+        run(() => updateTicketNote(noteId, body), {
+          label: "Updating message…",
+        })
+      }
       variant={isDesktop ? "desktop" : "sheet"}
     />
   ) : null;
@@ -1421,6 +1428,7 @@ function TicketDetail({
   onRelease,
   onDelete,
   onCopy,
+  onEditNote,
   variant = "desktop",
 }: {
   ticket: TicketWithMeta;
@@ -1443,8 +1451,15 @@ function TicketDetail({
   onRelease: () => void;
   onDelete: () => void;
   onCopy: (value: string, label: string) => void;
+  onEditNote: (noteId: string, body: string) => void;
   variant?: "desktop" | "sheet";
 }) {
+  const [messageMenu, setMessageMenu] = useState<SupportChatMessage | null>(
+    null,
+  );
+  const [editOpen, setEditOpen] = useState(false);
+  const [editDraft, setEditDraft] = useState("");
+
   const portalOwned = Boolean(ticket.user_id);
   const intakePortal = ticket.intake_source === "portal";
   const channelLabel = intakePortal
@@ -1547,6 +1562,21 @@ function TicketDetail({
     { id: "margin", label: "Margin", badge: marginNotes.length },
     { id: "details", label: "Details" },
   ];
+
+  function openAdminMessageMenu(message: SupportChatMessage) {
+    if (pending) return;
+    if (message.side !== "mine") return;
+    if (message.id.endsWith("-opening")) return;
+    setMessageMenu(message);
+    setEditDraft(message.body);
+    setEditOpen(false);
+  }
+
+  function closeMessageMenu() {
+    if (pending) return;
+    setMessageMenu(null);
+    setEditOpen(false);
+  }
 
   return (
     <article
@@ -1761,7 +1791,8 @@ function TicketDetail({
             <SupportChatTranscript
               messages={threadMessages}
               emptyLabel="No thread yet"
-              emptyHint="The opening note will appear here."
+              emptyHint="The opening note will appear here. Press and hold a desk reply to copy or edit."
+              onLongPressMessage={openAdminMessageMenu}
             />
           </SupportChatPane>
         </div>
@@ -1834,7 +1865,8 @@ function TicketDetail({
             <SupportChatTranscript
               messages={emailMessages}
               emptyLabel="No emails sent yet"
-              emptyHint="Sent NoReply mail will land here like outbound chat."
+              emptyHint="Sent NoReply mail will land here like outbound chat. Press and hold to copy or edit."
+              onLongPressMessage={openAdminMessageMenu}
             />
           </SupportChatPane>
         </div>
@@ -1865,7 +1897,8 @@ function TicketDetail({
             <SupportChatTranscript
               messages={marginMessages}
               emptyLabel="No staff notes yet"
-              emptyHint="Keep private desk context here."
+              emptyHint="Keep private desk context here. Press and hold to copy or edit."
+              onLongPressMessage={openAdminMessageMenu}
             />
           </SupportChatPane>
         </div>
@@ -1932,6 +1965,127 @@ function TicketDetail({
           </div>
         </div>
       ) : null}
+
+      {messageMenu ? (
+        <div
+          className="fixed inset-0 z-[90] flex items-end justify-center bg-ink/45 p-4 sm:items-center"
+          role="presentation"
+          onClick={closeMessageMenu}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="desk-message-action-title"
+            className="relative w-full max-w-md border border-stone bg-mist p-5 shadow-lg sm:p-6"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <DeskLoaderOverlay
+              active={pending && editOpen}
+              label={busyLabel ?? "Updating message…"}
+            />
+            {!editOpen ? (
+              <>
+                <p className="text-[0.65rem] font-medium uppercase tracking-[0.16em] text-celadon">
+                  Desk message
+                </p>
+                <h2
+                  id="desk-message-action-title"
+                  className="mt-3 font-display text-2xl tracking-[-0.02em] text-pine"
+                >
+                  Copy or edit
+                </h2>
+                <blockquote className="mt-4 border-l-2 border-pine/30 pl-3 text-sm text-ink/80">
+                  <p className="line-clamp-4 whitespace-pre-wrap">
+                    {messageMenu.body}
+                  </p>
+                </blockquote>
+                <div className="mt-7 flex flex-col gap-2">
+                  <button
+                    type="button"
+                    disabled={pending}
+                    onClick={() => {
+                      void onCopy(messageMenu.body, "Message");
+                      closeMessageMenu();
+                    }}
+                    className="border border-pine/25 px-4 py-2.5 text-sm font-medium text-pine transition-colors hover:border-pine disabled:opacity-60"
+                  >
+                    Copy message
+                  </button>
+                  <button
+                    type="button"
+                    disabled={pending}
+                    onClick={() => setEditOpen(true)}
+                    className="bg-pine px-4 py-2.5 text-sm font-medium text-mist transition-colors hover:bg-celadon disabled:opacity-60"
+                  >
+                    Edit message
+                  </button>
+                  <button
+                    type="button"
+                    disabled={pending}
+                    onClick={closeMessageMenu}
+                    className="px-4 py-2.5 text-sm font-medium text-ink/55 transition-colors hover:text-ink disabled:opacity-60"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <p className="text-[0.65rem] font-medium uppercase tracking-[0.16em] text-celadon">
+                  Edit message
+                </p>
+                <h2
+                  id="desk-message-action-title"
+                  className="mt-3 font-display text-2xl tracking-[-0.02em] text-pine"
+                >
+                  Update desk reply
+                </h2>
+                <textarea
+                  value={editDraft}
+                  onChange={(event) => setEditDraft(event.target.value)}
+                  maxLength={NOTE_MAX}
+                  rows={5}
+                  disabled={pending}
+                  className="mt-4 w-full resize-y border border-stone bg-white/85 px-3 py-2.5 text-sm outline-none focus:border-pine disabled:opacity-60"
+                />
+                <p className="mt-1.5 text-xs text-ink/45">
+                  {editDraft.trim().length}/{NOTE_MAX}
+                </p>
+                <div className="mt-6 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
+                  <button
+                    type="button"
+                    disabled={pending}
+                    onClick={() => setEditOpen(false)}
+                    className="border border-pine/25 px-4 py-2.5 text-sm font-medium text-pine transition-colors hover:border-pine disabled:opacity-60"
+                  >
+                    Back
+                  </button>
+                  <button
+                    type="button"
+                    disabled={
+                      pending ||
+                      editDraft.trim().length < 1 ||
+                      editDraft.trim() === messageMenu.body.trim()
+                    }
+                    onClick={() => {
+                      onEditNote(messageMenu.id, editDraft);
+                      setMessageMenu(null);
+                      setEditOpen(false);
+                    }}
+                    className="inline-flex min-h-[2.5rem] min-w-[9rem] items-center justify-center bg-pine px-4 py-2.5 text-sm font-medium text-mist hover:bg-celadon disabled:opacity-60"
+                  >
+                    {pending ? (
+                      <DeskLoader label="Saving…" tone="mist" />
+                    ) : (
+                      "Save changes"
+                    )}
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      ) : null}
     </article>
   );
 }
@@ -1941,7 +2095,7 @@ function Row({
   children,
 }: {
   label: string;
-  children: React.ReactNode;
+  children: ReactNode;
 }) {
   return (
     <div className="flex flex-wrap items-baseline justify-between gap-2 px-4 py-3">

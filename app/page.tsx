@@ -8,7 +8,7 @@ import { enrolHref } from "@/lib/site-nav";
 /** Refresh home periodically so admin announcements from Supabase stay current. */
 export const revalidate = 60;
 
-const HERO_IMAGE = "/hero.jpg";
+const HERO_IMAGE = "/hero.avif";
 
 const heroSecondaryClass =
   "inline-flex items-center justify-center border border-pine/35 bg-mist/55 px-7 py-3.5 text-[0.95rem] font-medium tracking-wide text-pine backdrop-blur-sm transition-[background-color,border-color] duration-300 hover:border-pine hover:bg-mist focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-pine";

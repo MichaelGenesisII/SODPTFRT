@@ -53,6 +53,8 @@ export type AdminEnrolmentRecord = {
   declared_at: string;
   created_at: string;
   updated_at: string;
+  /** Set when status first moves to accepted (null if never accepted). */
+  accepted_at?: string | null;
   parish_name?: string | null;
   parish_region?: string | null;
   batch_name?: string | null;

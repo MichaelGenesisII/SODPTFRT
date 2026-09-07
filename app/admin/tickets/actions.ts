@@ -13,6 +13,7 @@ import { sendTicketEmail, portalBaseUrl } from "@/lib/email/backend";
 import { publicActionMessage } from "@/lib/safe-action-message";
 import { SOD_SITE } from "@/lib/site-nav";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
+import { createServiceSupabaseClient } from "@/lib/supabase/service";
 
 export type TicketActionResult = {
   ok: boolean;
@@ -347,6 +348,90 @@ export async function addTicketNote(
       return unauthorizedResult();
     }
     console.error("addTicketNote:", error);
+    return fail(error);
+  }
+}
+
+export async function updateTicketNote(
+  noteId: string,
+  body: string,
+): Promise<TicketActionResult> {
+  try {
+    await requireSessionAdmin();
+    const note = body.trim();
+
+    if (!noteId) return { ok: false, message: "Message id is required." };
+    if (!note) return { ok: false, message: "Write a short message." };
+    if (note.length > NOTE_MAX) {
+      return {
+        ok: false,
+        message: `Notes must be ${NOTE_MAX} characters or fewer.`,
+      };
+    }
+
+    const service = createServiceSupabaseClient();
+    const { data: existing, error: loadError } = await service
+      .from("support_ticket_notes")
+      .select("id, ticket_id, student_author_id, body")
+      .eq("id", noteId)
+      .maybeSingle();
+
+    if (loadError) {
+      console.error("updateTicketNote load:", loadError.message);
+      return fail(loadError);
+    }
+    if (!existing) {
+      return { ok: false, message: "Message not found." };
+    }
+    if (existing.student_author_id) {
+      return {
+        ok: false,
+        message: "Student messages cannot be edited.",
+      };
+    }
+
+    const access = await requireAccessibleTicket(existing.ticket_id as string);
+    if (!access.ok) return { ok: false, message: access.message };
+
+    const now = new Date().toISOString();
+    const { error } = await service
+      .from("support_ticket_notes")
+      .update({
+        body: note,
+        updated_at: now,
+      })
+      .eq("id", noteId)
+      .is("student_author_id", null);
+
+    if (error) {
+      console.error("updateTicketNote:", error.message);
+      if (/column .*updated_at.* does not exist/i.test(error.message)) {
+        const retry = await service
+          .from("support_ticket_notes")
+          .update({ body: note })
+          .eq("id", noteId)
+          .is("student_author_id", null);
+        if (retry.error) {
+          console.error("updateTicketNote retry:", retry.error.message);
+          return fail(retry.error);
+        }
+      } else {
+        return fail(error);
+      }
+    }
+
+    await service
+      .from("support_tickets")
+      .update({ updated_at: now })
+      .eq("id", existing.ticket_id);
+
+    revalidateTickets();
+    return { ok: true, message: "Message updated." };
+  } catch (error) {
+    if (error instanceof Error && error.message === "Unauthorized") {
+      return unauthorizedResult();
+    }
+    console.error("updateTicketNote:", error);
     return fail(error);
   }
 }

@@ -25,6 +25,10 @@ import {
   type TeacherWelcomeInput,
 } from "@/lib/email/templates/teacher-welcome";
 import {
+  buildFinanceWelcomeEmail,
+  type FinanceWelcomeInput,
+} from "@/lib/email/templates/finance-welcome";
+import {
   buildEnrolmentConfirmationEmail,
   type EnrolmentConfirmationInput,
 } from "@/lib/email/templates/enrolment-confirmation";
@@ -392,6 +396,22 @@ export async function sendTeacherWelcomeEmail(input: {
     to: input.to,
     ...built,
     channel: "teacher-welcome",
+  });
+}
+
+export async function sendFinanceWelcomeEmail(input: {
+  to: string;
+  template: FinanceWelcomeInput;
+  override?: TemplateOverride;
+}) {
+  const built = mergeTemplateOverride(
+    buildFinanceWelcomeEmail(input.template),
+    input.override,
+  );
+  return dispatch({
+    to: input.to,
+    ...built,
+    channel: "finance-welcome",
   });
 }
 

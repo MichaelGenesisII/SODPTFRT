@@ -23,14 +23,16 @@ import { parishAdminEnabled } from "@/lib/admin/features";
 import type { Parish } from "@/lib/parishes";
 import { DeskPagination } from "@/lib/ui/desk-pagination";
 import { TeachersFinanceManager } from "@/components/admin/teachers-finance-manager";
+import { FinanceStaffManager } from "@/components/admin/finance-staff-manager";
 import type { TeacherProfile } from "@/lib/teacher/types";
+import type { FinanceProfile } from "@/lib/finance/types";
 
 const fieldClass =
   "w-full border border-stone bg-white/70 px-4 py-3 text-sm outline-none transition-[border-color,background-color] duration-300 focus:border-pine focus:bg-mist";
 
 const DIRECTORY_PAGE_SIZE = 8;
 
-type PageView = "admins" | "teachers" | "insight";
+type PageView = "admins" | "teachers" | "finance" | "insight";
 
 type PendingConfirm =
   | { kind: "delete"; admin: AdminProfile }
@@ -51,7 +53,8 @@ type AccessManagerProps = {
   admins: AdminProfile[];
   parishes: Pick<Parish, "id" | "name" | "region">[];
   teachers?: TeacherProfile[];
-  initialStaffTab?: "admins" | "teachers";
+  financeStaff?: FinanceProfile[];
+  initialStaffTab?: "admins" | "teachers" | "finance";
 };
 
 function TrashIcon({ className }: { className?: string }) {
@@ -120,17 +123,21 @@ export function AccessManager({
   admins,
   parishes,
   teachers = [],
+  financeStaff = [],
   initialStaffTab = "admins",
 }: AccessManagerProps) {
   const { success, error, info } = useToast();
   const national = isNationalAdmin(profile);
   const parishDesk = isParishAdmin(profile);
   const parishInvitesEnabled = parishAdminEnabled();
-  const [pageView, setPageView] = useState<PageView>(
-    national && initialStaffTab === "teachers" ? "teachers" : "admins",
-  );
+  const [pageView, setPageView] = useState<PageView>(() => {
+    if (!national) return "admins";
+    if (initialStaffTab === "teachers") return "teachers";
+    if (initialStaffTab === "finance") return "finance";
+    return "admins";
+  });
   const [inviting, setInviting] = useState(false);
-  const [teacherInviting, setTeacherInviting] = useState(false);
+  const [staffInviting, setStaffInviting] = useState(false);
   const [pending, startTransition] = useTransition();
   const [busyLabel, setBusyLabel] = useState<string | null>(null);
   const busy = pending || Boolean(busyLabel);
@@ -212,7 +219,7 @@ export function AccessManager({
 
   function openInvite() {
     setInviting(true);
-    setTeacherInviting(false);
+    setStaffInviting(false);
     setExpandedId(null);
     setPageView("admins");
   }
@@ -223,7 +230,7 @@ export function AccessManager({
   }
 
   function setPageViewSafe(next: PageView) {
-    setTeacherInviting(false);
+    setStaffInviting(false);
     setPageView(next);
   }
 
@@ -328,7 +335,7 @@ export function AccessManager({
     <div className="relative space-y-4" aria-busy={busy}>
       {!inviting ? (
         <>
-          {!teacherInviting ? (
+          {!staffInviting ? (
             <nav
               data-tour="access-tabs"
               className="flex gap-1 overflow-x-auto border-b border-stone pb-px"
@@ -338,7 +345,10 @@ export function AccessManager({
                 [
                   { id: "admins" as const, label: "Admins" },
                   ...(national
-                    ? [{ id: "teachers" as const, label: "Teachers" }]
+                    ? [
+                        { id: "teachers" as const, label: "Teachers" },
+                        { id: "finance" as const, label: "Finance" },
+                      ]
                     : []),
                   { id: "insight" as const, label: "Insight" },
                 ] as const
@@ -371,7 +381,12 @@ export function AccessManager({
           ) : pageView === "teachers" && national ? (
             <TeachersFinanceManager
               initialTeachers={teachers}
-              onInviteSurfaceChange={setTeacherInviting}
+              onInviteSurfaceChange={setStaffInviting}
+            />
+          ) : pageView === "finance" && national ? (
+            <FinanceStaffManager
+              initialStaff={financeStaff}
+              onInviteSurfaceChange={setStaffInviting}
             />
           ) : (
             <>
@@ -1085,8 +1100,8 @@ function AccessInsightGuide({ profile }: { profile: AdminProfile }) {
                 : "Full UK access. Invite staff and set each person to National or a parish.",
           },
           {
-            title: "Admins & teachers",
-            body: "Use the Admins tab for desk staff. Use Teachers for teacher portal accounts (invite, activate, delete). Assign teachers on Classes.",
+            title: "Admins, teachers & Finance",
+            body: "Use Admins for desk staff, Teachers for the teacher portal, and Finance for Finance Admins (rates and pay periods). Assign teachers on Classes.",
           },
           {
             title: "The three desks",

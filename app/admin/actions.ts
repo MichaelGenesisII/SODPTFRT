@@ -138,6 +138,19 @@ export async function createAdminAccount(
       };
     }
 
+    const { data: existingFinance } = await service
+      .from("finance_profiles")
+      .select("id")
+      .eq("email", email)
+      .maybeSingle();
+    if (existingFinance) {
+      return {
+        ok: false,
+        message:
+          "This email belongs to a Finance account. Use a different email for admin access.",
+      };
+    }
+
     let userId: string | null = null;
     const existingAuthId = await findAuthUserIdByEmail(service, email);
 
@@ -165,6 +178,32 @@ export async function createAdminAccount(
           ok: false,
           message:
             "This email belongs to a student account. Use a different email for admin access.",
+        };
+      }
+
+      const { data: financeById } = await service
+        .from("finance_profiles")
+        .select("id")
+        .eq("id", existingAuthId)
+        .maybeSingle();
+      if (financeById) {
+        return {
+          ok: false,
+          message:
+            "This email belongs to a Finance account. Use a different email for admin access.",
+        };
+      }
+
+      const { data: teacherById } = await service
+        .from("teacher_profiles")
+        .select("id")
+        .eq("id", existingAuthId)
+        .maybeSingle();
+      if (teacherById) {
+        return {
+          ok: false,
+          message:
+            "This email belongs to a teacher account. Use a different email for admin access.",
         };
       }
 
