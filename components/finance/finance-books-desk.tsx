@@ -227,7 +227,7 @@ export function FinanceBooksDesk({
         a.click();
         URL.revokeObjectURL(url);
       } finally {
-        setBusyLabel(null);
+        setBusyLabel("Working…");
       }
     });
   }
