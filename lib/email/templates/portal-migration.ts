@@ -1,5 +1,8 @@
 import { config } from "../config";
 
+/** Single source of truth for the enrolment cut-off quoted in migration mail. */
+export const PORTAL_MIGRATION_DEADLINE = "Friday, 18 September 2026";
+
 export type PortalMigrationEmailInput = {
   firstName?: string;
   enrolUrl: string;
@@ -7,6 +10,8 @@ export type PortalMigrationEmailInput = {
   supportUrl: string;
   siteUrl: string;
   deadlineLabel: string;
+  /** Absolute HTTPS unsubscribe URL shown in the footer (bulk sends). */
+  unsubscribeUrl?: string;
 };
 
 function escapeHtml(value: string): string {
@@ -38,6 +43,8 @@ export function buildPortalMigrationEmail(input: PortalMigrationEmailInput): {
   const supportUrl = escapeHtml(input.supportUrl.trim());
   const siteUrl = escapeHtml(input.siteUrl.trim());
   const deadline = escapeHtml(input.deadlineLabel.trim());
+  const unsubscribeRaw = input.unsubscribeUrl?.trim();
+  const unsubscribeUrl = unsubscribeRaw ? escapeHtml(unsubscribeRaw) : "";
   const year = new Date().getFullYear();
 
   const subject =
@@ -69,6 +76,9 @@ export function buildPortalMigrationEmail(input: PortalMigrationEmailInput): {
     `Website: ${input.siteUrl}`,
     ``,
     `This is an automated message. Please do not reply to this email.`,
+    ...(unsubscribeRaw
+      ? [``, `To stop receiving enrolment reminders: ${unsubscribeRaw}`]
+      : []),
   ].join("\n");
 
   const featureRows = PORTAL_FEATURES.map(
@@ -185,7 +195,11 @@ export function buildPortalMigrationEmail(input: PortalMigrationEmailInput): {
             <td style="padding:18px 8px 6px;font-family:Arial,Helvetica,sans-serif;font-size:12px;line-height:1.65;color:rgba(20,36,28,0.5);text-align:center;">
               Questions? Visit <a href="${supportUrl}" style="color:#3d6b58;">Support on the portal</a>
               · <a href="${siteUrl}" style="color:#3d6b58;">${siteUrl}</a><br/>
-              ${escapeHtml(config.orgAddress)} · © ${year} School of Disciples
+              ${escapeHtml(config.orgAddress)} · © ${year} School of Disciples${
+                unsubscribeUrl
+                  ? `<br/><a href="${unsubscribeUrl}" style="color:rgba(20,36,28,0.5);text-decoration:underline;">Stop receiving enrolment reminders</a>`
+                  : ""
+              }
             </td>
           </tr>
 

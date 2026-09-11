@@ -1,6 +1,10 @@
 import type { Metadata } from "next";
-import { listTeacherClasses } from "@/app/teacher/classes/actions";
-import { TeacherClassesList } from "@/components/teacher/teacher-classes";
+import { Suspense } from "react";
+import {
+  listTeacherClasses,
+  listTeacherHistory,
+} from "@/app/teacher/classes/actions";
+import { TeacherClassesDesk } from "@/components/teacher/teacher-classes-desk";
 import {
   publicActionMessage,
   publicUnavailableMessage,
@@ -12,43 +16,44 @@ export const metadata: Metadata = {
 
 export default async function TeacherClassesPage() {
   let classes: Awaited<ReturnType<typeof listTeacherClasses>> = [];
-  let loadError: string | null = null;
+  let history: Awaited<ReturnType<typeof listTeacherHistory>> = [];
+  let classesError: string | null = null;
+  let historyError: string | null = null;
 
   try {
     classes = await listTeacherClasses();
   } catch (error) {
     console.error("[teacher/classes]", error);
-    loadError = publicActionMessage(
+    classesError = publicActionMessage(
       error,
       publicUnavailableMessage("Classes"),
     );
   }
 
-  return (
-    <div className="space-y-6">
-      <section>
-        <p className="text-[0.65rem] font-medium uppercase tracking-[0.18em] text-celadon">
-          Schedule
-        </p>
-        <h1 className="mt-1.5 font-display text-[clamp(1.6rem,5vw,2.4rem)] tracking-[-0.02em] text-pine">
-          Classes
-        </h1>
-        <p className="mt-1.5 max-w-xl text-sm leading-relaxed text-ink/65">
-          Only classes assigned to you. Open a class for the register and join
-          details.
-        </p>
-      </section>
+  try {
+    history = await listTeacherHistory();
+  } catch (error) {
+    console.error("[teacher/classes/history]", error);
+    historyError = publicActionMessage(
+      error,
+      publicUnavailableMessage("History"),
+    );
+  }
 
-      {loadError ? (
-        <div
-          className="border border-red-800/30 bg-red-50 px-5 py-4 text-sm text-red-900"
-          role="alert"
-        >
-          {loadError}
+  return (
+    <Suspense
+      fallback={
+        <div className="border border-dashed border-stone bg-white/40 px-5 py-10 text-center text-sm text-ink/55">
+          Loading classes…
         </div>
-      ) : (
-        <TeacherClassesList classes={classes} />
-      )}
-    </div>
+      }
+    >
+      <TeacherClassesDesk
+        classes={classes}
+        history={history}
+        classesError={classesError}
+        historyError={historyError}
+      />
+    </Suspense>
   );
 }

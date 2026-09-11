@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useState, useSyncExternalStore, type ReactNode } from "react";
+import { useSyncExternalStore, type ReactNode } from "react";
 import { PhotoUploadCard } from "@/components/student/photo-upload-card";
 import { StudentPaymentDueSummary } from "@/components/student/student-payment-due-summary";
 import {
@@ -9,7 +9,6 @@ import {
 } from "@/components/student/student-portal-walkthrough";
 import { useStudentTourOptional } from "@/components/student/student-tour-provider";
 import { useRefreshOnVisible } from "@/components/student/use-refresh-on-visible";
-import { DeskConfirmModal } from "@/components/ui/desk-confirm-modal";
 import { ATTENDANCE_MODES } from "@/lib/enrol/schema";
 import {
   formatGbp,
@@ -487,11 +486,6 @@ function OverviewView({
   paymentIncomplete: boolean;
   canPayNow: boolean;
 }) {
-  const [pendingExternal, setPendingExternal] = useState<
-    | { kind: "link"; href: string; label: string }
-    | { kind: "attachment"; href: string; action: "view" | "download"; fileName: string }
-    | null
-  >(null);
   const tour = useStudentTourOptional();
 
   const needsPassport = passportUnlocked && !profile.passport_path;
@@ -521,19 +515,19 @@ function OverviewView({
     window.open(href, "_blank", "noopener,noreferrer");
   }
 
-  function confirmExternal() {
-    if (!pendingExternal) return;
-    if (pendingExternal.kind === "attachment") {
-      openExternal(
-        pendingExternal.href,
-        pendingExternal.action === "download"
-          ? pendingExternal.fileName
-          : undefined,
-      );
-    } else {
-      openExternal(pendingExternal.href);
-    }
-    setPendingExternal(null);
+  function requestExternalLink(payload: { href: string; label: string }) {
+    openExternal(payload.href);
+  }
+
+  function requestAttachment(payload: {
+    href: string;
+    action: "view" | "download";
+    fileName: string;
+  }) {
+    openExternal(
+      payload.href,
+      payload.action === "download" ? payload.fileName : undefined,
+    );
   }
 
   return (
@@ -874,9 +868,7 @@ function OverviewView({
               <NoticeAttachmentList
                 files={featured.attachments}
                 tone="parchment"
-                onExternalNavigate={(payload) =>
-                  setPendingExternal({ kind: "attachment", ...payload })
-                }
+                onExternalNavigate={requestAttachment}
               />
               {featured.href &&
               featured.hrefLabel &&
@@ -886,8 +878,7 @@ function OverviewView({
                   <button
                     type="button"
                     onClick={() =>
-                      setPendingExternal({
-                        kind: "link",
+                      requestExternalLink({
                         href: featured.href!,
                         label: featured.hrefLabel!,
                       })
@@ -935,46 +926,6 @@ function OverviewView({
           </Link>
         </div>
       </section>
-
-      <DeskConfirmModal
-        open={Boolean(pendingExternal)}
-        onClose={() => setPendingExternal(null)}
-        onConfirm={confirmExternal}
-        eyebrow="Leave the portal"
-        title={
-          pendingExternal?.kind === "attachment"
-            ? pendingExternal.action === "download"
-              ? "Download this file?"
-              : "Open this file?"
-            : "Open this link?"
-        }
-        body={
-          pendingExternal?.kind === "attachment" ? (
-            <>
-              You are about to{" "}
-              {pendingExternal.action === "download" ? "download" : "open"}{" "}
-              <span className="font-medium text-ink">
-                {pendingExternal.fileName}
-              </span>{" "}
-              in a new tab. The School hosts this file outside the notice board.
-            </>
-          ) : pendingExternal?.kind === "link" ? (
-            <>
-              <span className="font-medium text-ink">
-                {pendingExternal.label}
-              </span>{" "}
-              opens on an external site. You will leave the student portal.
-            </>
-          ) : null
-        }
-        confirmLabel={
-          pendingExternal?.kind === "attachment"
-            ? pendingExternal.action === "download"
-              ? "Download file"
-              : "Open file"
-            : "Continue"
-        }
-      />
 
       <div className="h-8 sm:h-14" aria-hidden />
     </div>

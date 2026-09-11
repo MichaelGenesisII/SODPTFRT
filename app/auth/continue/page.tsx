@@ -1,4 +1,4 @@
-﻿import { redirect } from "next/navigation";
+import { redirect } from "next/navigation";
 import { safeAuthContinuePath } from "@/lib/auth/safe-next-path";
 
 type AuthContinuePageProps = {

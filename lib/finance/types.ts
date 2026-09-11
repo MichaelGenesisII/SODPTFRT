@@ -57,6 +57,11 @@ export type PayPeriodTeacherTotal = {
   ratesUsed: string[];
   markedPaidAt: string | null;
   sessions: PayPeriodSessionRow[];
+  /** Phase 3.5 — payment details on file (masked). */
+  hasPaymentDetails?: boolean;
+  paymentMethodLabel?: string | null;
+  paymentPayeeMask?: string | null;
+  paymentRecentlyChanged?: boolean;
 };
 
 /** Calendar month key: YYYY-MM */

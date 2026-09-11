@@ -1,11 +1,15 @@
 import type { Metadata } from "next";
+import { FinanceTeachersDirectory } from "@/components/finance/finance-teachers-directory";
 import { requireSessionFinance } from "@/lib/finance/auth";
+import {
+  listFinanceTeacherPaymentSummaries,
+  methodLabel,
+} from "@/lib/teacher/payment-details";
 import {
   publicActionMessage,
   publicUnavailableMessage,
 } from "@/lib/safe-action-message";
 import { createServiceSupabaseClient } from "@/lib/supabase/service";
-import { teacherDisplayName } from "@/lib/teacher/types";
 
 export const metadata: Metadata = {
   title: "Teachers | Finance Portal",
@@ -19,6 +23,10 @@ export default async function FinanceTeachersPage() {
     email: string;
     full_name: string | null;
     is_active: boolean;
+    hasPaymentDetails: boolean;
+    paymentMethodLabel: string | null;
+    paymentPayeeMask: string | null;
+    paymentRecentlyChanged: boolean;
   }[] = [];
   let loadError: string | null = null;
 
@@ -32,7 +40,31 @@ export default async function FinanceTeachersPage() {
       console.error("[finance/teachers]", error.message);
       throw new Error("Teachers are temporarily unavailable.");
     }
-    teachers = (data ?? []) as typeof teachers;
+    const rows = (data ?? []) as {
+      id: string;
+      email: string;
+      full_name: string | null;
+      is_active: boolean;
+    }[];
+    const summaries = await listFinanceTeacherPaymentSummaries(
+      rows.map((r) => r.id),
+    ).catch((err) => {
+      console.error("[finance/teachers/payment-details]", err);
+      return new Map();
+    });
+
+    teachers = rows.map((row) => {
+      const summary = summaries.get(row.id);
+      return {
+        ...row,
+        hasPaymentDetails: Boolean(summary?.hasDetails),
+        paymentMethodLabel: summary?.preferredMethod
+          ? methodLabel(summary.preferredMethod)
+          : null,
+        paymentPayeeMask: summary?.payeeMask ?? null,
+        paymentRecentlyChanged: Boolean(summary?.recentlyChanged),
+      };
+    });
   } catch (error) {
     console.error("[finance/teachers]", error);
     loadError = publicActionMessage(
@@ -51,8 +83,9 @@ export default async function FinanceTeachersPage() {
           Teacher directory
         </h1>
         <p className="mt-2 max-w-2xl text-sm leading-relaxed text-ink/65">
-          Read-only list for pay reference. Invite and activate teachers from
-          the national Access desk.
+          Read-only list for pay reference. Payment details are set by teachers
+          and shown masked here. Invite and activate teachers from the national
+          Access desk.
         </p>
       </section>
 
@@ -71,28 +104,7 @@ export default async function FinanceTeachersPage() {
           </p>
         </div>
       ) : (
-        <ul className="divide-y divide-stone/70 border border-stone/80 bg-white/55">
-          {teachers.map((teacher) => (
-            <li
-              key={teacher.id}
-              className="flex flex-wrap items-center justify-between gap-3 px-4 py-4 sm:px-5"
-            >
-              <div className="min-w-0">
-                <p className="font-medium text-ink">
-                  {teacherDisplayName(teacher)}
-                </p>
-                <p className="mt-1 text-sm text-ink/55">{teacher.email}</p>
-              </div>
-              <span
-                className={`text-xs font-medium uppercase tracking-[0.12em] ${
-                  teacher.is_active ? "text-celadon" : "text-ink/40"
-                }`}
-              >
-                {teacher.is_active ? "Active" : "Inactive"}
-              </span>
-            </li>
-          ))}
-        </ul>
+        <FinanceTeachersDirectory teachers={teachers} />
       )}
     </div>
   );

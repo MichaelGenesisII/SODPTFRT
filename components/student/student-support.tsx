@@ -14,6 +14,7 @@ import { useRouter } from "next/navigation";
 import {
   createStudentConversation,
   deleteStudentConversation,
+  reopenStudentConversation,
   replyStudentConversation,
 } from "@/app/student/support/actions";
 import {
@@ -23,9 +24,7 @@ import {
   type SupportChatMessage,
 } from "@/components/support/chat-thread";
 import { useStudentSupportLive } from "@/components/student/support-live";
-import { DeskConfirmModal } from "@/components/ui/desk-confirm-modal";
 import { DeskLoader, DeskLoaderOverlay } from "@/components/ui/desk-loader";
-import { useToast } from "@/components/ui/toast";
 import {
   formatTicketRelative,
   formatTicketWhen,
@@ -40,13 +39,10 @@ import {
 } from "@/lib/tickets";
 import type { StudentProfile } from "@/lib/student/types";
 import { studentDisplayName } from "@/lib/student/types";
+import { deskConfirm, deskError } from "@/lib/ui/desk-alert";
 import { WhatsAppChatLink } from "@/components/support/whatsapp-chat-link";
 
 type Panel = "inbox" | "compose";
-
-type PendingConfirm =
-  | { kind: "compose"; topic: string; message: string }
-  | { kind: "delete"; ticket: TicketWithMeta };
 
 const SUPPORT_INBOX_KEY = "sod-student-support-inbox-open";
 const SUPPORT_CHAT_KEY = "sod-student-support-chat-open";
@@ -73,7 +69,6 @@ export function StudentSupportDesk({
   conversations: TicketWithMeta[];
 }) {
   const router = useRouter();
-  const { success, error } = useToast();
   const { markTicketRead } = useStudentSupportLive();
   const isDesktop = useIsDesktop();
   const [pending, startTransition] = useTransition();
@@ -84,9 +79,6 @@ export function StudentSupportDesk({
   const [topic, setTopic] = useState<string>(SUPPORT_TOPICS[0]);
   const [message, setMessage] = useState("");
   const [reply, setReply] = useState("");
-  const [pendingConfirm, setPendingConfirm] = useState<PendingConfirm | null>(
-    null,
-  );
   const [inboxOpen, setInboxOpen] = useState(true);
   const [chatOpen, setChatOpen] = useState(false);
   /** Mobile: chat takes the full stage after a thread is opened. */
@@ -218,19 +210,22 @@ export function StudentSupportDesk({
     setMobileChatOpen(false);
   }
 
+  function startNewConversation() {
+    setPanel("compose");
+    if (!isDesktop) setMobileChatOpen(false);
+  }
+
   function submitCompose(topicValue: string, messageValue: string) {
     setBusyLabel("Opening conversation…");
     startTransition(async () => {
       try {
         const result = await createStudentConversation(topicValue, messageValue);
         if (!result.ok) {
-          error(result.message);
+          await deskError({ text: result.message });
           return;
         }
-        success(result.message, "Conversation opened");
         setMessage("");
         setPanel("inbox");
-        setPendingConfirm(null);
         if (result.ticketId) {
           pendingSelectRef.current = result.ticketId;
           setSelectedId(result.ticketId);
@@ -251,33 +246,68 @@ export function StudentSupportDesk({
   function onCompose(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const trimmed = message.trim();
-    if (trimmed.length < 10) return;
-    setPendingConfirm({ kind: "compose", topic, message: trimmed });
+    if (trimmed.length < 10 || busy) return;
+    void (async () => {
+      const ok = await deskConfirm({
+        title: "Open this conversation?",
+        text: `Your note about “${topic}” will reach the Listening Desk. You can keep chatting in this thread afterward.`,
+        confirmLabel: "Open conversation",
+      });
+      if (!ok) return;
+      submitCompose(topic, trimmed);
+    })();
   }
-  function confirmPendingAction() {
-    if (!pendingConfirm || busy) return;
 
-    if (pendingConfirm.kind === "compose") {
-      submitCompose(pendingConfirm.topic, pendingConfirm.message);
-      return;
-    }
-
-    setBusyLabel("Removing conversation…");
-    startTransition(async () => {
-      try {
-        const result = await deleteStudentConversation(pendingConfirm.ticket.id);
-        if (!result.ok) {
-          error(result.message);
-          return;
+  function requestDeleteConversation(ticket: TicketWithMeta) {
+    if (busy) return;
+    void (async () => {
+      const ok = await deskConfirm({
+        title: `Delete ${ticket.reference}?`,
+        text: `This permanently removes “${ticket.topic}” from your inbox. The Listening Desk may still have a record on their side.`,
+        confirmLabel: "Delete conversation",
+        danger: true,
+      });
+      if (!ok) return;
+      setBusyLabel("Removing conversation…");
+      startTransition(async () => {
+        try {
+          const result = await deleteStudentConversation(ticket.id);
+          if (!result.ok) {
+            await deskError({ text: result.message });
+            return;
+          }
+          setSelectedId(null);
+          setMobileChatOpen(false);
+        } finally {
+          setBusyLabel(null);
         }
-        success(result.message);
-        setPendingConfirm(null);
-        setSelectedId(null);
-        setMobileChatOpen(false);
-      } finally {
-        setBusyLabel(null);
-      }
-    });
+      });
+    })();
+  }
+
+  function requestReopenConversation(ticket: TicketWithMeta) {
+    if (busy) return;
+    void (async () => {
+      const ok = await deskConfirm({
+        title: `Reopen ${ticket.reference}?`,
+        text: `This puts “${ticket.topic}” back in front of the Listening Desk so you can continue the chat. Your earlier messages stay exactly as they are.`,
+        confirmLabel: "Reopen conversation",
+      });
+      if (!ok) return;
+      setBusyLabel("Reopening conversation…");
+      startTransition(async () => {
+        try {
+          const result = await reopenStudentConversation(ticket.id);
+          if (!result.ok) {
+            await deskError({ text: result.message });
+            return;
+          }
+          router.refresh();
+        } finally {
+          setBusyLabel(null);
+        }
+      });
+    })();
   }
 
   function onReply(event: FormEvent<HTMLFormElement>) {
@@ -288,10 +318,9 @@ export function StudentSupportDesk({
       try {
         const result = await replyStudentConversation(selected.id, reply);
         if (!result.ok) {
-          error(result.message);
+          await deskError({ text: result.message });
           return;
         }
-        success(result.message);
         setReply("");
       } finally {
         setBusyLabel(null);
@@ -451,16 +480,27 @@ export function StudentSupportDesk({
                     </p>
                   </div>
                   <div className="flex shrink-0 flex-col items-end gap-1.5">
-                    <span className="inline-flex items-center gap-1.5 text-[0.65rem] font-medium uppercase tracking-[0.12em] text-pine">
-                      <span className="h-1.5 w-1.5 bg-celadon" aria-hidden />
+                    <span
+                      className={`inline-flex items-center gap-1.5 text-[0.65rem] font-medium uppercase tracking-[0.12em] ${
+                        isActiveTicket(selected.status)
+                          ? "text-pine"
+                          : "text-ink/45"
+                      }`}
+                    >
+                      <span
+                        className={`h-1.5 w-1.5 ${
+                          isActiveTicket(selected.status)
+                            ? "bg-celadon"
+                            : "bg-ink/30"
+                        }`}
+                        aria-hidden
+                      />
                       {STATUS_META[selected.status].label}
                     </span>
                     <button
                       type="button"
                       disabled={busy}
-                      onClick={() =>
-                        setPendingConfirm({ kind: "delete", ticket: selected })
-                      }
+                      onClick={() => requestDeleteConversation(selected)}
                       className="text-[0.7rem] font-medium text-red-800 underline decoration-red-800/30 underline-offset-4 disabled:opacity-50"
                     >
                       Delete
@@ -485,7 +525,38 @@ export function StudentSupportDesk({
                 disabled={!isActiveTicket(selected.status)}
                 maxLength={NOTE_MAX}
                 placeholder="Message the Listening Desk…"
-                settledHint="This conversation is settled. Open a new one if you need more help."
+                settledHint={
+                  <div className="mx-auto max-w-sm">
+                    <p className="font-medium text-pine">
+                      This conversation was closed by the Listening Desk
+                    </p>
+                    <p className="mt-1 text-sm text-ink/60">
+                      Still need help with it? Reopen the conversation and carry
+                      on where you left off — the desk will see your messages
+                      again.
+                    </p>
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() => requestReopenConversation(selected)}
+                      className="mt-3 inline-flex min-h-[2.5rem] items-center justify-center bg-pine px-4 py-2 text-sm font-medium text-mist transition-colors hover:bg-celadon disabled:opacity-50"
+                    >
+                      Reopen conversation
+                    </button>
+                    <p className="mt-2.5 text-xs text-ink/50">
+                      Or{" "}
+                      <button
+                        type="button"
+                        disabled={busy}
+                        onClick={startNewConversation}
+                        className="font-medium text-pine underline decoration-pine/30 underline-offset-4 disabled:opacity-50"
+                      >
+                        start a new conversation
+                      </button>{" "}
+                      if it is about something else.
+                    </p>
+                  </div>
+                }
               />
             }
           >
@@ -753,50 +824,6 @@ export function StudentSupportDesk({
         </>
       )}
 
-      <DeskConfirmModal
-        open={Boolean(pendingConfirm)}
-        onClose={() => !busy && setPendingConfirm(null)}
-        onConfirm={confirmPendingAction}
-        eyebrow={
-          pendingConfirm?.kind === "delete"
-            ? "Remove from inbox"
-            : "Start a thread"
-        }
-        title={
-          pendingConfirm?.kind === "delete"
-            ? `Delete ${pendingConfirm.ticket.reference}?`
-            : "Open this conversation?"
-        }
-        body={
-          pendingConfirm?.kind === "delete" ? (
-            <>
-              This permanently removes{" "}
-              <span className="font-medium text-ink">
-                {pendingConfirm.ticket.topic}
-              </span>{" "}
-              from your inbox. The Listening Desk may still have a record on
-              their side.
-            </>
-          ) : pendingConfirm?.kind === "compose" ? (
-            <>
-              Your note about{" "}
-              <span className="font-medium text-ink">
-                {pendingConfirm.topic}
-              </span>{" "}
-              will reach the Listening Desk. You can keep chatting in this
-              thread afterward.
-            </>
-          ) : null
-        }
-        confirmLabel={
-          pendingConfirm?.kind === "delete"
-            ? "Delete conversation"
-            : "Open conversation"
-        }
-        destructive={pendingConfirm?.kind === "delete"}
-        busy={busy}
-        busyLabel={busyLabel ?? "Working…"}
-      />
     </div>
   );
 }

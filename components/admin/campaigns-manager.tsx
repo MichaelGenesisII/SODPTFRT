@@ -8,12 +8,12 @@ import {
   type AdminCampaignListItem,
 } from "@/app/admin/campaigns/actions";
 import { DeskLoader, DeskLoaderOverlay } from "@/components/ui/desk-loader";
-import { useToast } from "@/components/ui/toast";
 import {
   campaignListLabel,
   campaignStatusLabel,
   formatCampaignUpdated,
 } from "@/lib/admin/campaign-records";
+import { deskConfirm, deskError, deskSuccess } from "@/lib/ui/desk-alert";
 import { DeskPagination } from "@/lib/ui/desk-pagination";
 
 const PAGE_SIZE = 10;
@@ -39,14 +39,11 @@ export function CampaignsManager({
   campaigns: AdminCampaignListItem[];
 }) {
   const router = useRouter();
-  const { success, error } = useToast();
   const [pending, startTransition] = useTransition();
   const [busyLabel, setBusyLabel] = useState<string | null>(null);
   const busy = pending || Boolean(busyLabel);
   const [query, setQuery] = useState("");
   const [page, setPage] = useState(1);
-  const [pendingDelete, setPendingDelete] =
-    useState<AdminCampaignListItem | null>(null);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -79,32 +76,32 @@ export function CampaignsManager({
     if (page > totalPages) setPage(totalPages);
   }, [page, totalPages]);
 
-  useEffect(() => {
-    if (!pendingDelete) return;
-    function onKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape" && !busy) setPendingDelete(null);
-    }
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [pendingDelete, busy]);
-
   function openCampaign(id: string) {
     if (busy) return;
     router.push(campaignDetailHref(id));
   }
 
-  function handleDelete() {
-    if (!pendingDelete || busy) return;
+  async function requestDelete(item: AdminCampaignListItem) {
+    if (busy) return;
+    const ok = await deskConfirm({
+      title: "Remove this campaign?",
+      text: `“${campaignListLabel(item)}” will be permanently deleted${
+        item.status === "sent" ? ", including its send record" : ""
+      }. This cannot be undone.`,
+      confirmLabel: "Delete permanently",
+      danger: true,
+    });
+    if (!ok) return;
+
     setBusyLabel("Deleting campaign…");
     startTransition(async () => {
       try {
-        const result = await deleteCampaign(pendingDelete.id);
+        const result = await deleteCampaign(item.id);
         if (result.ok) {
-          success(result.message, "Campaigns");
-          setPendingDelete(null);
+          await deskSuccess({ text: result.message });
           router.refresh();
         } else {
-          error(result.message, "Campaigns");
+          await deskError({ text: result.message });
         }
       } finally {
         setBusyLabel(null);
@@ -129,11 +126,10 @@ export function CampaignsManager({
       try {
         const result = await createCampaign();
         if (result.ok && result.campaignId) {
-          success(result.message, "Campaigns");
           router.push(campaignDetailHref(result.campaignId));
           router.refresh();
         } else {
-          error(result.message, "Campaigns");
+          await deskError({ text: result.message });
         }
       } finally {
         setBusyLabel(null);
@@ -143,10 +139,7 @@ export function CampaignsManager({
 
   return (
     <div className="relative space-y-4" aria-busy={busy}>
-      <DeskLoaderOverlay
-        active={busy && !pendingDelete}
-        label={busyLabel ?? "Working…"}
-      />
+      <DeskLoaderOverlay active={busy} label={busyLabel ?? "Working…"} />
 
       <div
         data-tour="campaigns-stats"
@@ -295,7 +288,7 @@ export function CampaignsManager({
                         disabled={busy}
                         onClick={(event) => {
                           event.stopPropagation();
-                          setPendingDelete(item);
+                          void requestDelete(item);
                         }}
                         className="inline-flex h-8 w-8 items-center justify-center border border-red-900/20 text-red-800 transition-colors hover:bg-red-50 disabled:opacity-50"
                         aria-label={`Delete ${campaignListLabel(item)}`}
@@ -319,65 +312,6 @@ export function CampaignsManager({
           itemLabel="campaigns"
         />
       </section>
-
-      {pendingDelete ? (
-        <div
-          className="fixed inset-0 z-[90] flex items-end justify-center bg-ink/45 p-4 sm:items-center"
-          role="presentation"
-          onClick={() => !busy && setPendingDelete(null)}
-        >
-          <div
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="delete-campaign-title"
-            className="relative w-full max-w-md border border-stone bg-mist p-6 text-ink shadow-[0_16px_48px_rgba(20,53,44,0.2)] sm:p-7"
-            onClick={(event) => event.stopPropagation()}
-          >
-            <DeskLoaderOverlay
-              active={busy}
-              label={busyLabel ?? "Deleting campaign…"}
-            />
-            <p className="text-[0.65rem] font-medium uppercase tracking-[0.16em] text-red-800/80">
-              Delete campaign
-            </p>
-            <h3
-              id="delete-campaign-title"
-              className="mt-3 font-display text-2xl tracking-[-0.02em] text-pine"
-            >
-              Remove this campaign?
-            </h3>
-            <p className="mt-3 text-sm leading-relaxed text-ink/70">
-              “{campaignListLabel(pendingDelete)}” will be permanently deleted
-              {pendingDelete.status === "sent"
-                ? ", including its send record"
-                : ""}
-              . This cannot be undone.
-            </p>
-            <div className="mt-7 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
-              <button
-                type="button"
-                disabled={busy}
-                onClick={() => setPendingDelete(null)}
-                className="border border-pine/25 px-4 py-2.5 text-sm font-medium text-pine transition-colors hover:border-pine disabled:opacity-60"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                disabled={busy}
-                onClick={handleDelete}
-                className="inline-flex min-h-[2.5rem] min-w-[9rem] items-center justify-center bg-[#5c2a2a] px-4 py-2.5 text-sm font-medium text-mist transition-colors hover:bg-red-900 disabled:opacity-60"
-              >
-                {busy ? (
-                  <DeskLoader label="Deleting…" tone="mist" />
-                ) : (
-                  "Delete permanently"
-                )}
-              </button>
-            </div>
-          </div>
-        </div>
-      ) : null}
     </div>
   );
 }

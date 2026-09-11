@@ -15,7 +15,6 @@ import {
 } from "@/components/admin/campaign-desk-filters";
 import { DeskAttachmentPicker } from "@/components/admin/desk-attachment-picker";
 import { DeskLoader, DeskLoaderOverlay } from "@/components/ui/desk-loader";
-import { useToast } from "@/components/ui/toast";
 import {
   campaignListLabel,
   campaignStatusLabel,
@@ -31,6 +30,7 @@ import { isNationalAdmin, type AdminProfile } from "@/lib/admin/profile";
 import { type Cohort } from "@/lib/cohorts";
 import { formatAttachmentSize } from "@/lib/desk-attachments";
 import { type Batch, type Parish } from "@/lib/parishes";
+import { deskConfirm, deskError, deskSuccess } from "@/lib/ui/desk-alert";
 import { DeskPagination } from "@/lib/ui/desk-pagination";
 
 const RECIPIENT_PAGE_SIZE = 8;
@@ -39,7 +39,6 @@ const fieldClass =
   "mt-1 w-full border border-stone bg-white/70 px-3 py-2 text-sm text-ink outline-none focus:border-pine";
 
 type DetailPanel = "audience" | "message";
-type PendingConfirm = "send" | "discard";
 
 function sameIdSet(a: Iterable<string>, b: Iterable<string>) {
   const left = [...a].sort();
@@ -148,7 +147,6 @@ export function CampaignDetailWorkspace({
   backHref: string;
 }) {
   const router = useRouter();
-  const { success, error, info } = useToast();
   const [pending, startTransition] = useTransition();
   const [busyLabel, setBusyLabel] = useState<string | null>(null);
   const busy = pending || Boolean(busyLabel);
@@ -176,9 +174,6 @@ export function CampaignDetailWorkspace({
   );
   const [attachments, setAttachments] = useState(initialDetail.attachments);
   const [recipientPage, setRecipientPage] = useState(1);
-  const [pendingConfirm, setPendingConfirm] = useState<PendingConfirm | null>(
-    null,
-  );
   useEffect(() => {
     setTitle(initialDetail.campaign.title);
     setSubject(initialDetail.campaign.subject);
@@ -246,19 +241,6 @@ export function CampaignDetailWorkspace({
     selected,
     attachments,
   ]);
-
-  useEffect(() => {
-    if (!pendingConfirm) return;
-    function onKey(event: KeyboardEvent) {
-      if (event.key === "Escape" && !busy) setPendingConfirm(null);
-    }
-    document.addEventListener("keydown", onKey);
-    document.body.style.overflow = "hidden";
-    return () => {
-      document.removeEventListener("keydown", onKey);
-      document.body.style.overflow = "";
-    };
-  }, [pendingConfirm, busy]);
 
   const preview = useMemo(
     () =>
@@ -346,18 +328,20 @@ export function CampaignDetailWorkspace({
 
   function run(
     action: () => Promise<CampaignActionResult>,
-    options?: { label?: string; after?: () => void },
+    options?: { label?: string; after?: () => void; quiet?: boolean },
   ) {
     setBusyLabel(options?.label ?? "Working…");
     startTransition(async () => {
       try {
         const result = await action();
         if (result.ok) {
-          success(result.message, "Campaigns");
+          if (!options?.quiet) {
+            await deskSuccess({ text: result.message });
+          }
           router.refresh();
           options?.after?.();
         } else {
-          error(result.message, "Campaigns");
+          await deskError({ text: result.message });
         }
       } finally {
         setBusyLabel(null);
@@ -365,7 +349,7 @@ export function CampaignDetailWorkspace({
     });
   }
 
-  function handleSave(then?: () => void) {
+  function handleSave(then?: () => void, quiet?: boolean) {
     run(
       () =>
         saveCampaignDraft(
@@ -377,7 +361,7 @@ export function CampaignDetailWorkspace({
             { title, subject, headline, body, personalNote },
           ),
         ),
-      { label: "Saving campaign…", after: then },
+      { label: "Saving campaign…", after: then, quiet },
     );
   }
 
@@ -388,17 +372,14 @@ export function CampaignDetailWorkspace({
       try {
         const result = await sendSavedCampaign(initialDetail.campaign.id);
         if (result.ok) {
-          success(result.message, "Campaigns");
-          setPendingConfirm(null);
-          if (typeof result.remaining === "number") {
-            info(
-              `${result.remaining} emails left in this rate window.`,
-              "Quota",
-            );
-          }
+          const remainingNote =
+            typeof result.remaining === "number"
+              ? ` ${result.remaining} emails left in this rate window.`
+              : "";
+          await deskSuccess({ text: `${result.message}${remainingNote}` });
           router.refresh();
         } else {
-          error(result.message, "Campaigns");
+          await deskError({ text: result.message });
         }
       } finally {
         setBusyLabel(null);
@@ -406,50 +387,53 @@ export function CampaignDetailWorkspace({
     });
   }
 
-  function openSendConfirm() {
+  async function openSendConfirm() {
     if (!subject.trim() || !body.trim()) {
-      error("Add a subject and body before sending.", "Campaigns");
+      await deskError({ text: "Add a subject and body before sending." });
       setPanel("message");
       return;
     }
     if (selected.size === 0) {
-      error("Select at least one student before sending.", "Campaigns");
+      await deskError({ text: "Select at least one student before sending." });
       setPanel("audience");
       return;
     }
-    handleSave(() => setPendingConfirm("send"));
+    handleSave(async () => {
+      const attachmentNote =
+        attachments.length > 0
+          ? ` ${attachments.length} attachment${attachments.length === 1 ? "" : "s"} will be included.`
+          : "";
+      const ok = await deskConfirm({
+        title: "Send this campaign?",
+        text: `This emails ${selected.size} student${selected.size === 1 ? "" : "s"}. Subject: ${subject.trim()}.${attachmentNote}`,
+        confirmLabel: "Confirm send",
+      });
+      if (!ok) return;
+      handleSend();
+    }, true);
   }
 
-  function requestLeave() {
+  async function requestLeave() {
     if (busy) return;
     if (!readOnly && isDirty) {
-      setPendingConfirm("discard");
-      return;
+      const ok = await deskConfirm({
+        title: "Leave without saving?",
+        text: "You have unsaved edits to this campaign. Leaving now discards those changes.",
+        confirmLabel: "Discard and leave",
+      });
+      if (!ok) return;
     }
     router.push(backHref);
   }
 
-  function confirmPendingAction() {
-    if (!pendingConfirm || busy) return;
-    if (pendingConfirm === "discard") {
-      setPendingConfirm(null);
-      router.push(backHref);
-      return;
-    }
-    handleSend();
-  }
-
   return (
     <div className="relative space-y-4" aria-busy={busy}>
-      <DeskLoaderOverlay
-        active={busy && !pendingConfirm}
-        label={busyLabel ?? "Working…"}
-      />
+      <DeskLoaderOverlay active={busy} label={busyLabel ?? "Working…"} />
 
       <button
         type="button"
         disabled={busy}
-        onClick={requestLeave}
+        onClick={() => void requestLeave()}
         className="inline-flex min-h-[2.75rem] items-center gap-2 border border-pine/35 bg-white px-4 py-2.5 text-sm font-medium text-pine shadow-[0_1px_0_rgba(20,53,44,0.06)] transition-colors hover:border-pine hover:bg-mist disabled:opacity-50"
       >
         <span aria-hidden className="text-base leading-none">
@@ -513,7 +497,7 @@ export function CampaignDetailWorkspace({
               <button
                 type="button"
                 disabled={busy || !canSend}
-                onClick={openSendConfirm}
+                onClick={() => void openSendConfirm()}
                 className="inline-flex min-h-[2.5rem] min-w-[8rem] items-center justify-center bg-pine px-4 py-2 text-sm font-medium text-mist disabled:opacity-50"
               >
                 Send campaign
@@ -743,96 +727,6 @@ export function CampaignDetailWorkspace({
             </div>
           ) : null}
       </div>
-
-      {pendingConfirm ? (
-        <div
-          className="fixed inset-0 z-[90] flex items-end justify-center bg-ink/45 p-4 sm:items-center"
-          role="presentation"
-          onClick={() => !busy && setPendingConfirm(null)}
-        >
-          <div
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="campaign-confirm-title"
-            className="relative w-full max-w-md border border-stone bg-mist p-6 text-ink shadow-[0_16px_48px_rgba(20,53,44,0.2)] sm:p-7"
-            onClick={(event) => event.stopPropagation()}
-          >
-            <DeskLoaderOverlay
-              active={busy}
-              label={
-                busyLabel ??
-                (pendingConfirm === "send"
-                  ? "Sending campaign…"
-                  : "Leaving…")
-              }
-            />
-            <p className="text-[0.65rem] font-medium uppercase tracking-[0.16em] text-celadon">
-              {pendingConfirm === "send" ? "Send campaign" : "Unsaved changes"}
-            </p>
-            <h3
-              id="campaign-confirm-title"
-              className="mt-3 font-display text-2xl tracking-[-0.02em] text-pine"
-            >
-              {pendingConfirm === "send"
-                ? "Send this campaign?"
-                : "Leave without saving?"}
-            </h3>
-            {pendingConfirm === "send" ? (
-              <>
-                <p className="mt-3 text-sm leading-relaxed text-ink/70">
-                  This emails{" "}
-                  <span className="font-medium text-ink">{selected.size}</span>{" "}
-                  student{selected.size === 1 ? "" : "s"}. Subject:{" "}
-                  <span className="font-medium text-ink">{subject.trim()}</span>
-                </p>
-                {attachments.length > 0 ? (
-                  <ul className="mt-3 space-y-1 border border-stone bg-white/60 px-3 py-2.5 text-sm text-ink/70">
-                    {attachments.map((file) => (
-                      <li key={file.id} className="flex flex-wrap gap-x-2">
-                        <span className="min-w-0 truncate font-medium text-ink">
-                          {file.original_name}
-                        </span>
-                        <span className="text-[0.65rem] tabular-nums text-ink/45">
-                          {formatAttachmentSize(file.byte_size)}
-                        </span>
-                      </li>
-                    ))}
-                  </ul>
-                ) : null}
-              </>
-            ) : (
-              <p className="mt-3 text-sm leading-relaxed text-ink/70">
-                You have unsaved edits to this campaign. Leaving now discards
-                those changes.
-              </p>
-            )}
-            <div className="mt-7 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
-              <button
-                type="button"
-                disabled={busy}
-                onClick={() => setPendingConfirm(null)}
-                className="border border-pine/25 px-4 py-2.5 text-sm font-medium text-pine transition-colors hover:border-pine disabled:opacity-60"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                disabled={busy}
-                onClick={confirmPendingAction}
-                className="inline-flex min-h-[2.5rem] min-w-[9rem] items-center justify-center bg-pine px-4 py-2.5 text-sm font-medium text-mist transition-colors hover:bg-celadon disabled:opacity-60"
-              >
-                {busy && pendingConfirm === "send" ? (
-                  <DeskLoader label="Sending…" tone="mist" />
-                ) : pendingConfirm === "send" ? (
-                  "Confirm send"
-                ) : (
-                  "Discard and leave"
-                )}
-              </button>
-            </div>
-          </div>
-        </div>
-      ) : null}
     </div>
   );
 }

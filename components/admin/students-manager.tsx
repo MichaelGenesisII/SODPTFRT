@@ -5,7 +5,6 @@ import {
   useMemo,
   useState,
   useTransition,
-  type ReactNode,
   type MouseEvent,
 } from "react";
 import Link from "next/link";
@@ -28,9 +27,7 @@ import {
   type StudentDeskFilterState,
   type StudentDeskLane,
 } from "@/components/admin/student-desk-filters";
-import { DeskConfirmModal } from "@/components/ui/desk-confirm-modal";
 import { DeskLoaderOverlay } from "@/components/ui/desk-loader";
-import { useToast } from "@/components/ui/toast";
 import {
   ENROLMENT_STATUS_META,
   ENROLMENT_STATUSES,
@@ -47,6 +44,7 @@ import { INTAKE_LABELS } from "@/lib/cohorts/intake";
 import { SATURDAY_SLOT_LABELS } from "@/lib/cohorts/saturday";
 import type { EnrolmentStatus, PaymentStatus } from "@/lib/student/types";
 import { type Batch, type Parish } from "@/lib/parishes";
+import { deskConfirm, deskError, deskSuccess } from "@/lib/ui/desk-alert";
 import { DeskPagination } from "@/lib/ui/desk-pagination";
 import { useDebouncedValue } from "@/lib/ui/use-debounced-value";
 
@@ -170,7 +168,6 @@ export function StudentsManager({
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
-  const { success, error } = useToast();
   const [pending, startTransition] = useTransition();
   const national = isNationalAdmin(profile);
 
@@ -192,9 +189,6 @@ export function StudentsManager({
     useState<EnrolmentStatus>("accepted");
   const [bulkPayStatus, setBulkPayStatus] =
     useState<PaymentStatus>("pending_review");
-  const [pendingConfirm, setPendingConfirm] = useState<BulkConfirm | null>(
-    null,
-  );
   const [openingStudentId, setOpeningStudentId] = useState<string | null>(
     null,
   );
@@ -404,173 +398,120 @@ export function StudentsManager({
       try {
         const result = await action();
         if (result.ok) {
-          success(result.message, "Students");
-          setPendingConfirm(null);
+          await deskSuccess({ text: result.message });
           clearSelection();
           router.refresh();
         } else {
-          error(result.message, "Students");
+          await deskError({ text: result.message });
         }
+      } catch (err) {
+        console.error("[students/bulk]", err);
+        await deskError({
+          text: "Something went wrong. Please try again.",
+        });
       } finally {
         setBusyLabel(null);
       }
     });
   }
 
-  function confirmBulk() {
-    if (!pendingConfirm || busy) return;
+  async function requestBulk(confirm: BulkConfirm) {
+    if (busy || selected.size === 0) return;
+    const count = selected.size;
+    const who = `${count} student${count === 1 ? "" : "s"}`;
     const ids = [...selected];
-    switch (pendingConfirm.kind) {
-      case "enrolment":
+
+    switch (confirm.kind) {
+      case "enrolment": {
+        const accepting = confirm.status === "accepted";
+        const ok = await deskConfirm({
+          title: `Set enrolment to ${ENROLMENT_STATUS_META[confirm.status].label}?`,
+          text: accepting
+            ? `This updates enrolment status for ${who}. Each student moving to Accepted will receive an acceptance email — please wait while those are sent.`
+            : `This updates enrolment status for ${who}.`,
+          confirmLabel: accepting ? "Accept and email" : "Update status",
+        });
+        if (!ok) return;
         runBulk(
-          () => bulkUpdateEnrolmentStatus(ids, pendingConfirm.status),
-          pendingConfirm.status === "accepted"
+          () => bulkUpdateEnrolmentStatus(ids, confirm.status),
+          accepting
             ? "Accepting students and sending emails…"
             : "Updating enrolment…",
         );
         return;
-      case "payment":
+      }
+      case "payment": {
+        const ok = await deskConfirm({
+          title: `Mark payment ${PAYMENT_STATUS_META[confirm.status].label}?`,
+          text: `This updates application payment for ${who}. Marking paid syncs the programme fee.`,
+          confirmLabel: "Update payment",
+        });
+        if (!ok) return;
         runBulk(
-          () => bulkUpdatePaymentStatus(ids, pendingConfirm.status),
+          () => bulkUpdatePaymentStatus(ids, confirm.status),
           "Updating payment…",
         );
         return;
-      case "pause":
+      }
+      case "pause": {
+        const ok = await deskConfirm({
+          title: `Pause ${who}?`,
+          text: "Selected students will not be able to sign in. A notice email is sent where possible.",
+          confirmLabel: "Pause seats",
+          danger: true,
+        });
+        if (!ok) return;
         runBulk(() => bulkSetStudentsActive(ids, false), "Pausing seats…");
         return;
-      case "reactivate":
+      }
+      case "reactivate": {
+        const ok = await deskConfirm({
+          title: `Reactivate ${who}?`,
+          text: "Selected students will be able to sign in again.",
+          confirmLabel: "Reactivate",
+        });
+        if (!ok) return;
         runBulk(() => bulkSetStudentsActive(ids, true), "Reactivating…");
         return;
-      case "manuals":
+      }
+      case "manuals": {
+        const ok = await deskConfirm({
+          title: `Mark manuals send 1 of 3 for ${who}?`,
+          text: "Students who already have send 1 marked are skipped. Notification emails are queued for the rest.",
+          confirmLabel: "Send manuals 1",
+        });
+        if (!ok) return;
         runBulk(() => bulkSetManualsSent(ids), "Sending manuals…");
         return;
-      case "delete":
+      }
+      case "delete": {
+        const ok = await deskConfirm({
+          title: `Delete ${who}?`,
+          text: "This permanently removes the selected accounts, enrolment data, and portal access. This cannot be undone.",
+          confirmLabel: count === 1 ? "Delete student" : "Delete students",
+          danger: true,
+        });
+        if (!ok) return;
         runBulk(
           () => bulkDeleteStudentAccounts(ids),
           "Removing students…",
         );
         return;
+      }
       case "export": {
         downloadStudentsCsv(
           selectedStudents,
           `sod-students-${new Date().toISOString().slice(0, 10)}.csv`,
         );
-        success(
-          `Exported ${selectedStudents.length} student${selectedStudents.length === 1 ? "" : "s"}.`,
-          "Students",
-        );
-        setPendingConfirm(null);
         return;
       }
     }
   }
 
-  const confirmCopy = ((): {
-    eyebrow: string;
-    title: string;
-    body: ReactNode;
-    confirmLabel: string;
-    destructive?: boolean;
-  } | null => {
-    if (!pendingConfirm) return null;
-    const count = selected.size;
-    const who = `${count} student${count === 1 ? "" : "s"}`;
-    switch (pendingConfirm.kind) {
-      case "enrolment":
-        return {
-          eyebrow: "Bulk enrolment",
-          title: `Set enrolment to ${ENROLMENT_STATUS_META[pendingConfirm.status].label}?`,
-          body: (
-            <>
-              This updates enrolment status for{" "}
-              <span className="font-medium text-ink">{who}</span>
-              {pendingConfirm.status === "accepted"
-                ? ". Each student moving to Accepted will receive an acceptance email — please wait while those are sent."
-                : "."}
-            </>
-          ),
-          confirmLabel:
-            pendingConfirm.status === "accepted"
-              ? "Accept and email"
-              : "Update status",
-        };
-      case "payment":
-        return {
-          eyebrow: "Bulk payment",
-          title: `Mark payment ${PAYMENT_STATUS_META[pendingConfirm.status].label}?`,
-          body: (
-            <>
-              This updates application payment for{" "}
-              <span className="font-medium text-ink">{who}</span>. Marking paid
-              syncs the programme fee.
-            </>
-          ),
-          confirmLabel: "Update payment",
-        };
-      case "pause":
-        return {
-          eyebrow: "Pause seats",
-          title: `Pause ${who}?`,
-          body: (
-            <>
-              Selected students will not be able to sign in. A notice email is
-              sent where possible.
-            </>
-          ),
-          confirmLabel: "Pause seats",
-          destructive: true,
-        };
-      case "reactivate":
-        return {
-          eyebrow: "Reactivate",
-          title: `Reactivate ${who}?`,
-          body: <>Selected students will be able to sign in again.</>,
-          confirmLabel: "Reactivate",
-        };
-      case "manuals":
-        return {
-          eyebrow: "Manuals",
-          title: `Mark manuals send 1 of 3 for ${who}?`,
-          body: (
-            <>
-              Students who already have send 1 marked are skipped. Notification
-              emails are queued for the rest.
-            </>
-          ),
-          confirmLabel: "Send manuals 1",
-        };
-      case "delete":
-        return {
-          eyebrow: "Permanent delete",
-          title: `Delete ${who}?`,
-          body: (
-            <>
-              This permanently removes the selected accounts, enrolment data,
-              and portal access. This cannot be undone.
-            </>
-          ),
-          confirmLabel: count === 1 ? "Delete student" : "Delete students",
-          destructive: true,
-        };
-      case "export":
-        return {
-          eyebrow: "Export CSV",
-          title: `Export ${who}?`,
-          body: (
-            <>
-              Downloads a CSV of the selected students with enrolment and
-              payment fields for your records.
-            </>
-          ),
-          confirmLabel: "Download CSV",
-        };
-    }
-  })();
-
   return (
     <div className="relative space-y-3 sm:space-y-4" aria-busy={busy}>
       <DeskLoaderOverlay
-        active={(busy && !pendingConfirm) || Boolean(openingStudentId)}
+        active={busy}
         label={
           openingStudentId
             ? "Opening student file…"
@@ -718,7 +659,7 @@ export function StudentsManager({
                       type="button"
                       disabled={busy}
                       onClick={() =>
-                        setPendingConfirm({
+                        void requestBulk({
                           kind: "enrolment",
                           status: bulkEnrolStatus,
                         })
@@ -753,7 +694,7 @@ export function StudentsManager({
                       type="button"
                       disabled={busy}
                       onClick={() =>
-                        setPendingConfirm({
+                        void requestBulk({
                           kind: "payment",
                           status: bulkPayStatus,
                         })
@@ -769,7 +710,7 @@ export function StudentsManager({
                   <button
                     type="button"
                     disabled={busy}
-                    onClick={() => setPendingConfirm({ kind: "manuals" })}
+                    onClick={() => void requestBulk({ kind: "manuals" })}
                     className="border border-stone px-3 py-2 text-sm text-ink/75 hover:border-pine hover:text-pine disabled:opacity-50"
                   >
                     Manuals 1 of 3
@@ -777,7 +718,7 @@ export function StudentsManager({
                   <button
                     type="button"
                     disabled={busy}
-                    onClick={() => setPendingConfirm({ kind: "reactivate" })}
+                    onClick={() => void requestBulk({ kind: "reactivate" })}
                     className="border border-stone px-3 py-2 text-sm text-ink/75 hover:border-pine hover:text-pine disabled:opacity-50"
                   >
                     Reactivate
@@ -785,7 +726,7 @@ export function StudentsManager({
                   <button
                     type="button"
                     disabled={busy}
-                    onClick={() => setPendingConfirm({ kind: "pause" })}
+                    onClick={() => void requestBulk({ kind: "pause" })}
                     className="border border-red-800/30 px-3 py-2 text-sm text-red-900/80 hover:border-red-800/50 disabled:opacity-50"
                   >
                     Pause
@@ -793,7 +734,7 @@ export function StudentsManager({
                   <button
                     type="button"
                     disabled={busy}
-                    onClick={() => setPendingConfirm({ kind: "delete" })}
+                    onClick={() => void requestBulk({ kind: "delete" })}
                     className="inline-flex items-center justify-center border border-red-800/35 px-2.5 py-2 text-red-900/85 hover:border-red-800/60 hover:bg-red-50 disabled:opacity-50"
                     aria-label={`Delete ${selected.size} selected student${selected.size === 1 ? "" : "s"}`}
                     title="Delete selected"
@@ -803,7 +744,7 @@ export function StudentsManager({
                   <button
                     type="button"
                     disabled={busy || selectedStudents.length === 0}
-                    onClick={() => setPendingConfirm({ kind: "export" })}
+                    onClick={() => void requestBulk({ kind: "export" })}
                     className="border border-stone px-3 py-2 text-sm text-ink/75 hover:border-pine hover:text-pine disabled:opacity-50"
                   >
                     Export CSV
@@ -910,19 +851,6 @@ export function StudentsManager({
           </section>
         </>
       )}
-
-      <DeskConfirmModal
-        open={Boolean(pendingConfirm && confirmCopy)}
-        onClose={() => !busy && setPendingConfirm(null)}
-        onConfirm={confirmBulk}
-        eyebrow={confirmCopy?.eyebrow}
-        title={confirmCopy?.title ?? ""}
-        body={confirmCopy?.body}
-        confirmLabel={confirmCopy?.confirmLabel ?? "Confirm"}
-        destructive={confirmCopy?.destructive}
-        busy={busy}
-        busyLabel={busyLabel ?? "Working…"}
-      />
     </div>
   );
 }

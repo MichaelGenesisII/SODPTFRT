@@ -25,14 +25,14 @@ const nav = [
   {
     href: "/teacher/classes",
     label: "Classes",
-    hint: "Your schedule",
+    hint: "Schedule & history",
     icon: ClassIcon,
   },
   {
-    href: "/teacher/history",
-    label: "History",
-    hint: "Past deliveries",
-    icon: HistoryIcon,
+    href: "/teacher/payments",
+    label: "Payments",
+    hint: "Details, pay & remittances",
+    icon: PaymentsIcon,
   },
   {
     href: "/teacher/account",
@@ -276,7 +276,7 @@ export function TeacherShell({
         </header>
 
         <main className="relative flex-1 px-4 py-6 sm:px-6 sm:py-8 lg:px-10 lg:py-10">
-          <div className="mx-auto max-w-3xl animate-fade-rise">{children}</div>
+          <div className="mx-auto max-w-3xl">{children}</div>
         </main>
       </div>
 
@@ -317,16 +317,29 @@ function ClassIcon({ className }: { className?: string }) {
   );
 }
 
-function HistoryIcon({ className }: { className?: string }) {
+function PaymentsIcon({ className }: { className?: string }) {
   return (
     <svg className={className} viewBox="0 0 24 24" fill="none" aria-hidden>
-      <circle cx="12" cy="12" r="7.25" stroke="currentColor" strokeWidth="1.5" />
+      <rect
+        x="3.75"
+        y="6.75"
+        width="16.5"
+        height="10.5"
+        rx="1.25"
+        stroke="currentColor"
+        strokeWidth="1.5"
+      />
       <path
-        d="M12 8.5V12l2.5 1.5"
+        d="M3.75 10.25h16.5"
         stroke="currentColor"
         strokeWidth="1.5"
         strokeLinecap="round"
-        strokeLinejoin="round"
+      />
+      <path
+        d="M8 14.25h3"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
       />
     </svg>
   );

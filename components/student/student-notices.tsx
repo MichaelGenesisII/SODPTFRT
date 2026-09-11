@@ -3,7 +3,6 @@
 import Link from "next/link";
 import { useState, type ReactNode } from "react";
 import { NoticeAttachmentList, NoticeFilesMark } from "@/components/notices/notice-attachments";
-import { DeskConfirmModal } from "@/components/ui/desk-confirm-modal";
 import {
   formatAnnouncementDate,
   isSafeAnnouncementHref,
@@ -11,10 +10,6 @@ import {
 } from "@/lib/announcements";
 
 type NoticesTab = "latest" | "earlier";
-
-type PendingExternal =
-  | { kind: "link"; href: string; label: string }
-  | { kind: "attachment"; href: string; action: "view" | "download"; fileName: string };
 
 function isExternalHref(href: string) {
   return href.startsWith("http://") || href.startsWith("https://");
@@ -117,9 +112,6 @@ export function StudentNoticesBoard({ notices }: { notices: Announcement[] }) {
   const earlier = notices.slice(1);
   const [tab, setTab] = useState<NoticesTab>("latest");
   const [openId, setOpenId] = useState<string | null>(earlier[0]?.id ?? null);
-  const [pendingExternal, setPendingExternal] = useState<PendingExternal | null>(
-    null,
-  );
 
   const tabs: { id: NoticesTab; label: string; hint?: string }[] = [
     { id: "latest", label: "Latest" },
@@ -131,7 +123,7 @@ export function StudentNoticesBoard({ notices }: { notices: Announcement[] }) {
   ];
 
   function requestExternalLink(payload: { href: string; label: string }) {
-    setPendingExternal({ kind: "link", ...payload });
+    openExternal(payload.href);
   }
 
   function requestAttachment(payload: {
@@ -139,19 +131,10 @@ export function StudentNoticesBoard({ notices }: { notices: Announcement[] }) {
     action: "view" | "download";
     fileName: string;
   }) {
-    setPendingExternal({ kind: "attachment", ...payload });
-  }
-
-  function confirmExternal() {
-    if (!pendingExternal) return;
-    if (pendingExternal.kind === "link") {
-      openExternal(pendingExternal.href);
-    } else if (pendingExternal.action === "download") {
-      openExternal(pendingExternal.href, pendingExternal.fileName);
-    } else {
-      openExternal(pendingExternal.href);
-    }
-    setPendingExternal(null);
+    openExternal(
+      payload.href,
+      payload.action === "download" ? payload.fileName : undefined,
+    );
   }
 
   return (
@@ -360,44 +343,6 @@ export function StudentNoticesBoard({ notices }: { notices: Announcement[] }) {
           ) : null}
         </>
       )}
-
-      <DeskConfirmModal
-        open={Boolean(pendingExternal)}
-        onClose={() => setPendingExternal(null)}
-        onConfirm={confirmExternal}
-        eyebrow="Leave the portal"
-        title={
-          pendingExternal?.kind === "attachment"
-            ? pendingExternal.action === "download"
-              ? "Download this file?"
-              : "Open this file?"
-            : "Open this link?"
-        }
-        body={
-          pendingExternal?.kind === "attachment" ? (
-            <>
-              You are about to{" "}
-              {pendingExternal.action === "download" ? "download" : "open"}{" "}
-              <span className="font-medium text-ink">
-                {pendingExternal.fileName}
-              </span>{" "}
-              in a new tab. The School hosts this file outside the notice board.
-            </>
-          ) : pendingExternal?.kind === "link" ? (
-            <>
-              <span className="font-medium text-ink">{pendingExternal.label}</span>{" "}
-              opens on an external site. You will leave the student portal.
-            </>
-          ) : null
-        }
-        confirmLabel={
-          pendingExternal?.kind === "attachment"
-            ? pendingExternal.action === "download"
-              ? "Download file"
-              : "Open file"
-            : "Continue"
-        }
-      />
     </div>
   );
 }

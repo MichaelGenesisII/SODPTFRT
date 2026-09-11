@@ -11,7 +11,6 @@ import {
   type EvaluationAttemptRow,
 } from "@/app/admin/evaluation/actions";
 import { DeskLoader, DeskLoaderOverlay } from "@/components/ui/desk-loader";
-import { useToast } from "@/components/ui/toast";
 import { needsManualGrade } from "@/lib/exams/score";
 import {
   ATTEMPT_STATUS_META,
@@ -19,6 +18,7 @@ import {
   type ExamAnswer,
   type ExamQuestion,
 } from "@/lib/exams/types";
+import { deskConfirm, deskError, deskSuccess } from "@/lib/ui/desk-alert";
 
 const PAGE_SIZE = 8;
 
@@ -31,7 +31,6 @@ export function EvaluationManager({
   initial: EvaluationAttemptRow[];
 }) {
   const router = useRouter();
-  const { success, error } = useToast();
   const [pending, startTransition] = useTransition();
   const [busyLabel, setBusyLabel] = useState<string | null>(null);
   const busy = pending || Boolean(busyLabel);
@@ -114,19 +113,44 @@ export function EvaluationManager({
       try {
         const next = await action();
         if (next.ok) {
-          success(next.message, "Exams");
+          await deskSuccess({ text: next.message });
           const refreshed = await getEvaluationDetail(attemptId);
           setDetail(refreshed);
           const list = await listEvaluationAttempts();
           setRows(list);
           router.refresh();
         } else {
-          error(next.message, "Exams");
+          await deskError({ text: next.message });
         }
       } finally {
         setBusyLabel(null);
       }
     });
+  }
+
+  async function requestRelease() {
+    if (!detail || busy) return;
+    const ok = await deskConfirm({
+      title: "Release this result?",
+      text: `Scores for ${detail.attempt.display_name} will become available to the candidate.`,
+      confirmLabel: "Release",
+    });
+    if (!ok) return;
+    runGrade(() => releaseAttempt(detail.attempt.id), "Releasing…");
+  }
+
+  async function requestUnrelease() {
+    if (!detail || busy) return;
+    const ok = await deskConfirm({
+      title: "Pull back this release?",
+      text: `Scores for ${detail.attempt.display_name} will no longer be visible until you release again.`,
+      confirmLabel: "Pull back release",
+    });
+    if (!ok) return;
+    runGrade(
+      () => unreleaseAttempt(detail.attempt.id),
+      "Pulling back release…",
+    );
   }
 
   return (
@@ -266,18 +290,8 @@ export function EvaluationManager({
                   "Saving grades…",
                 );
               }}
-              onRelease={() => {
-                runGrade(
-                  () => releaseAttempt(detail.attempt.id),
-                  "Releasing…",
-                );
-              }}
-              onUnrelease={() => {
-                runGrade(
-                  () => unreleaseAttempt(detail.attempt.id),
-                  "Pulling back release…",
-                );
-              }}
+              onRelease={() => void requestRelease()}
+              onUnrelease={() => void requestUnrelease()}
             />
           )}
         </section>

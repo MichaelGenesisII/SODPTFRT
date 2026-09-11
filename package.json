@@ -23,6 +23,7 @@
     "react-spinners": "^0.17.0",
     "resend": "^6.24.0",
     "stripe": "^22.4.0",
+    "sweetalert2": "^11.26.25",
     "xlsx": "^0.18.5"
   },
   "devDependencies": {

@@ -17,10 +17,10 @@ import {
   SupportChatTranscript,
   type SupportChatMessage,
 } from "@/components/support/chat-thread";
-import { useToast } from "@/components/ui/toast";
 import { COMMUNITY_BODY_MAX, LISTENING_DESK_LABEL, type CommunityMessage } from "@/lib/community/types";
 import { createBrowserSupabaseClient } from "@/lib/supabase/client";
 import type { StudentProfile } from "@/lib/student/types";
+import { deskError } from "@/lib/ui/desk-alert";
 
 type StudentCommunityDeskProps = {
   profile: StudentProfile;
@@ -49,7 +49,6 @@ export function StudentCommunityDesk({
   profile,
   initialMessages,
 }: StudentCommunityDeskProps) {
-  const { error } = useToast();
   const [pending, startTransition] = useTransition();
   const [draft, setDraft] = useState("");
   const [rows, setRows] = useState(initialMessages);
@@ -108,7 +107,7 @@ export function StudentCommunityDesk({
         if (result.posted) appendMessage(result.posted);
         setDraft("");
       } else {
-        error(result.message);
+        await deskError({ text: result.message });
       }
     });
   }

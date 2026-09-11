@@ -7,11 +7,9 @@ import {
   clearGraduationGateOverride,
   setGraduationGateOverride,
 } from "@/app/admin/records/actions";
-import { DeskLoader, DeskLoaderOverlay } from "@/components/ui/desk-loader";
-import { useToast } from "@/components/ui/toast";
+import { DeskLoader } from "@/components/ui/desk-loader";
 import type { RecordBundle } from "@/lib/exams/records";
-
-type GraduationConfirm = "allowEarly" | "removeEarly";
+import { deskConfirm, deskError, deskSuccess } from "@/lib/ui/desk-alert";
 
 export function RecordScorecard({
   bundle,
@@ -527,31 +525,26 @@ function GraduationGatePanel({
   onBusyLabel: (label: string | null) => void;
 }) {
   const router = useRouter();
-  const { success, error } = useToast();
   const [note, setNote] = useState(existingNote ?? "");
   const [saving, startSave] = useTransition();
-  const [pendingConfirm, setPendingConfirm] =
-    useState<GraduationConfirm | null>(null);
   const gateBusy = pending || saving;
 
   useEffect(() => {
     setNote(existingNote ?? "");
   }, [existingNote, userId]);
 
-  useEffect(() => {
-    if (!pendingConfirm) return;
-    function onKey(event: KeyboardEvent) {
-      if (event.key === "Escape" && !gateBusy) setPendingConfirm(null);
-    }
-    document.addEventListener("keydown", onKey);
-    document.body.style.overflow = "hidden";
-    return () => {
-      document.removeEventListener("keydown", onKey);
-      document.body.style.overflow = "";
-    };
-  }, [pendingConfirm, gateBusy]);
+  async function requestAllowEarly() {
+    if (gateBusy) return;
+    const reason = note.trim();
+    const ok = await deskConfirm({
+      title: "Allow the graduation portrait early?",
+      text: reason
+        ? `This student will unlock portrait upload before the usual attendance, exam, and fee checks. Reason on file: ${reason}.`
+        : "This student will unlock portrait upload before the usual attendance, exam, and fee checks. Add a reason in the note field first if you have one.",
+      confirmLabel: "Allow early",
+    });
+    if (!ok) return;
 
-  function runAllowEarly() {
     onBusyLabel("Saving early access…");
     startSave(async () => {
       try {
@@ -560,74 +553,53 @@ function GraduationGatePanel({
           note,
         });
         if (result.ok) {
-          success(result.message, "Records");
-          setPendingConfirm(null);
+          await deskSuccess({ text: result.message });
           router.refresh();
         } else {
-          error(result.message, "Records");
+          await deskError({ text: result.message });
         }
+      } catch (err) {
+        console.error("[records/gate]", err);
+        await deskError({
+          text: "Something went wrong. Please try again.",
+        });
       } finally {
         onBusyLabel(null);
       }
     });
   }
 
-  function runRemoveEarly() {
+  async function requestRemoveEarly() {
+    if (gateBusy) return;
+    const ok = await deskConfirm({
+      title: "Remove early portrait access?",
+      text: "The usual graduation checks will apply again. If the student has not met them, portrait upload may lock until they do.",
+      confirmLabel: "Remove early access",
+      danger: true,
+    });
+    if (!ok) return;
+
     onBusyLabel("Removing early access…");
     startSave(async () => {
       try {
         const result = await clearGraduationGateOverride(userId);
         if (result.ok) {
-          success(result.message, "Records");
+          await deskSuccess({ text: result.message });
           setNote("");
-          setPendingConfirm(null);
           router.refresh();
         } else {
-          error(result.message, "Records");
+          await deskError({ text: result.message });
         }
+      } catch (err) {
+        console.error("[records/gate]", err);
+        await deskError({
+          text: "Something went wrong. Please try again.",
+        });
       } finally {
         onBusyLabel(null);
       }
     });
   }
-
-  const confirmCopy =
-    pendingConfirm === "allowEarly"
-      ? {
-          eyebrow: "Early portrait access",
-          title: "Allow the graduation portrait early?",
-          body: (
-            <>
-              This student will unlock portrait upload before the usual
-              attendance, exam, and fee checks.
-              {note.trim() ? (
-                <>
-                  {" "}
-                  Reason on file:{" "}
-                  <span className="font-medium text-ink">{note.trim()}</span>.
-                </>
-              ) : (
-                " Add a reason in the note field first if you have one."
-              )}
-            </>
-          ),
-          confirmLabel: "Allow early",
-          destructive: false,
-        }
-      : pendingConfirm === "removeEarly"
-        ? {
-            eyebrow: "Remove early access",
-            title: "Remove early portrait access?",
-            body: (
-              <>
-                The usual graduation checks will apply again. If the student has
-                not met them, portrait upload may lock until they do.
-              </>
-            ),
-            confirmLabel: "Remove early access",
-            destructive: true,
-          }
-        : null;
 
   return (
     <div className="mt-4 border border-stone bg-white/40 px-3 py-3">
@@ -660,7 +632,7 @@ function GraduationGatePanel({
         <button
           type="button"
           disabled={gateBusy}
-          onClick={() => setPendingConfirm("allowEarly")}
+          onClick={() => void requestAllowEarly()}
           className="inline-flex min-h-[2rem] min-w-[7.5rem] items-center justify-center border border-pine/30 px-3 py-1.5 text-sm font-medium text-pine disabled:opacity-60"
         >
           {saving && busyLabel?.startsWith("Saving early") ? (
@@ -673,7 +645,7 @@ function GraduationGatePanel({
           <button
             type="button"
             disabled={gateBusy}
-            onClick={() => setPendingConfirm("removeEarly")}
+            onClick={() => void requestRemoveEarly()}
             className="inline-flex min-h-[2rem] min-w-[7.5rem] items-center justify-center border border-stone px-3 py-1.5 text-sm text-ink/60 disabled:opacity-60"
           >
             {saving && busyLabel?.startsWith("Removing") ? (
@@ -685,71 +657,7 @@ function GraduationGatePanel({
         ) : null}
       </div>
 
-      {pendingConfirm && confirmCopy ? (
-        <div
-          className="fixed inset-0 z-[90] flex items-end justify-center bg-ink/45 p-4 sm:items-center"
-          role="presentation"
-          onClick={() => !gateBusy && setPendingConfirm(null)}
-        >
-          <div
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="graduation-gate-confirm-title"
-            className="relative w-full max-w-md border border-stone bg-mist p-6 text-ink shadow-[0_16px_48px_rgba(20,53,44,0.2)] sm:p-7"
-            onClick={(event) => event.stopPropagation()}
-          >
-            <DeskLoaderOverlay
-              active={saving}
-              label={busyLabel ?? "Working…"}
-            />
-            <p
-              className={`text-[0.65rem] font-medium uppercase tracking-[0.16em] ${
-                confirmCopy.destructive ? "text-red-800/80" : "text-celadon"
-              }`}
-            >
-              {confirmCopy.eyebrow}
-            </p>
-            <h3
-              id="graduation-gate-confirm-title"
-              className="mt-3 font-display text-2xl tracking-[-0.02em] text-pine"
-            >
-              {confirmCopy.title}
-            </h3>
-            <p className="mt-3 text-sm leading-relaxed text-ink/70">
-              {confirmCopy.body}
-            </p>
-            <div className="mt-7 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
-              <button
-                type="button"
-                disabled={gateBusy}
-                onClick={() => setPendingConfirm(null)}
-                className="border border-pine/25 px-4 py-2.5 text-sm font-medium text-pine transition-colors hover:border-pine disabled:opacity-60"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                disabled={gateBusy}
-                onClick={() => {
-                  if (pendingConfirm === "allowEarly") runAllowEarly();
-                  else runRemoveEarly();
-                }}
-                className={`inline-flex min-h-[2.5rem] min-w-[9rem] items-center justify-center px-4 py-2.5 text-sm font-medium text-mist transition-colors disabled:opacity-60 ${
-                  confirmCopy.destructive
-                    ? "bg-[#5c2a2a] hover:bg-red-900"
-                    : "bg-pine hover:bg-celadon"
-                }`}
-              >
-                {saving ? (
-                  <DeskLoader label="Working…" tone="mist" />
-                ) : (
-                  confirmCopy.confirmLabel
-                )}
-              </button>
-            </div>
-          </div>
-        </div>
-      ) : null}
+
     </div>
   );
 }

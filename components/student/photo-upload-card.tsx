@@ -8,9 +8,8 @@ import {
   uploadPassportPhoto,
 } from "@/app/student/photos/actions";
 import { ImageFileField } from "@/components/student/image-file-field";
-import { DeskConfirmModal } from "@/components/ui/desk-confirm-modal";
 import { DeskLoaderOverlay } from "@/components/ui/desk-loader";
-import { useToast } from "@/components/ui/toast";
+import { deskConfirm, deskError } from "@/lib/ui/desk-alert";
 
 type PhotoUploadCardProps = {
   kind: "passport" | "graduation_selfie";
@@ -30,15 +29,11 @@ export function PhotoUploadCard({
   takenDown = false,
 }: PhotoUploadCardProps) {
   const router = useRouter();
-  const { success, error } = useToast();
   const [pending, startTransition] = useTransition();
   const [busyLabel, setBusyLabel] = useState<string | null>(null);
   const busy = pending || Boolean(busyLabel);
   const [preview, setPreview] = useState<string | null>(null);
   const [replacing, setReplacing] = useState(false);
-  const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
-  const [confirmUploadOpen, setConfirmUploadOpen] = useState(false);
-  const [pendingForm, setPendingForm] = useState<HTMLFormElement | null>(null);
   const [fileKey, setFileKey] = useState(0);
 
   const isPassport = kind === "passport";
@@ -56,14 +51,19 @@ export function PhotoUploadCard({
     setPreview(URL.createObjectURL(file));
   }
 
-  function onSubmit(event: FormEvent<HTMLFormElement>) {
+  async function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    const form = event.currentTarget;
     if (isPassport && !alreadyUploaded) {
-      setPendingForm(event.currentTarget);
-      setConfirmUploadOpen(true);
-      return;
+      const ok = await deskConfirm({
+        title: "Upload this passport photo?",
+        text: "This becomes your student account image and cannot be changed later. Contact the Listening Desk only if there is a serious problem.",
+        confirmLabel: "Upload passport photo",
+        cancelLabel: "Cancel",
+      });
+      if (!ok) return;
     }
-    runUpload(event.currentTarget);
+    runUpload(form);
   }
 
   function runUpload(form: HTMLFormElement) {
@@ -77,21 +77,32 @@ export function PhotoUploadCard({
           ? await uploadPassportPhoto(formData)
           : await uploadGraduationSelfie(formData);
         if (!result.ok) {
-          error(result.message);
+          await deskError({ text: result.message });
           return;
         }
-        success(result.message);
+        // Quiet success — the picture / locked state is the feedback.
         form.reset();
         setPreview(null);
         setReplacing(false);
-        setConfirmUploadOpen(false);
-        setPendingForm(null);
         setFileKey((k) => k + 1);
         router.refresh();
       } finally {
         setBusyLabel(null);
       }
     });
+  }
+
+  async function requestDelete() {
+    if (isPassport) return;
+    const ok = await deskConfirm({
+      title: "Remove graduation selfie?",
+      text: "Your photo will disappear from the student gallery until you upload a new one. You can upload again anytime after graduation fees are settled.",
+      confirmLabel: "Remove selfie",
+      cancelLabel: "Keep selfie",
+      danger: true,
+    });
+    if (!ok) return;
+    onDelete();
   }
 
   function onDelete() {
@@ -101,11 +112,10 @@ export function PhotoUploadCard({
       try {
         const result = await deleteGraduationSelfie();
         if (!result.ok) {
-          error(result.message);
+          await deskError({ text: result.message });
           return;
         }
-        success(result.message);
-        setConfirmDeleteOpen(false);
+        // Quiet success — gallery / card update is the feedback.
         router.refresh();
       } finally {
         setBusyLabel(null);
@@ -173,7 +183,7 @@ export function PhotoUploadCard({
               <button
                 type="button"
                 disabled={busy}
-                onClick={() => setConfirmDeleteOpen(true)}
+                onClick={() => void requestDelete()}
                 className="border border-stone px-3 py-2 text-sm font-medium text-ink/60 hover:border-red-800/40 hover:text-red-900 disabled:opacity-60"
               >
                 Delete
@@ -181,25 +191,6 @@ export function PhotoUploadCard({
             ) : null}
           </div>
         </div>
-
-        <DeskConfirmModal
-          open={confirmDeleteOpen}
-          onClose={() => !busy && setConfirmDeleteOpen(false)}
-          onConfirm={onDelete}
-          eyebrow="Your portrait"
-          title="Remove graduation selfie?"
-          body={
-            <>
-              Your photo will disappear from the student gallery until you upload
-              a new one. You can upload again anytime after graduation fees are
-              settled.
-            </>
-          }
-          confirmLabel="Remove selfie"
-          destructive
-          busy={busy}
-          busyLabel={busyLabel ?? "Removing selfie…"}
-        />
       </div>
     );
   }
@@ -225,7 +216,7 @@ export function PhotoUploadCard({
       {takenDown && moderationNote ? (
         <p className="mt-2 text-sm text-[#6b4f2a]">Desk note: {moderationNote}</p>
       ) : null}
-      <form className="mt-4 space-y-3" onSubmit={onSubmit}>
+      <form className="mt-4 space-y-3" onSubmit={(e) => void onSubmit(e)}>
         <p className="text-sm font-medium text-ink">Select your photograph</p>
         <ImageFileField
           key={fileKey}
@@ -271,26 +262,6 @@ export function PhotoUploadCard({
           ) : null}
         </div>
       </form>
-
-      {isPassport && !alreadyUploaded ? (
-        <DeskConfirmModal
-          open={confirmUploadOpen}
-          onClose={() => !busy && setConfirmUploadOpen(false)}
-          onConfirm={() => pendingForm && runUpload(pendingForm)}
-          eyebrow="Passport photograph"
-          title="Upload this passport photo?"
-          body={
-            <>
-              This becomes your student account image and cannot be changed
-              later. Contact the Listening Desk only if there is a serious
-              problem.
-            </>
-          }
-          confirmLabel="Upload passport photo"
-          busy={busy}
-          busyLabel={busyLabel ?? "Uploading passport photo…"}
-        />
-      ) : null}
     </div>
   );
 }

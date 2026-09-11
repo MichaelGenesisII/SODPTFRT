@@ -8,7 +8,7 @@ import {
 import { changeFinancePassword } from "@/app/finance/actions";
 import { StaffAvatarCard } from "@/components/staff/staff-avatar-card";
 import { DeskLoaderOverlay } from "@/components/ui/desk-loader";
-import { useToast } from "@/components/ui/toast";
+import { deskConfirm, deskError, deskSuccess } from "@/lib/ui/desk-alert";
 import {
   financeDisplayName,
   type FinanceProfile,
@@ -18,7 +18,6 @@ const fieldClass =
   "mt-1.5 w-full border border-stone bg-white/70 px-3 py-2.5 text-sm outline-none focus:border-pine";
 
 export function FinanceAccountForm({ profile }: { profile: FinanceProfile }) {
-  const { success, error } = useToast();
   const [pending, startTransition] = useTransition();
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
@@ -26,16 +25,25 @@ export function FinanceAccountForm({ profile }: { profile: FinanceProfile }) {
   const [showCurrent, setShowCurrent] = useState(false);
   const [showNew, setShowNew] = useState(false);
 
-  function onSubmit(event: FormEvent) {
+  async function onSubmit(event: FormEvent) {
     event.preventDefault();
     if (newPassword.length < 8) {
-      error("New password must be at least 8 characters.", "Account");
+      await deskError({ text: "New password must be at least 8 characters." });
       return;
     }
     if (newPassword !== confirmPassword) {
-      error("New password and confirmation do not match.", "Account");
+      await deskError({ text: "New password and confirmation do not match." });
       return;
     }
+
+    const ok = await deskConfirm({
+      title: "Change password?",
+      text: "You will use the new password the next time you sign in to the Finance portal.",
+      confirmLabel: "Update password",
+      cancelLabel: "Go back",
+    });
+    if (!ok) return;
+
     const form = new FormData();
     form.set("currentPassword", currentPassword);
     form.set("newPassword", newPassword);
@@ -43,12 +51,12 @@ export function FinanceAccountForm({ profile }: { profile: FinanceProfile }) {
     startTransition(async () => {
       const result = await changeFinancePassword(form);
       if (result.ok) {
-        success(result.message, "Account");
+        await deskSuccess({ text: result.message });
         setCurrentPassword("");
         setNewPassword("");
         setConfirmPassword("");
       } else {
-        error(result.message, "Account");
+        await deskError({ text: result.message });
       }
     });
   }
@@ -91,6 +99,7 @@ export function FinanceAccountForm({ profile }: { profile: FinanceProfile }) {
           hasAvatar={Boolean(profile.avatar_path)}
           onUpload={uploadFinanceAvatar}
           onDelete={deleteFinanceAvatar}
+          feedback="modal"
         />
       </section>
 

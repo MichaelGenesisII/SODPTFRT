@@ -24,8 +24,8 @@ import { publicActionMessage } from "@/lib/safe-action-message";
 const TRANSPORT = new DefaultChatTransport({ api: "/api/assistant/chat" });
 
 const SUGGESTIONS = [
+  "How do I upload bank payment proof?",
   "How do I pay my fees?",
-  "When do year exams unlock?",
   "How do I contact Support?",
 ] as const;
 

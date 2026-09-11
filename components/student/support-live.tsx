@@ -15,11 +15,9 @@ import {
   type StudentChatEvent,
   type StudentSupportPulse,
 } from "@/app/student/support/pulse";
-import { useToast } from "@/components/ui/toast";
 import { createBrowserSupabaseClient } from "@/lib/supabase/client";
 import type { StudentProfile } from "@/lib/student/types";
 
-const TOAST_SEEN_KEY = "sod-student-chat-toast-seen";
 const FALLBACK_POLL_MS = 90_000;
 const BURST_MS = 450;
 
@@ -69,27 +67,6 @@ function countUnread(notes: StudentChatEvent[], readMap: ReadMap) {
   return notes.filter((event) => isUnread(event, readMap)).length;
 }
 
-function readSeenNoteIds(): Set<string> {
-  try {
-    const raw = window.sessionStorage.getItem(TOAST_SEEN_KEY);
-    if (!raw) return new Set();
-    const parsed = JSON.parse(raw) as unknown;
-    if (!Array.isArray(parsed)) return new Set();
-    return new Set(
-      parsed.filter((item): item is string => typeof item === "string"),
-    );
-  } catch {
-    return new Set();
-  }
-}
-
-function writeSeenNoteIds(ids: Set<string>) {
-  window.sessionStorage.setItem(
-    TOAST_SEEN_KEY,
-    JSON.stringify(Array.from(ids).slice(-80)),
-  );
-}
-
 function mergeReadMaps(local: ReadMap, server: ReadMap): ReadMap {
   const next: ReadMap = { ...local };
   for (const [ticketId, serverAt] of Object.entries(server)) {
@@ -115,7 +92,6 @@ export function StudentSupportLiveProvider({
   initialPulse?: StudentSupportPulse;
   children: ReactNode;
 }) {
-  const { toast } = useToast();
   const [notes, setNotes] = useState(initialPulse.notes);
   const [readMap, setReadMap] = useState<ReadMap>({});
   const [hydrated, setHydrated] = useState(false);
@@ -136,49 +112,23 @@ export function StudentSupportLiveProvider({
   );
 
   const applyPulse = useCallback(
-    (next: StudentSupportPulse, { announce }: { announce: boolean }) => {
+    (next: StudentSupportPulse) => {
       setNotes(next.notes);
       const merged = mergeReadMaps(loadReadMap(profile.id), next.reads ?? {});
       saveReadMap(profile.id, merged);
       setReadMap(merged);
-      const fresh = next.notes.filter((event) => isUnread(event, merged));
-
-      if (!announce) {
-        const seen = readSeenNoteIds();
-        for (const event of fresh) seen.add(event.noteId);
-        if (next.latestNoteId) seen.add(next.latestNoteId);
-        writeSeenNoteIds(seen);
-        return;
-      }
-
-      const seen = readSeenNoteIds();
-      const novel = fresh.filter((event) => !seen.has(event.noteId));
-      for (const event of novel) {
-        seen.add(event.noteId);
-        toast({
-          title: "New message",
-          message: `${event.topic} · ${event.preview}`,
-          tone: "info",
-          durationMs: 6500,
-        });
-      }
-      if (next.latestNoteId) seen.add(next.latestNoteId);
-      writeSeenNoteIds(seen);
-
-      // Local pulse already updated notes/unread; no full RSC remount.
     },
-    [profile.id, toast],
+    [profile.id],
   );
 
   useEffect(() => {
-    applyPulse(initialPulse, { announce: false });
+    applyPulse(initialPulse);
 
     let cancelled = false;
     let inFlight = false;
     let burstTimer = 0;
-    let lastLatest = initialPulse.latestNoteId;
 
-    async function refreshPulse(announce: boolean) {
+    async function refreshPulse() {
       if (cancelled || inFlight) return;
       if (document.visibilityState === "hidden") return;
 
@@ -186,9 +136,7 @@ export function StudentSupportLiveProvider({
       try {
         const next = await getStudentSupportPulse();
         if (cancelled) return;
-        const changed = next.latestNoteId !== lastLatest;
-        applyPulse(next, { announce: announce && changed });
-        lastLatest = next.latestNoteId;
+        applyPulse(next);
       } catch {
         // Keep last known pulse.
       } finally {
@@ -198,7 +146,7 @@ export function StudentSupportLiveProvider({
 
     function scheduleRefresh() {
       window.clearTimeout(burstTimer);
-      burstTimer = window.setTimeout(() => void refreshPulse(true), BURST_MS);
+      burstTimer = window.setTimeout(() => void refreshPulse(), BURST_MS);
     }
 
     let supabase: ReturnType<typeof createBrowserSupabaseClient> | null = null;
@@ -226,16 +174,16 @@ export function StudentSupportLiveProvider({
     }
 
     const interval = window.setInterval(
-      () => void refreshPulse(true),
+      () => void refreshPulse(),
       FALLBACK_POLL_MS,
     );
     const onWake = () => {
-      if (document.visibilityState === "visible") void refreshPulse(true);
+      if (document.visibilityState === "visible") void refreshPulse();
     };
     window.addEventListener("focus", onWake);
     document.addEventListener("visibilitychange", onWake);
 
-    void refreshPulse(false);
+    void refreshPulse();
 
     return () => {
       cancelled = true;
@@ -246,7 +194,7 @@ export function StudentSupportLiveProvider({
       if (supabase && channel) void supabase.removeChannel(channel);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [toast, applyPulse]);
+  }, [applyPulse]);
 
   const markTicketRead = useCallback(
     async (ticketId: string) => {

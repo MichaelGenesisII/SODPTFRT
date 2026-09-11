@@ -18,7 +18,6 @@ import {
 } from "@/app/admin/cohorts/actions";
 import { CohortsInsight } from "@/components/admin/cohorts-insight";
 import { DeskLoader, DeskLoaderOverlay } from "@/components/ui/desk-loader";
-import { useToast } from "@/components/ui/toast";
 import {
   COHORT_INSIGHT_PAGE_SIZE,
   type CohortInsightStudentRow,
@@ -32,6 +31,7 @@ import {
 import { INTAKE_LABELS, type IntakeKey } from "@/lib/cohorts/intake";
 import { formatBatchLabel, type Batch, type Parish } from "@/lib/parishes";
 import { DeskPagination } from "@/lib/ui/desk-pagination";
+import { deskConfirm, deskError, deskSuccess } from "@/lib/ui/desk-alert";
 
 const fieldClass =
   "w-full min-w-0 border border-stone bg-white/70 px-3 py-2 text-sm outline-none focus:border-pine disabled:opacity-50";
@@ -465,22 +465,8 @@ function CohortsManage({
   initialFocus,
   onFocusHandled,
 }: ManageProps) {
-  const { success, error } = useToast();
   const [pending, startTransition] = useTransition();
   const [adminBusy, setAdminBusy] = useState(false);
-  const [pendingConfirm, setPendingConfirm] = useState<
-    | { kind: "unlink"; batch: Batch }
-    | {
-        kind: "deactivate";
-        payload: {
-          name: string;
-          yearStart: number;
-          yearEnd: number;
-          isActive: boolean;
-        };
-      }
-    | null
-  >(null);
   const linkSectionRef = useRef<HTMLElement>(null);
 
   const [creatingNew, setCreatingNew] = useState(initialFocus === "create");
@@ -574,17 +560,17 @@ function CohortsManage({
   function runAdmin(
     action: () => Promise<CohortActionResult>,
     onOk?: () => void,
+    { successAlert = false }: { successAlert?: boolean } = {},
   ) {
     setAdminBusy(true);
     startTransition(async () => {
       try {
         const result = await action();
         if (result.ok) {
-          success(result.message);
-          setPendingConfirm(null);
           onOk?.();
+          if (successAlert) await deskSuccess({ text: result.message });
         } else {
-          error(result.message);
+          await deskError({ text: result.message });
         }
       } finally {
         setAdminBusy(false);
@@ -594,41 +580,53 @@ function CohortsManage({
 
   const busy = adminBusy || pending;
 
-  function confirmPendingAction() {
-    if (!pendingConfirm || busy) return;
-    if (pendingConfirm.kind === "unlink") {
-      runAdmin(() => assignBatchToCohort(pendingConfirm.batch.id, null));
-      return;
-    }
-    if (!selected) return;
-    runAdmin(() =>
-      updateCohort(selected.id, {
-        name: pendingConfirm.payload.name,
-        yearStart: pendingConfirm.payload.yearStart,
-        yearEnd: pendingConfirm.payload.yearEnd,
-        programmeType: DEFAULT_PROGRAMME_TYPE,
-        isActive: pendingConfirm.payload.isActive,
-      }),
-    );
+  async function requestUnlink(batch: Batch) {
+    if (busy) return;
+    const cohortLabel = selected
+      ? formatCohortLabel(selected)
+      : "the cohort";
+    const ok = await deskConfirm({
+      title: `Unlink ${formatBatchLabel(batch)}?`,
+      text: `Removes this parish batch from ${cohortLabel}. Students stay enrolled; the batch becomes available to link elsewhere.`,
+      confirmLabel: "Unlink batch",
+    });
+    if (!ok) return;
+    runAdmin(() => assignBatchToCohort(batch.id, null), undefined, {
+      successAlert: true,
+    });
   }
 
-  useEffect(() => {
-    if (!pendingConfirm) return;
-    function onKey(event: KeyboardEvent) {
-      if (event.key === "Escape" && !busy) setPendingConfirm(null);
-    }
-    document.addEventListener("keydown", onKey);
-    document.body.style.overflow = "hidden";
-    return () => {
-      document.removeEventListener("keydown", onKey);
-      document.body.style.overflow = "";
-    };
-  }, [pendingConfirm, busy]);
+  async function requestDeactivate(payload: {
+    name: string;
+    yearStart: number;
+    yearEnd: number;
+    isActive: boolean;
+  }) {
+    if (busy || !selected) return;
+    const ok = await deskConfirm({
+      title: "Close this programme for enrolment?",
+      text: `${formatCohortLabel(selected)} will no longer be open for new enrolment. Linked batches and existing students are unchanged.`,
+      confirmLabel: "Save & close",
+    });
+    if (!ok) return;
+    runAdmin(
+      () =>
+        updateCohort(selected.id, {
+          name: payload.name,
+          yearStart: payload.yearStart,
+          yearEnd: payload.yearEnd,
+          programmeType: DEFAULT_PROGRAMME_TYPE,
+          isActive: payload.isActive,
+        }),
+      undefined,
+      { successAlert: true },
+    );
+  }
 
   return (
     <div className="relative space-y-3 sm:space-y-4" aria-busy={busy}>
       <DeskLoaderOverlay
-        active={busy && !pendingConfirm}
+        active={busy}
         label="Working…"
       />
       <header className="border border-stone bg-mist/50 px-4 py-4 sm:px-5 sm:py-5">
@@ -782,7 +780,7 @@ function CohortsManage({
                       isActive,
                     };
                     if (selected.is_active && !isActive) {
-                      setPendingConfirm({ kind: "deactivate", payload });
+                      void requestDeactivate(payload);
                       return;
                     }
                     runAdmin(() =>
@@ -831,9 +829,7 @@ function CohortsManage({
                       <button
                         type="button"
                         disabled={busy}
-                        onClick={() =>
-                          setPendingConfirm({ kind: "unlink", batch })
-                        }
+                        onClick={() => void requestUnlink(batch)}
                         className="text-xs font-medium text-pine underline disabled:opacity-50"
                       >
                         Unlink
@@ -916,99 +912,6 @@ function CohortsManage({
           )}
         </div>
       </div>
-
-      {pendingConfirm ? (
-        <div
-          className="fixed inset-0 z-[90] flex items-end justify-center bg-ink/45 p-4 sm:items-center"
-          role="presentation"
-          onClick={() => !busy && setPendingConfirm(null)}
-        >
-          <div
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="cohort-confirm-title"
-            className="relative w-full max-w-md border border-stone bg-mist p-6 text-ink shadow-[0_16px_48px_rgba(20,53,44,0.2)] sm:p-7"
-            onClick={(event) => event.stopPropagation()}
-          >
-            <DeskLoaderOverlay active={busy} label="Working…" />
-            {(() => {
-              const copy =
-                pendingConfirm.kind === "unlink"
-                  ? {
-                      eyebrow: "Unlink batch",
-                      title: `Unlink ${formatBatchLabel(pendingConfirm.batch)}?`,
-                      body: (
-                        <>
-                          Removes this parish batch from{" "}
-                          <span className="font-medium text-ink">
-                            {selected ? formatCohortLabel(selected) : "the cohort"}
-                          </span>
-                          . Students stay enrolled; the batch becomes available
-                          to link elsewhere.
-                        </>
-                      ),
-                      confirmLabel: "Unlink batch",
-                      destructive: false,
-                    }
-                  : {
-                      eyebrow: "Close cohort",
-                      title: "Close this programme for enrolment?",
-                      body: (
-                        <>
-                          <span className="font-medium text-ink">
-                            {selected
-                              ? formatCohortLabel(selected)
-                              : pendingConfirm.payload.name}
-                          </span>{" "}
-                          will no longer be open for new enrolment. Linked
-                          batches and existing students are unchanged.
-                        </>
-                      ),
-                      confirmLabel: "Save & close",
-                      destructive: false,
-                    };
-              return (
-                <>
-                  <p className="text-[0.65rem] font-medium uppercase tracking-[0.16em] text-celadon">
-                    {copy.eyebrow}
-                  </p>
-                  <h3
-                    id="cohort-confirm-title"
-                    className="mt-3 font-display text-2xl tracking-[-0.02em] text-pine"
-                  >
-                    {copy.title}
-                  </h3>
-                  <p className="mt-3 text-sm leading-relaxed text-ink/70">
-                    {copy.body}
-                  </p>
-                  <div className="mt-7 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
-                    <button
-                      type="button"
-                      disabled={busy}
-                      onClick={() => setPendingConfirm(null)}
-                      className="border border-pine/25 px-4 py-2.5 text-sm font-medium text-pine transition-colors hover:border-pine disabled:opacity-60"
-                    >
-                      Cancel
-                    </button>
-                    <button
-                      type="button"
-                      disabled={busy}
-                      onClick={confirmPendingAction}
-                      className="inline-flex min-h-[2.5rem] min-w-[9rem] items-center justify-center bg-pine px-4 py-2.5 text-sm font-medium text-mist transition-colors hover:bg-celadon disabled:opacity-60"
-                    >
-                      {busy ? (
-                        <DeskLoader label="Working…" tone="mist" />
-                      ) : (
-                        copy.confirmLabel
-                      )}
-                    </button>
-                  </div>
-                </>
-              );
-            })()}
-          </div>
-        </div>
-      ) : null}
     </div>
   );
 }

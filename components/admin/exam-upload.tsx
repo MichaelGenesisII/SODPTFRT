@@ -7,8 +7,8 @@ import {
   type ExamActionResult,
 } from "@/app/admin/exams/actions";
 import { DeskLoader, DeskLoaderOverlay } from "@/components/ui/desk-loader";
-import { useToast } from "@/components/ui/toast";
 import type { Exam } from "@/lib/exams/types";
+import { deskError } from "@/lib/ui/desk-alert";
 
 type Props = {
   exams: Exam[];
@@ -34,7 +34,6 @@ function fileToBase64(file: File): Promise<string> {
 }
 
 export function ExamUpload({ exams, onOpenedExam, onOpenSamples }: Props) {
-  const { success, error } = useToast();
   const [pending, startTransition] = useTransition();
   const [busyLabel, setBusyLabel] = useState<string | null>(null);
   const busy = pending || Boolean(busyLabel);
@@ -55,10 +54,9 @@ export function ExamUpload({ exams, onOpenedExam, onOpenSamples }: Props) {
       try {
         const next = await action();
         if (next.ok) {
-          success(next.message, "Exams");
           if (next.examId) onOpenedExam(next.examId);
         } else {
-          error(next.message, "Exams");
+          await deskError({ text: next.message });
         }
       } finally {
         setBusyLabel(null);
@@ -87,7 +85,10 @@ export function ExamUpload({ exams, onOpenedExam, onOpenSamples }: Props) {
         );
       }
     } catch (e) {
-      error(e instanceof Error ? e.message : "Could not read file.", "Exams");
+      await deskError({
+        text:
+          e instanceof Error ? e.message : "Could not read that file. Please try again.",
+      });
     }
   }
 

@@ -5,9 +5,8 @@ import {
   changeStudentPassword,
   type StudentAccountActionResult,
 } from "@/app/student/account/actions";
-import { DeskConfirmModal } from "@/components/ui/desk-confirm-modal";
 import { DeskLoader } from "@/components/ui/desk-loader";
-import { useToast } from "@/components/ui/toast";
+import { deskConfirm, deskError, deskSuccess } from "@/lib/ui/desk-alert";
 import {
   studentDisplayName,
   type StudentEnrolment,
@@ -28,11 +27,9 @@ export function StudentAccountManager({
   profile,
   enrolment,
 }: StudentAccountManagerProps) {
-  const { success, error } = useToast();
   const [panel, setPanel] = useState<Panel>("profile");
   const [pending, startTransition] = useTransition();
   const [showPassword, setShowPassword] = useState(false);
-  const [confirmPasswordOpen, setConfirmPasswordOpen] = useState(false);
   const passwordFormRef = useRef<HTMLFormElement>(null);
 
   const tabs: { id: Panel; label: string }[] = [
@@ -47,13 +44,25 @@ export function StudentAccountManager({
     startTransition(async () => {
       const result = await action();
       if (result.ok) {
-        success(result.message, "Account");
+        await deskSuccess({ title: "Password updated", text: result.message });
         form?.reset();
-        setConfirmPasswordOpen(false);
       } else {
-        error(result.message, "Account");
+        await deskError({ title: "Could not update", text: result.message });
       }
     });
+  }
+
+  async function requestPasswordChange() {
+    const form = passwordFormRef.current;
+    if (!form) return;
+    const ok = await deskConfirm({
+      title: "Update your password?",
+      text: "You will need this new password the next time you sign in on another device. Make sure you have saved it somewhere safe.",
+      confirmLabel: "Update password",
+      cancelLabel: "Cancel",
+    });
+    if (!ok) return;
+    run(() => changeStudentPassword(new FormData(form)), form);
   }
 
   const name = studentDisplayName(profile);
@@ -174,7 +183,7 @@ export function StudentAccountManager({
             className="relative grid gap-5 lg:grid-cols-2 lg:gap-x-10 lg:gap-y-5"
             onSubmit={(event) => {
               event.preventDefault();
-              setConfirmPasswordOpen(true);
+              void requestPasswordChange();
             }}
           >
             <div className="lg:col-span-2">
@@ -272,27 +281,6 @@ export function StudentAccountManager({
           </form>
         )}
       </div>
-
-      <DeskConfirmModal
-        open={confirmPasswordOpen}
-        onClose={() => !pending && setConfirmPasswordOpen(false)}
-        onConfirm={() => {
-          const form = passwordFormRef.current;
-          if (!form) return;
-          run(() => changeStudentPassword(new FormData(form)), form);
-        }}
-        eyebrow="Security"
-        title="Update your password?"
-        body={
-          <>
-            You will need this new password the next time you sign in on another
-            device. Make sure you have saved it somewhere safe.
-          </>
-        }
-        confirmLabel="Update password"
-        busy={pending}
-        busyLabel="Securing your key…"
-      />
     </div>
   );
 }

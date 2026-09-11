@@ -34,8 +34,9 @@ export default async function FinanceRatesPage() {
           Session pay rates
         </h1>
         <p className="mt-2 max-w-2xl text-sm leading-relaxed text-ink/65">
-          One default rate per delivered session. The rate effective on the
-          class date is applied automatically.
+          Publish what a delivered session pays. The rate in force on the class
+          date is used automatically — older rates stay on the timeline for past
+          months.
         </p>
       </section>
 

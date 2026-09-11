@@ -4,6 +4,10 @@ import {
   sendAdminWelcomeEmail,
   sendTeacherWelcomeEmail,
   sendFinanceWelcomeEmail,
+  sendFinancePayoutAuthorisationEmail,
+  sendFinancePayoutFreezeNoticeEmail,
+  sendTeacherPaymentDetailsChangedEmail,
+  sendTeacherPayoutPaidEmail,
   sendSingleCampaignEmail,
   sendClassInviteEmail,
   sendClassTeacherAssignmentEmail,
@@ -199,6 +203,58 @@ export async function dispatchTemplateEmail(
           siteUrl: String(payload.siteUrl),
         },
         override: override ?? undefined,
+      });
+
+    case "/api/email/finance-payout-authorisation":
+      return sendFinancePayoutAuthorisationEmail({
+        to: String(payload.to),
+        template: {
+          payeeName: String(payload.payeeName),
+          amountLabel: String(payload.amountLabel),
+          reason: String(payload.reason ?? ""),
+          requesterName: String(payload.requesterName),
+          requestedAtLabel: String(payload.requestedAtLabel),
+          emailCode: String(payload.emailCode),
+          declineUrl: String(payload.declineUrl),
+          siteUrl: String(payload.siteUrl),
+        },
+      });
+
+    case "/api/email/finance-payout-freeze":
+      return sendFinancePayoutFreezeNoticeEmail({
+        to: String(payload.to),
+        template: {
+          payeeName: String(payload.payeeName),
+          amountLabel: String(payload.amountLabel),
+          siteUrl: String(payload.siteUrl),
+        },
+      });
+
+    case "/api/email/teacher-payment-details-changed":
+      return sendTeacherPaymentDetailsChangedEmail({
+        to: String(payload.to),
+        template: {
+          teacherName: String(payload.teacherName ?? ""),
+          methodLabel: String(payload.methodLabel),
+          payeeMask: String(payload.payeeMask),
+          portalAccountUrl: String(payload.portalAccountUrl),
+          siteUrl: String(payload.siteUrl),
+        },
+      });
+
+    case "/api/email/teacher-payout-paid":
+      return sendTeacherPayoutPaidEmail({
+        to: String(payload.to),
+        template: {
+          teacherName: String(payload.teacherName ?? ""),
+          amountLabel: String(payload.amountLabel),
+          periodLabel: String(payload.periodLabel),
+          methodLabel: String(payload.methodLabel),
+          paidAtLabel: String(payload.paidAtLabel),
+          reason: String(payload.reason ?? "Teacher pay"),
+          portalPaymentsUrl: String(payload.portalPaymentsUrl),
+          siteUrl: String(payload.siteUrl),
+        },
       });
 
     case "/api/email/admin-access-recovery":

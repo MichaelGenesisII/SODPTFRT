@@ -14,7 +14,6 @@ import {
 } from "@/components/admin/desk-attachment-picker";
 import { NoticeAttachmentList, NoticeFilesMark } from "@/components/notices/notice-attachments";
 import { DeskLoader, DeskLoaderOverlay } from "@/components/ui/desk-loader";
-import { useToast } from "@/components/ui/toast";
 import {
   ANNOUNCEMENT_BODY_MAX,
   ANNOUNCEMENT_TITLE_MAX,
@@ -28,6 +27,7 @@ import {
 } from "@/lib/announcements";
 import { isNationalAdmin, type AdminProfile } from "@/lib/admin/profile";
 import { formatBatchLabel, type Batch, type Parish } from "@/lib/parishes";
+import { deskConfirm, deskError, deskSuccess } from "@/lib/ui/desk-alert";
 import { DeskPagination } from "@/lib/ui/desk-pagination";
 
 const NOTIC_PAGE_SIZE = 8;
@@ -300,7 +300,6 @@ export function AnnouncementsManager({
   parishes,
   batches,
 }: AnnouncementsManagerProps) {
-  const { success, error } = useToast();
   const national = isNationalAdmin(profile);
   const [pageView, setPageView] = useState<PageView>("desk");
   const [listTab, setListTab] = useState<ListTab>("live");
@@ -310,13 +309,6 @@ export function AnnouncementsManager({
   const busy = pending || Boolean(busyLabel);
   const [editing, setEditing] = useState<AdminAnnouncementRecord | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
-  const [pendingConfirm, setPendingConfirm] = useState<
-    | { kind: "delete"; item: AdminAnnouncementRecord }
-    | { kind: "unpublish"; item: AdminAnnouncementRecord }
-    | { kind: "discard" }
-    | { kind: "switchEdit"; item: AdminAnnouncementRecord }
-    | null
-  >(null);
   const [query, setQuery] = useState("");
   const [titleLen, setTitleLen] = useState(0);
   const [bodyLen, setBodyLen] = useState(0);
@@ -454,19 +446,6 @@ export function AnnouncementsManager({
   const defaultComposeAudience = (): AnnouncementAudience =>
     national ? "general" : "students";
 
-  useEffect(() => {
-    if (!pendingConfirm) return;
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape" && !busy) setPendingConfirm(null);
-    };
-    document.addEventListener("keydown", onKey);
-    document.body.style.overflow = "hidden";
-    return () => {
-      document.removeEventListener("keydown", onKey);
-      document.body.style.overflow = "";
-    };
-  }, [pendingConfirm, busy]);
-
   const composeIsDirty = useMemo(() => {
     if (!composing) return false;
     const baselineTitle = editing?.title.length ?? 0;
@@ -518,8 +497,7 @@ export function AnnouncementsManager({
       try {
         const next = await action();
         if (next.ok) {
-          success(next.message, "Notices");
-          setPendingConfirm(null);
+          await deskSuccess({ text: next.message });
           setExpandedId(null);
           if (options?.keepCompose) {
             return;
@@ -536,7 +514,7 @@ export function AnnouncementsManager({
           setListTab("live");
           setPageView("desk");
         } else {
-          error(next.message, "Notices");
+          await deskError({ text: next.message });
         }
       } finally {
         setBusyLabel(null);
@@ -544,9 +522,11 @@ export function AnnouncementsManager({
     });
   }
 
-  function applyCompose(item?: AdminAnnouncementRecord) {
+  async function applyCompose(item?: AdminAnnouncementRecord) {
     if (item && !canManageNotice(profile, item)) {
-      error("You can only edit notices for your own parish.", "Notices");
+      await deskError({
+        text: "You can only edit notices for your own parish.",
+      });
       return;
     }
     setEditing(item ?? null);
@@ -572,31 +552,40 @@ export function AnnouncementsManager({
     setPageView("desk");
   }
 
-  function openCompose(item?: AdminAnnouncementRecord) {
+  async function openCompose(item?: AdminAnnouncementRecord) {
     if (composing && composeIsDirty) {
       if (item) {
-        setPendingConfirm({ kind: "switchEdit", item });
+        const ok = await deskConfirm({
+          title: "Switch notice without saving?",
+          text: "You have unsaved edits. Opening another notice discards them.",
+          confirmLabel: "Discard and switch",
+        });
+        if (!ok) return;
+        await applyCompose(item);
         return;
       }
-      setPendingConfirm({ kind: "discard" });
+      const ok = await deskConfirm({
+        title: "Leave without saving?",
+        text: "You have unsaved edits to this notice. Leaving now discards those changes.",
+        confirmLabel: "Discard and leave",
+      });
+      if (!ok) return;
+      forceCloseCompose();
       return;
     }
-    applyCompose(item);
+    await applyCompose(item);
   }
 
-  function closeCompose() {
+  async function closeCompose() {
     if (composeIsDirty) {
-      setPendingConfirm({ kind: "discard" });
-      return;
+      const ok = await deskConfirm({
+        title: "Leave without saving?",
+        text: "You have unsaved edits to this notice. Leaving now discards those changes.",
+        confirmLabel: "Discard and leave",
+      });
+      if (!ok) return;
     }
-    setEditing(null);
-    setTitleLen(0);
-    setBodyLen(0);
-    setComposeAudience(defaultComposeAudience());
-    setComposeParishId(profile.parish_id ?? "");
-    setComposeBatchId("");
-    setComposeAttachments([]);
-    setComposing(false);
+    forceCloseCompose();
   }
 
   function forceCloseCompose() {
@@ -610,41 +599,43 @@ export function AnnouncementsManager({
     setComposing(false);
   }
 
-  function requestTogglePublish(item: AdminAnnouncementRecord) {
+  async function requestDelete(item: AdminAnnouncementRecord) {
+    if (busy) return;
+    const ok = await deskConfirm({
+      title: "Remove this announcement?",
+      text: `“${item.title}” will be permanently deleted${
+        item.is_published
+          ? ` and removed from ${AUDIENCE_META[audienceOf(item)].surface}`
+          : ""
+      }.`,
+      confirmLabel: "Delete permanently",
+      danger: true,
+    });
+    if (!ok) return;
+    run(() => deleteAnnouncement(item.id), null, {
+      keepCompose: composing,
+      label: "Removing notice…",
+    });
+  }
+
+  async function requestTogglePublish(item: AdminAnnouncementRecord) {
+    if (busy) return;
     if (item.is_published) {
-      setPendingConfirm({ kind: "unpublish", item });
+      const ok = await deskConfirm({
+        title: "Take this notice offline?",
+        text: `“${item.title}” will leave ${AUDIENCE_META[audienceOf(item)].surface} and return to drafts.`,
+        confirmLabel: "Unpublish",
+      });
+      if (!ok) return;
+      run(() => setAnnouncementPublished(item.id, false), null, {
+        keepCompose: composing,
+        label: composing ? "Freeing a slot…" : "Unpublishing…",
+      });
       return;
     }
     run(() => setAnnouncementPublished(item.id, true), null, {
       label: "Publishing…",
     });
-  }
-
-  function confirmPendingAction() {
-    if (!pendingConfirm || busy) return;
-    switch (pendingConfirm.kind) {
-      case "delete":
-        run(() => deleteAnnouncement(pendingConfirm.item.id), null, {
-          keepCompose: composing,
-          label: "Removing notice…",
-        });
-        return;
-      case "unpublish":
-        run(() => setAnnouncementPublished(pendingConfirm.item.id, false), null, {
-          keepCompose: composing,
-          label: composing ? "Freeing a slot…" : "Unpublishing…",
-        });
-        return;
-      case "discard":
-        setPendingConfirm(null);
-        forceCloseCompose();
-        return;
-      case "switchEdit": {
-        const item = pendingConfirm.item;
-        setPendingConfirm(null);
-        applyCompose(item);
-      }
-    }
   }
 
   function nudgeCapacityGate() {
@@ -663,10 +654,7 @@ export function AnnouncementsManager({
 
   return (
     <div className="relative space-y-4" aria-busy={busy}>
-      <DeskLoaderOverlay
-        active={busy && !pendingConfirm}
-        label={busyLabel ?? "Working…"}
-      />
+      <DeskLoaderOverlay active={busy} label={busyLabel ?? "Working…"} />
 
       {!composing ? (
         <>
@@ -773,7 +761,7 @@ export function AnnouncementsManager({
                 <button
                   type="button"
                   disabled={busy}
-                  onClick={() => openCompose()}
+                  onClick={() => void openCompose()}
                   className="inline-flex min-h-[2.5rem] shrink-0 items-center justify-center bg-pine px-4 py-2 text-sm font-medium text-mist disabled:opacity-50"
                 >
                   New notice
@@ -879,11 +867,9 @@ export function AnnouncementsManager({
                       atCapacityFor={atCapacityFor}
                       canManage={(item) => canManageNotice(profile, item)}
                       onExpand={setExpandedId}
-                      onEdit={openCompose}
-                      onToggle={requestTogglePublish}
-                      onDelete={(item) =>
-                        setPendingConfirm({ kind: "delete", item })
-                      }
+                      onEdit={(item) => void openCompose(item)}
+                      onToggle={(item) => void requestTogglePublish(item)}
+                      onDelete={(item) => void requestDelete(item)}
                     />
                     <DeskPagination
                       page={activeListPage}
@@ -1060,7 +1046,7 @@ export function AnnouncementsManager({
           <button
             type="button"
             disabled={busy}
-            onClick={closeCompose}
+            onClick={() => void closeCompose()}
             className="inline-flex min-h-[2.75rem] items-center gap-2 border border-pine/35 bg-white px-4 py-2.5 text-sm font-medium text-pine shadow-[0_1px_0_rgba(20,53,44,0.06)] transition-colors hover:border-pine hover:bg-mist disabled:opacity-50"
           >
             <span aria-hidden className="text-base leading-none">
@@ -1254,13 +1240,9 @@ export function AnnouncementsManager({
                   audience={composeAudience}
                   occupied={occupiedForCompose}
                   pending={busy}
-                  onUnpublish={(item) =>
-                    setPendingConfirm({ kind: "unpublish", item })
-                  }
-                  onEdit={(item) => openCompose(item)}
-                  onDelete={(item) =>
-                    setPendingConfirm({ kind: "delete", item })
-                  }
+                  onUnpublish={(item) => void requestTogglePublish(item)}
+                  onEdit={(item) => void openCompose(item)}
+                  onDelete={(item) => void requestDelete(item)}
                 />
               </div>
             ) : null}
@@ -1440,7 +1422,7 @@ export function AnnouncementsManager({
               <button
                 type="button"
                 disabled={busy}
-                onClick={closeCompose}
+                onClick={() => void closeCompose()}
                 className="border border-pine/25 px-4 py-2.5 text-sm font-medium text-pine transition-colors hover:border-pine disabled:opacity-60"
               >
                 Cancel
@@ -1449,137 +1431,6 @@ export function AnnouncementsManager({
           </form>
         </div>
       )}
-
-      {pendingConfirm ? (
-        <div
-          className="fixed inset-0 z-[90] flex items-end justify-center bg-ink/45 p-4 sm:items-center"
-          role="presentation"
-          onClick={() => !busy && setPendingConfirm(null)}
-        >
-          <div
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="notices-confirm-title"
-            className="relative w-full max-w-md border border-stone bg-mist p-6 text-ink shadow-[0_16px_48px_rgba(20,53,44,0.2)] sm:p-7"
-            onClick={(event) => event.stopPropagation()}
-          >
-            <DeskLoaderOverlay
-              active={busy}
-              label={busyLabel ?? "Working…"}
-            />
-            {(() => {
-              const copy =
-                pendingConfirm.kind === "delete"
-                  ? {
-                      eyebrow: "Delete notice",
-                      title: "Remove this announcement?",
-                      body: (
-                        <>
-                          “{pendingConfirm.item.title}” will be permanently
-                          deleted
-                          {pendingConfirm.item.is_published
-                            ? ` and removed from ${AUDIENCE_META[audienceOf(pendingConfirm.item)].surface}`
-                            : ""}
-                          .
-                        </>
-                      ),
-                      confirmLabel: "Delete permanently",
-                      destructive: true,
-                    }
-                  : pendingConfirm.kind === "unpublish"
-                    ? {
-                        eyebrow: "Unpublish",
-                        title: "Take this notice offline?",
-                        body: (
-                          <>
-                            “{pendingConfirm.item.title}” will leave{" "}
-                            {
-                              AUDIENCE_META[
-                                audienceOf(pendingConfirm.item)
-                              ].surface
-                            }{" "}
-                            and return to drafts.
-                          </>
-                        ),
-                        confirmLabel: "Unpublish",
-                        destructive: false,
-                      }
-                    : pendingConfirm.kind === "switchEdit"
-                      ? {
-                          eyebrow: "Unsaved changes",
-                          title: "Switch notice without saving?",
-                          body: (
-                            <>
-                              You have unsaved edits. Opening another notice
-                              discards them.
-                            </>
-                          ),
-                          confirmLabel: "Discard and switch",
-                          destructive: false,
-                        }
-                      : {
-                          eyebrow: "Unsaved changes",
-                          title: "Leave without saving?",
-                          body: (
-                            <>
-                              You have unsaved edits to this notice. Leaving now
-                              discards those changes.
-                            </>
-                          ),
-                          confirmLabel: "Discard and leave",
-                          destructive: false,
-                        };
-
-              return (
-                <>
-                  <p
-                    className={`text-[0.65rem] font-medium uppercase tracking-[0.16em] ${
-                      copy.destructive ? "text-red-800/80" : "text-celadon"
-                    }`}
-                  >
-                    {copy.eyebrow}
-                  </p>
-                  <h3
-                    id="notices-confirm-title"
-                    className="mt-3 font-display text-2xl tracking-[-0.02em] text-pine"
-                  >
-                    {copy.title}
-                  </h3>
-                  <p className="mt-3 text-sm leading-relaxed text-ink/70">
-                    {copy.body}
-                  </p>
-                  <div className="mt-7 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
-                    <button
-                      type="button"
-                      disabled={busy}
-                      onClick={() => setPendingConfirm(null)}
-                      className="border border-pine/25 px-4 py-2.5 text-sm font-medium text-pine transition-colors hover:border-pine disabled:opacity-60"
-                    >
-                      Cancel
-                    </button>
-                    <button
-                      type="button"
-                      disabled={busy}
-                      onClick={confirmPendingAction}
-                      className={`inline-flex min-h-[2.5rem] min-w-[9rem] items-center justify-center px-4 py-2.5 text-sm font-medium text-mist transition-colors disabled:opacity-60 ${
-                        copy.destructive
-                          ? "bg-[#5c2a2a] hover:bg-red-900"
-                          : "bg-pine hover:bg-celadon"
-                      }`}
-                    >
-                      {busy ? (
-                        <DeskLoader label="Working…" tone="mist" />
-                      ) : (
-                        copy.confirmLabel
-                      )}
-                    </button>
-                  </div>
-                </>
-              );
-            })()}
-          </div>
-        </div>
-      ) : null}
     </div>
   );
 }

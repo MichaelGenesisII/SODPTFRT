@@ -3,9 +3,9 @@
 import { useState, useTransition, type FormEvent } from "react";
 import Link from "next/link";
 import { createSupportTicket } from "@/app/support/actions";
-import { useToast } from "@/components/ui/toast";
 import { contact } from "@/lib/site-nav";
 import { MESSAGE_MAX, SUPPORT_TOPICS } from "@/lib/tickets";
+import { deskError, deskSuccess } from "@/lib/ui/desk-alert";
 
 const fieldClass =
   "w-full border border-stone bg-white/60 px-4 py-3.5 text-base text-ink outline-none transition-[border-color,background-color] duration-300 placeholder:text-ink/35 focus:border-pine focus:bg-mist sm:py-3 sm:text-[0.95rem]";
@@ -27,7 +27,6 @@ export function SupportForm({
   defaultTopic = "General enquiry",
   intakeSource = "public",
 }: SupportFormProps) {
-  const { success, error } = useToast();
   const [pending, startTransition] = useTransition();
   const [topic, setTopic] = useState<(typeof SUPPORT_TOPICS)[number]>(
     defaultTopic,
@@ -55,14 +54,14 @@ export function SupportForm({
           topic: submittedTopic,
           linked: Boolean(result.linked),
         });
-        success(result.message, "Note received");
+        await deskSuccess({ title: "Note received", text: result.message });
         form.reset();
         setTopic(defaultTopic);
         setName(prefill?.name ?? "");
         setEmail(prefill?.email ?? "");
         setMessageLen(0);
       } else {
-        error(result.message, "Could not send");
+        await deskError({ title: "Could not send", text: result.message });
       }
     });
   }

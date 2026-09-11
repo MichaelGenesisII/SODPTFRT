@@ -9,7 +9,7 @@ import {
   type TeacherRegisterRow,
 } from "@/app/teacher/classes/actions";
 import { DeskLoaderOverlay } from "@/components/ui/desk-loader";
-import { useToast } from "@/components/ui/toast";
+import { deskError } from "@/lib/ui/desk-alert";
 import {
   audienceLabel,
   classSessionPhase,
@@ -30,7 +30,6 @@ export function TeacherClassDetailClient({
   initial: TeacherClassDetail;
 }) {
   const router = useRouter();
-  const { success, error } = useToast();
   const [pending, startTransition] = useTransition();
   const [busyLabel, setBusyLabel] = useState<string | null>(null);
   const [detail, setDetail] = useState(initial);
@@ -91,21 +90,18 @@ export function TeacherClassDetailClient({
   function run(
     action: () => Promise<{ ok: boolean; message: string }>,
     label: string,
-    onOk?: () => void,
   ) {
     setBusyLabel(label);
     startTransition(async () => {
       try {
         const result = await action();
         if (result.ok) {
-          success(result.message, "Classes");
-          onOk?.();
           router.refresh();
         } else {
-          error(result.message, "Classes");
+          await deskError({ text: result.message });
         }
       } catch {
-        error("Something went wrong. Please try again.", "Classes");
+        await deskError({ text: "Something went wrong. Please try again." });
       } finally {
         setBusyLabel(null);
       }

@@ -2,7 +2,9 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useState } from "react";
 import { signOutStudent } from "@/app/student/actions";
+import { SignOutConfirmModal } from "@/components/ui/sign-out-confirm";
 import {
   studentDisplayName,
   type StudentProfile,
@@ -22,6 +24,7 @@ export function AlumniShell({
   children: React.ReactNode;
 }) {
   const pathname = usePathname();
+  const [confirmSignOut, setConfirmSignOut] = useState(false);
 
   return (
     <div className="min-h-full bg-mist text-ink">
@@ -58,7 +61,7 @@ export function AlumniShell({
             })}
             <button
               type="button"
-              onClick={() => signOutStudent()}
+              onClick={() => setConfirmSignOut(true)}
               className="px-3 py-2 text-sm text-ink/60 underline"
             >
               Sign out
@@ -67,6 +70,13 @@ export function AlumniShell({
         </div>
       </header>
       <main className="mx-auto max-w-5xl px-4 py-6 sm:px-6">{children}</main>
+
+      <SignOutConfirmModal
+        open={confirmSignOut}
+        onClose={() => setConfirmSignOut(false)}
+        signOut={signOutStudent}
+        portalLabel="the alumni portal"
+      />
     </div>
   );
 }

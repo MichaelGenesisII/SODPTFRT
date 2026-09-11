@@ -126,6 +126,73 @@ export async function sendFinanceWelcomeEmail(
   return sendTemplatedEmail("/api/email/finance-welcome", payload);
 }
 
+export type SendFinancePayoutAuthorisationPayload = {
+  to: string;
+  payeeName: string;
+  amountLabel: string;
+  reason: string;
+  requesterName: string;
+  requestedAtLabel: string;
+  emailCode: string;
+  declineUrl: string;
+  siteUrl: string;
+};
+
+export async function sendFinancePayoutAuthorisationEmail(
+  payload: SendFinancePayoutAuthorisationPayload,
+): Promise<EmailResult> {
+  return sendTemplatedEmail("/api/email/finance-payout-authorisation", payload);
+}
+
+export type SendFinancePayoutFreezeNoticePayload = {
+  to: string;
+  payeeName: string;
+  amountLabel: string;
+  siteUrl: string;
+};
+
+export async function sendFinancePayoutFreezeNoticeEmail(
+  payload: SendFinancePayoutFreezeNoticePayload,
+): Promise<EmailResult> {
+  return sendTemplatedEmail("/api/email/finance-payout-freeze", payload);
+}
+
+export type SendTeacherPaymentDetailsChangedPayload = {
+  to: string;
+  teacherName: string;
+  methodLabel: string;
+  payeeMask: string;
+  portalAccountUrl: string;
+  siteUrl: string;
+};
+
+export async function sendTeacherPaymentDetailsChangedEmail(
+  payload: SendTeacherPaymentDetailsChangedPayload,
+): Promise<EmailResult> {
+  return sendTemplatedEmail(
+    "/api/email/teacher-payment-details-changed",
+    payload,
+  );
+}
+
+export type SendTeacherPayoutPaidPayload = {
+  to: string;
+  teacherName: string;
+  amountLabel: string;
+  periodLabel: string;
+  methodLabel: string;
+  paidAtLabel: string;
+  reason: string;
+  portalPaymentsUrl: string;
+  siteUrl: string;
+};
+
+export async function sendTeacherPayoutPaidEmail(
+  payload: SendTeacherPayoutPaidPayload,
+): Promise<EmailResult> {
+  return sendTemplatedEmail("/api/email/teacher-payout-paid", payload);
+}
+
 export type SendAdminAccessRecoveryEmailPayload = {
   to: string;
   fullName?: string;

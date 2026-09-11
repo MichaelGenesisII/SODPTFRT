@@ -11,8 +11,6 @@ import {
 } from "@/app/admin/classes/actions";
 import { InPortalZoom } from "@/components/classes/in-portal-zoom";
 import { DeskLoader, DeskLoaderOverlay } from "@/components/ui/desk-loader";
-import { DeskConfirmModal } from "@/components/ui/desk-confirm-modal";
-import { useToast } from "@/components/ui/toast";
 import type { ClassAttendanceRollup } from "@/lib/admin/class-roll";
 import { ClassAttendancePanel } from "@/components/admin/class-attendance-panel";
 import {
@@ -27,6 +25,7 @@ import {
   type ZoomClass,
   type ZoomClassAttendance,
 } from "@/lib/classes/types";
+import { deskConfirm, deskError, deskSuccess } from "@/lib/ui/desk-alert";
 import type { InPortalZoomSession } from "@/lib/zoom/types";
 
 const fieldClass =
@@ -83,7 +82,6 @@ export function ClassWorkspace({
     zoom_passcode?: string;
   }) => void;
 }) {
-  const { success, error: toastError } = useToast();
   const [studentQuery, setStudentQuery] = useState("");
   const [hits, setHits] = useState<ClassStudentOption[]>([]);
   const [searching, setSearching] = useState(false);
@@ -92,8 +90,6 @@ export function ClassWorkspace({
   const [hostRefreshAttempted, setHostRefreshAttempted] = useState(false);
   const [hosting, setHosting] = useState(false);
   const [endingLive, setEndingLive] = useState(false);
-  const [confirmEndLive, setConfirmEndLive] = useState(false);
-  const [confirmSync, setConfirmSync] = useState(false);
   const [zoomLive, setZoomLive] = useState(false);
   const [displayMeetingId, setDisplayMeetingId] = useState(
     () => item.zoom_meeting_id,
@@ -132,28 +128,11 @@ export function ClassWorkspace({
   const sessionPhase = classSessionPhase(item, new Date(clock));
   const inSessionWindow = sessionPhase === "in_window";
   const hostingInPortal = Boolean(portalSession);
-  const modalBusy = hosting || endingLive;
 
   useEffect(() => {
     const tick = window.setInterval(() => setClock(Date.now()), 60_000);
     return () => window.clearInterval(tick);
   }, []);
-
-  useEffect(() => {
-    if (!confirmEndLive && !confirmSync) return;
-    function onKey(event: KeyboardEvent) {
-      if (event.key === "Escape" && !modalBusy) {
-        setConfirmEndLive(false);
-        setConfirmSync(false);
-      }
-    }
-    document.addEventListener("keydown", onKey);
-    document.body.style.overflow = "hidden";
-    return () => {
-      document.removeEventListener("keydown", onKey);
-      document.body.style.overflow = "";
-    };
-  }, [confirmEndLive, confirmSync, modalBusy]);
 
   useEffect(() => {
     if (!item.zoom_meeting_id || !zoomReady) {
@@ -208,7 +187,7 @@ export function ClassWorkspace({
     });
     setHosting(false);
     if (!next.ok) {
-      toastError(next.message, "In-portal Zoom");
+      await deskError({ text: next.message });
       return;
     }
     if (next.classZoom) {
@@ -216,12 +195,7 @@ export function ClassWorkspace({
     }
     if (next.meetingRefreshed) {
       setHostRefreshAttempted(true);
-      success(
-        next.classZoom
-          ? `Zoom meeting ID updated to ${next.classZoom.zoom_meeting_id}. Starting host…`
-          : "A fresh Zoom meeting was created for this class. Starting host…",
-        "In-portal Zoom",
-      );
+      // Silent: portal host opening is clear feedback; meeting ID updates in the header.
       onRefresh?.();
     }
     setPortalSession(next.session);
@@ -233,10 +207,9 @@ export function ClassWorkspace({
 
   async function retryHostAfterMissingMeeting() {
     if (hostRefreshAttempted) {
-      toastError(
-        "The meeting exists on Zoom, but the browser SDK still cannot open it. Use Host in Zoom app. On the live site, App B must use Production Client ID/Secret, Meeting SDK turned on, and portal.schoolofdisciples.org on the domain allow list — then redeploy.",
-        "In-portal Zoom",
-      );
+      await deskError({
+        text: "This meeting could not open in the portal. Use Host in Zoom app instead, or try again later.",
+      });
       setPortalSession(null);
       return;
     }
@@ -244,18 +217,37 @@ export function ClassWorkspace({
     await startInPortalHost(true);
   }
 
-  async function endLiveMeetings() {
+  async function requestSyncZoom() {
+    if (pending) return;
+    const ok = await deskConfirm({
+      title: "Sync attendance from Zoom?",
+      text: `The meeting must have fully ended on Zoom first. Students count as present when they stayed for at least ${item.attendance_threshold_percent}% of the class length (${formatDurationMinutes(item.duration_minutes)} scheduled).`,
+      confirmLabel: "Sync now",
+    });
+    if (!ok) return;
+    onSync();
+  }
+
+  async function requestEndLiveMeetings() {
+    if (pending || hosting || endingLive) return;
+    const ok = await deskConfirm({
+      title: "End live Zoom meetings?",
+      text: "This ends meetings that are live right now on the school Zoom host account. Leaving the portal player does not end the meeting. To remove a scheduled class from the Zoom calendar, use Delete on this desk.",
+      confirmLabel: "End meetings",
+      danger: true,
+    });
+    if (!ok) return;
+
     setEndingLive(true);
     setPortalSession(null);
     try {
       const result = await endActiveZoomMeetings({ classId: item.id });
       if (!result.ok) {
-        toastError(result.message, "End Zoom");
+        await deskError({ text: result.message });
         return;
       }
-      success(result.message, "End Zoom");
+      await deskSuccess({ text: result.message });
       setZoomLive(false);
-      setConfirmEndLive(false);
     } finally {
       setEndingLive(false);
     }
@@ -275,7 +267,7 @@ export function ClassWorkspace({
       aria-busy={pending || hosting || endingLive}
     >
       <DeskLoaderOverlay
-        active={(hosting || endingLive) && !confirmEndLive}
+        active={hosting || endingLive}
         label={
           endingLive ? "Ending live Zoom meetings…" : "Opening host session…"
         }
@@ -543,10 +535,9 @@ export function ClassWorkspace({
                       onClick={() => {
                         const joinUrl = joinUrlDraft.trim();
                         if (!/^https?:\/\//i.test(joinUrl)) {
-                          toastError(
-                            "Join link must start with http:// or https://.",
-                            "Classes",
-                          );
+                          void deskError({
+                            text: "Join link must start with http:// or https://.",
+                          });
                           return;
                         }
                         onUpdateJoinLink?.({
@@ -641,7 +632,7 @@ export function ClassWorkspace({
             <button
               type="button"
               disabled={pending || !zoomReady}
-              onClick={() => setConfirmSync(true)}
+              onClick={() => void requestSyncZoom()}
               className="inline-flex min-h-[1.85rem] min-w-[5.5rem] items-center justify-center border border-celadon/40 px-3 py-1.5 text-xs font-medium text-pine disabled:opacity-40"
             >
               {pending && busyLabel?.startsWith("Syncing") ? (
@@ -655,7 +646,7 @@ export function ClassWorkspace({
             <button
               type="button"
               disabled={pending || hosting || endingLive}
-              onClick={() => setConfirmEndLive(true)}
+              onClick={() => void requestEndLiveMeetings()}
               className="inline-flex min-h-[1.85rem] items-center justify-center border border-[#c4a574]/50 px-3 py-1.5 text-xs font-medium text-[#6b4f2a] disabled:opacity-40"
               title="End live meetings on the Zoom host account so Host in portal can start cleanly"
             >
@@ -844,46 +835,6 @@ export function ClassWorkspace({
         )}
       </div>
       )}
-      <DeskConfirmModal
-        open={confirmSync}
-        onClose={() => !pending && setConfirmSync(false)}
-        onConfirm={() => {
-          setConfirmSync(false);
-          onSync();
-        }}
-        eyebrow="Sync Zoom"
-        title="Sync attendance from Zoom?"
-        body={
-          <>
-            The meeting must have fully ended on Zoom first. Students count as
-            present when they stayed for at least{" "}
-            {item.attendance_threshold_percent}% of the class length (
-            {formatDurationMinutes(item.duration_minutes)} scheduled).
-          </>
-        }
-        confirmLabel="Sync now"
-        busy={pending && Boolean(busyLabel?.startsWith("Syncing"))}
-        busyLabel={busyLabel ?? "Syncing Zoom…"}
-      />
-      <DeskConfirmModal
-        open={confirmEndLive}
-        onClose={() => !endingLive && setConfirmEndLive(false)}
-        onConfirm={() => void endLiveMeetings()}
-        eyebrow="End live Zoom"
-        title="End live Zoom meetings?"
-        body={
-          <>
-            This ends meetings that are <strong>live right now</strong> on the
-            school Zoom host account. Leaving the portal player does not end the
-            meeting. To remove a scheduled class from the Zoom calendar, use{" "}
-            <strong>Delete</strong> on this desk.
-          </>
-        }
-        confirmLabel="End meetings"
-        destructive
-        busy={endingLive}
-        busyLabel="Ending live Zoom meetings…"
-      />
     </div>
   );
 }

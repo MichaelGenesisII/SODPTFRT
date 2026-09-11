@@ -5,7 +5,9 @@ import {
   resendApiKey,
 } from "@/lib/email/config";
 import {
+  buildIdempotencyKey,
   buildMailHeaders,
+  buildResendTags,
   resolveReplyTo,
 } from "@/lib/email/deliverability";
 import {
@@ -28,6 +30,20 @@ import {
   buildFinanceWelcomeEmail,
   type FinanceWelcomeInput,
 } from "@/lib/email/templates/finance-welcome";
+import {
+  buildFinancePayoutAuthorisationEmail,
+  buildFinancePayoutFreezeNoticeEmail,
+  type FinancePayoutAuthorisationInput,
+  type FinancePayoutFreezeNoticeInput,
+} from "@/lib/email/templates/finance-payout-authorisation";
+import {
+  buildTeacherPaymentDetailsChangedEmail,
+  type TeacherPaymentDetailsChangedInput,
+} from "@/lib/email/templates/teacher-payment-details-changed";
+import {
+  buildTeacherPayoutPaidEmail,
+  type TeacherPayoutPaidInput,
+} from "@/lib/email/templates/teacher-payout-paid";
 import {
   buildEnrolmentConfirmationEmail,
   type EnrolmentConfirmationInput,
@@ -80,6 +96,10 @@ import {
   buildPortalMigrationEmail,
   type PortalMigrationEmailInput,
 } from "@/lib/email/templates/portal-migration";
+import {
+  buildEnrolServiceRestoredEmail,
+  type EnrolServiceRestoredInput,
+} from "@/lib/email/templates/enrol-service-restored";
 
 export type { TemplateOverride };
 
@@ -121,22 +141,36 @@ async function dispatch(input: {
     reference: input.reference,
     unsubscribeUrl: input.unsubscribeUrl,
   });
+  const tags = buildResendTags({
+    channel: input.channel,
+    reference: input.reference,
+  });
+  const idempotencyKey = buildIdempotencyKey({
+    channel: input.channel,
+    to: input.to,
+    reference: input.reference,
+    subject: input.subject,
+  });
 
   const sendStartedAt = Date.now();
-  const { data, error } = await getResend().emails.send({
-    from,
-    to: input.to,
-    subject: input.subject,
-    html: input.html,
-    text: input.text,
-    replyTo,
-    headers,
-    attachments: input.attachments?.map((item) => ({
-      filename: item.filename,
-      content: item.content,
-      contentType: item.contentType,
-    })),
-  });
+  const { data, error } = await getResend().emails.send(
+    {
+      from,
+      to: input.to,
+      subject: input.subject,
+      html: input.html,
+      text: input.text,
+      replyTo,
+      headers,
+      tags,
+      attachments: input.attachments?.map((item) => ({
+        filename: item.filename,
+        content: item.content,
+        contentType: item.contentType,
+      })),
+    },
+    { idempotencyKey },
+  );
 
   if (error) {
     console.error(
@@ -415,6 +449,54 @@ export async function sendFinanceWelcomeEmail(input: {
   });
 }
 
+export async function sendFinancePayoutAuthorisationEmail(input: {
+  to: string;
+  template: FinancePayoutAuthorisationInput;
+}) {
+  const built = buildFinancePayoutAuthorisationEmail(input.template);
+  return dispatch({
+    to: input.to,
+    ...built,
+    channel: "finance-payout-authorisation",
+  });
+}
+
+export async function sendFinancePayoutFreezeNoticeEmail(input: {
+  to: string;
+  template: FinancePayoutFreezeNoticeInput;
+}) {
+  const built = buildFinancePayoutFreezeNoticeEmail(input.template);
+  return dispatch({
+    to: input.to,
+    ...built,
+    channel: "finance-payout-freeze",
+  });
+}
+
+export async function sendTeacherPaymentDetailsChangedEmail(input: {
+  to: string;
+  template: TeacherPaymentDetailsChangedInput;
+}) {
+  const built = buildTeacherPaymentDetailsChangedEmail(input.template);
+  return dispatch({
+    to: input.to,
+    ...built,
+    channel: "teacher-payment-details-changed",
+  });
+}
+
+export async function sendTeacherPayoutPaidEmail(input: {
+  to: string;
+  template: TeacherPayoutPaidInput;
+}) {
+  const built = buildTeacherPayoutPaidEmail(input.template);
+  return dispatch({
+    to: input.to,
+    ...built,
+    channel: "teacher-payout-paid",
+  });
+}
+
 export async function sendAdminAccessRecoveryEmail(input: {
   to: string;
   template: AdminAccessRecoveryInput;
@@ -499,12 +581,30 @@ export async function sendExamResultCertificateEmail(input: {
 export async function sendPortalMigrationEmail(input: {
   to: string;
   template: PortalMigrationEmailInput;
+  listUnsubscribeUrl?: string;
 }) {
   const built = buildPortalMigrationEmail(input.template);
   return dispatch({
     to: input.to,
     ...built,
-    channel: "enrolment-confirmation",
+    channel: "portal-migration",
+    unsubscribeUrl: input.listUnsubscribeUrl || input.template.unsubscribeUrl,
+  });
+}
+
+export async function sendEnrolServiceRestoredEmail(input: {
+  to: string;
+  template: EnrolServiceRestoredInput;
+  override?: TemplateOverride;
+}) {
+  const built = mergeTemplateOverride(
+    buildEnrolServiceRestoredEmail(input.template),
+    input.override,
+  );
+  return dispatch({
+    to: input.to,
+    ...built,
+    channel: "enrolment",
   });
 }
 

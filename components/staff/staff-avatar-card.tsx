@@ -6,6 +6,7 @@ import { ImageFileField } from "@/components/student/image-file-field";
 import { DeskConfirmModal } from "@/components/ui/desk-confirm-modal";
 import { DeskLoaderOverlay } from "@/components/ui/desk-loader";
 import { useToast } from "@/components/ui/toast";
+import { deskConfirm, deskError, deskSuccess } from "@/lib/ui/desk-alert";
 
 type StaffAvatarCardProps = {
   previewUrl?: string | null;
@@ -13,6 +14,12 @@ type StaffAvatarCardProps = {
   onUpload: (formData: FormData) => Promise<{ ok: boolean; message: string }>;
   onDelete: () => Promise<{ ok: boolean; message: string }>;
   toastTitle?: string;
+  /**
+   * toast — classic toasts
+   * modal — confirm/success/error SweetAlerts
+   * quiet — confirm delete + errors only (picture update is the feedback)
+   */
+  feedback?: "toast" | "modal" | "quiet";
 };
 
 export function StaffAvatarCard({
@@ -21,9 +28,10 @@ export function StaffAvatarCard({
   onUpload,
   onDelete,
   toastTitle = "Profile picture",
+  feedback = "toast",
 }: StaffAvatarCardProps) {
   const router = useRouter();
-  const { success, error } = useToast();
+  const toast = useToast();
   const [pending, startTransition] = useTransition();
   const [busyLabel, setBusyLabel] = useState<string | null>(null);
   const busy = pending || Boolean(busyLabel);
@@ -31,6 +39,18 @@ export function StaffAvatarCard({
   const [replacing, setReplacing] = useState(false);
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
   const [fileKey, setFileKey] = useState(0);
+  const useDesk = feedback === "modal" || feedback === "quiet";
+
+  async function reportSuccess(message: string) {
+    if (feedback === "quiet") return;
+    if (feedback === "modal") await deskSuccess({ text: message });
+    else toast.success(message, toastTitle);
+  }
+
+  async function reportError(message: string) {
+    if (useDesk) await deskError({ text: message });
+    else toast.error(message, toastTitle);
+  }
 
   function onFileChange(file: File | null) {
     if (preview) URL.revokeObjectURL(preview);
@@ -50,10 +70,10 @@ export function StaffAvatarCard({
       try {
         const result = await onUpload(formData);
         if (!result.ok) {
-          error(result.message, toastTitle);
+          await reportError(result.message);
           return;
         }
-        success(result.message, toastTitle);
+        await reportSuccess(result.message);
         form.reset();
         setPreview(null);
         setReplacing(false);
@@ -65,16 +85,32 @@ export function StaffAvatarCard({
     });
   }
 
+  async function requestDelete() {
+    if (useDesk) {
+      const ok = await deskConfirm({
+        title: "Remove profile picture?",
+        text: "Your picture will be removed. The header will use the default image until you upload again.",
+        confirmLabel: "Remove picture",
+        cancelLabel: "Keep picture",
+        danger: true,
+      });
+      if (!ok) return;
+      runDelete();
+      return;
+    }
+    setConfirmDeleteOpen(true);
+  }
+
   function runDelete() {
     setBusyLabel("Removing picture…");
     startTransition(async () => {
       try {
         const result = await onDelete();
         if (!result.ok) {
-          error(result.message, toastTitle);
+          await reportError(result.message);
           return;
         }
-        success(result.message, toastTitle);
+        await reportSuccess(result.message);
         setConfirmDeleteOpen(false);
         router.refresh();
       } finally {
@@ -122,7 +158,7 @@ export function StaffAvatarCard({
             <button
               type="button"
               disabled={busy}
-              onClick={() => setConfirmDeleteOpen(true)}
+              onClick={() => void requestDelete()}
               className="border border-stone px-3 py-2 text-sm font-medium text-ink/60 hover:border-red-800/40 hover:text-red-900 disabled:opacity-60"
             >
               Delete
@@ -130,23 +166,25 @@ export function StaffAvatarCard({
           </div>
         </div>
 
-        <DeskConfirmModal
-          open={confirmDeleteOpen}
-          onClose={() => !busy && setConfirmDeleteOpen(false)}
-          onConfirm={runDelete}
-          eyebrow="Profile picture"
-          title="Remove profile picture?"
-          body={
-            <>
-              Your picture will be removed from storage and the header will use
-              the default image until you upload again.
-            </>
-          }
-          confirmLabel="Remove picture"
-          destructive
-          busy={busy}
-          busyLabel={busyLabel ?? "Removing picture…"}
-        />
+        {feedback === "toast" ? (
+          <DeskConfirmModal
+            open={confirmDeleteOpen}
+            onClose={() => !busy && setConfirmDeleteOpen(false)}
+            onConfirm={runDelete}
+            eyebrow="Profile picture"
+            title="Remove profile picture?"
+            body={
+              <>
+                Your picture will be removed from storage and the header will use
+                the default image until you upload again.
+              </>
+            }
+            confirmLabel="Remove picture"
+            destructive
+            busy={busy}
+            busyLabel={busyLabel ?? "Removing picture…"}
+          />
+        ) : null}
       </div>
     );
   }

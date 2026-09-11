@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState, useTransition } from "react";
+import { useCallback, useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
@@ -19,22 +19,16 @@ import {
   type ClassActionResult,
 } from "@/app/admin/classes/actions";
 import { ClassWorkspace } from "@/components/admin/class-workspace";
-import { DeskLoader, DeskLoaderOverlay } from "@/components/ui/desk-loader";
-import { useToast } from "@/components/ui/toast";
+import { DeskLoaderOverlay } from "@/components/ui/desk-loader";
 import type { ClassAttendanceRollup } from "@/lib/admin/class-roll";
 import type { ZoomClass } from "@/lib/classes/types";
+import { deskConfirm, deskError, deskSuccess } from "@/lib/ui/desk-alert";
 import {
   TEACHING_DELIVERY_STATUSES,
   TEACHING_DELIVERY_STATUS_META,
   teacherDisplayName,
   type TeacherProfile,
 } from "@/lib/teacher/types";
-
-type PendingConfirm =
-  | { kind: "delete" }
-  | { kind: "regen" }
-  | { kind: "markLive" }
-  | { kind: "confirmTaught" };
 
 type ClassDetailWorkspaceProps = {
   initialClass: ZoomClass;
@@ -54,7 +48,6 @@ export function ClassDetailWorkspace({
   meetingSdkReady,
 }: ClassDetailWorkspaceProps) {
   const router = useRouter();
-  const { success, error } = useToast();
   const [pending, startTransition] = useTransition();
   const [busyLabel, setBusyLabel] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
@@ -66,9 +59,6 @@ export function ClassDetailWorkspace({
   const [notifyTeacher, setNotifyTeacher] = useState(true);
   const [deliveryStatus, setDeliveryStatus] = useState(
     initialClass.teaching_delivery_status ?? "scheduled",
-  );
-  const [pendingConfirm, setPendingConfirm] = useState<PendingConfirm | null>(
-    null,
   );
   const busy = pending || Boolean(busyLabel) || refreshing;
 
@@ -91,88 +81,106 @@ export function ClassDetailWorkspace({
     }
   }, [item.id, router]);
 
-  useEffect(() => {
-    if (!pendingConfirm) return;
-    function onKey(event: KeyboardEvent) {
-      if (event.key === "Escape" && !busy) setPendingConfirm(null);
-    }
-    document.addEventListener("keydown", onKey);
-    document.body.style.overflow = "hidden";
-    return () => {
-      document.removeEventListener("keydown", onKey);
-      document.body.style.overflow = "";
-    };
-  }, [pendingConfirm, busy]);
-
   function run(
     action: () => Promise<ClassActionResult>,
     then?: () => void,
     label = "Working…",
-    options?: { skipReload?: boolean },
+    options?: { skipReload?: boolean; quiet?: boolean },
   ) {
     setBusyLabel(label);
     startTransition(async () => {
       try {
         const next = await action();
         if (next.ok) {
+          if (!options?.quiet) {
+            await deskSuccess({ text: next.message });
+          }
           if (options?.skipReload) {
             then?.();
-            setPendingConfirm(null);
-            success(next.message, "Classes");
             return;
           }
-          success(next.message, "Classes");
-          setPendingConfirm(null);
+          then?.();
           await reload();
         } else {
-          error(next.message, "Classes");
+          await deskError({ text: next.message });
         }
       } catch (err) {
         console.error("[class/detail]", err);
-        error("Something went wrong. Please try again.", "Classes");
+        await deskError({ text: "Something went wrong. Please try again." });
       } finally {
         setBusyLabel(null);
       }
     });
   }
 
-  function confirmPendingAction() {
-    if (!pendingConfirm || busy) return;
-    switch (pendingConfirm.kind) {
-      case "delete":
-        run(
-          () => deleteZoomClass(item.id),
-          () => router.replace(backHref),
-          "Removing class…",
-          { skipReload: true },
-        );
-        return;
-      case "regen":
-        run(
-          () => regenerateClassAttendanceCode(item.id),
-          undefined,
-          "Updating check-in code…",
-        );
-        return;
-      case "markLive":
-        run(
-          () => setZoomClassStatus(item.id, "live"),
-          undefined,
-          "Updating status…",
-        );
-        return;
-      case "confirmTaught":
-        run(
-          () =>
-            setClassTeachingDelivery({
-              classId: item.id,
-              status: "delivered",
-            }),
-          () => setDeliveryStatus("delivered"),
-          "Confirming taught…",
-        );
-        return;
+  async function requestDelete() {
+    if (busy) return;
+    const ok = await deskConfirm({
+      title: "Remove this class?",
+      text: `“${item.title}” and its attendance rows will be permanently deleted${
+        item.zoom_meeting_id
+          ? ", including the scheduled Zoom meeting on the host account"
+          : ""
+      }. This cannot be undone.`,
+      confirmLabel: "Delete permanently",
+      danger: true,
+    });
+    if (!ok) return;
+    run(
+      () => deleteZoomClass(item.id),
+      () => router.replace(backHref),
+      "Removing class…",
+      { skipReload: true, quiet: true },
+    );
+  }
+
+  async function requestRegenCode() {
+    if (busy) return;
+    if (item.attendance_code) {
+      const ok = await deskConfirm({
+        title: "Regenerate the check-in code?",
+        text: `The current code ${item.attendance_code} will stop working. Anyone still using it will need the new code.`,
+        confirmLabel: "Regenerate code",
+      });
+      if (!ok) return;
     }
+    run(
+      () => regenerateClassAttendanceCode(item.id),
+      undefined,
+      "Updating check-in code…",
+    );
+  }
+
+  async function requestMarkLive() {
+    if (busy) return;
+    const ok = await deskConfirm({
+      title: "Mark this class live?",
+      text: `“${item.title}” will show as live for staff and students. You can still sync Zoom and take attendance after.`,
+      confirmLabel: "Mark live",
+    });
+    if (!ok) return;
+    run(() => setZoomClassStatus(item.id, "live"), undefined, "Updating status…");
+  }
+
+  async function requestConfirmTaught() {
+    if (busy) return;
+    const ok = await deskConfirm({
+      title: "Confirm this class was taught?",
+      text: `This marks the class as taught for ${
+        item.primary_teacher_name ?? "the assigned teacher"
+      }. It updates their teaching record and counts for Finance.`,
+      confirmLabel: "Confirm taught",
+    });
+    if (!ok) return;
+    run(
+      () =>
+        setClassTeachingDelivery({
+          classId: item.id,
+          status: "delivered",
+        }),
+      () => setDeliveryStatus("delivered"),
+      "Confirming taught…",
+    );
   }
 
   return (
@@ -323,7 +331,7 @@ export function ClassDetailWorkspace({
               (item.teaching_delivery_status ?? "scheduled") === "delivered" ||
               (item.teaching_delivery_status ?? "scheduled") === "covered"
             }
-            onClick={() => setPendingConfirm({ kind: "confirmTaught" })}
+            onClick={() => void requestConfirmTaught()}
             className="bg-pine px-3 py-2 text-sm font-medium text-mist hover:bg-celadon disabled:opacity-50"
           >
             Confirm taught
@@ -371,17 +379,7 @@ export function ClassDetailWorkspace({
           onSync={() =>
             run(() => syncZoomClassAttendance(item.id), undefined, "Syncing Zoom…")
           }
-          onRegenCode={() => {
-            if (item.attendance_code) {
-              setPendingConfirm({ kind: "regen" });
-              return;
-            }
-            run(
-              () => regenerateClassAttendanceCode(item.id),
-              undefined,
-              "Updating check-in code…",
-            );
-          }}
+          onRegenCode={() => void requestRegenCode()}
           onSetCheckinCodeVisible={(show) =>
             run(
               () => setClassCheckinCodeVisibility(item.id, show),
@@ -399,12 +397,13 @@ export function ClassDetailWorkspace({
                 }),
               undefined,
               "Updating attendance…",
+              { quiet: true },
             )
           }
           onSearchStudents={(q) => searchClassStudents(item.id, q)}
           onStatus={(status) => {
             if (status === "live") {
-              setPendingConfirm({ kind: "markLive" });
+              void requestMarkLive();
               return;
             }
             run(
@@ -413,7 +412,7 @@ export function ClassDetailWorkspace({
               "Updating status…",
             );
           }}
-          onDelete={() => setPendingConfirm({ kind: "delete" })}
+          onDelete={() => void requestDelete()}
           onUpdateJoinLink={(details) =>
             run(
               () => updateClassJoinDetails(item.id, details),
@@ -433,141 +432,6 @@ export function ClassDetailWorkspace({
           }
         />
       </section>
-
-      {pendingConfirm ? (
-        <div
-          className="fixed inset-0 z-[90] flex items-end justify-center bg-ink/45 p-4 sm:items-center"
-          role="presentation"
-          onClick={() => !busy && setPendingConfirm(null)}
-        >
-          <div
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="class-confirm-title"
-            className="relative w-full max-w-md border border-stone bg-mist p-6 text-ink shadow-[0_16px_48px_rgba(20,53,44,0.2)] sm:p-7"
-            onClick={(event) => event.stopPropagation()}
-          >
-            <DeskLoaderOverlay
-              active={busy}
-              label={busyLabel ?? "Working…"}
-            />
-            {(() => {
-              const copy =
-                pendingConfirm.kind === "delete"
-                  ? {
-                      eyebrow: "Delete class",
-                      title: "Remove this class?",
-                      body: (
-                        <>
-                          “{item.title}” and its attendance rows will be
-                          permanently deleted
-                          {item.zoom_meeting_id
-                            ? ", including the scheduled Zoom meeting on the host account"
-                            : ""}
-                          . This cannot be undone.
-                        </>
-                      ),
-                      confirmLabel: "Delete permanently",
-                      destructive: true,
-                    }
-                  : pendingConfirm.kind === "regen"
-                    ? {
-                        eyebrow: "Check-in code",
-                        title: "Regenerate the check-in code?",
-                        body: (
-                          <>
-                            The current code{" "}
-                            <span className="font-mono font-medium text-ink">
-                              {item.attendance_code}
-                            </span>{" "}
-                            will stop working. Anyone still using it will need
-                            the new code.
-                          </>
-                        ),
-                        confirmLabel: "Regenerate code",
-                        destructive: false,
-                      }
-                    : pendingConfirm.kind === "confirmTaught"
-                      ? {
-                          eyebrow: "Teaching",
-                          title: "Confirm this class was taught?",
-                          body: (
-                            <>
-                              This marks the class as taught for{" "}
-                              <span className="font-medium text-ink">
-                                {item.primary_teacher_name ?? "the assigned teacher"}
-                              </span>
-                              . It updates their teaching record and counts for
-                              Finance.
-                            </>
-                          ),
-                          confirmLabel: "Confirm taught",
-                          destructive: false,
-                        }
-                      : {
-                          eyebrow: "Class status",
-                          title: "Mark this class live?",
-                          body: (
-                            <>
-                              “{item.title}” will show as live for staff and
-                              students. You can still sync Zoom and take
-                              attendance after.
-                            </>
-                          ),
-                          confirmLabel: "Mark live",
-                          destructive: false,
-                        };
-
-              return (
-                <>
-                  <p
-                    className={`text-[0.65rem] font-medium uppercase tracking-[0.16em] ${
-                      copy.destructive ? "text-red-800/80" : "text-celadon"
-                    }`}
-                  >
-                    {copy.eyebrow}
-                  </p>
-                  <h3
-                    id="class-confirm-title"
-                    className="mt-3 font-display text-2xl tracking-[-0.02em] text-pine"
-                  >
-                    {copy.title}
-                  </h3>
-                  <p className="mt-3 text-sm leading-relaxed text-ink/70">
-                    {copy.body}
-                  </p>
-                  <div className="mt-7 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
-                    <button
-                      type="button"
-                      disabled={busy}
-                      onClick={() => setPendingConfirm(null)}
-                      className="border border-pine/25 px-4 py-2.5 text-sm font-medium text-pine transition-colors hover:border-pine disabled:opacity-60"
-                    >
-                      Cancel
-                    </button>
-                    <button
-                      type="button"
-                      disabled={busy}
-                      onClick={confirmPendingAction}
-                      className={`inline-flex min-h-[2.5rem] min-w-[9rem] items-center justify-center px-4 py-2.5 text-sm font-medium text-mist transition-colors disabled:opacity-60 ${
-                        copy.destructive
-                          ? "bg-[#5c2a2a] hover:bg-red-900"
-                          : "bg-pine hover:bg-celadon"
-                      }`}
-                    >
-                      {busy ? (
-                        <DeskLoader label="Working…" tone="mist" />
-                      ) : (
-                        copy.confirmLabel
-                      )}
-                    </button>
-                  </div>
-                </>
-              );
-            })()}
-          </div>
-        </div>
-      ) : null}
     </div>
   );
 }

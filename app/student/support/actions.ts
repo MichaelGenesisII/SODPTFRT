@@ -314,7 +314,7 @@ export async function replyStudentConversation(
     if (ticket.status === "resolved" || ticket.status === "closed") {
       return {
         ok: false,
-        message: "This conversation is settled. Start a new one if you need help.",
+        message: "This conversation is closed. Reopen it to continue.",
       };
     }
 
@@ -365,6 +365,93 @@ export async function replyStudentConversation(
       return { ok: false, message: "Please sign in again." };
     }
     console.error("replyStudentConversation:", error);
+    return {
+      ok: false,
+      message: publicActionMessage(error),
+    };
+  }
+}
+
+/**
+ * Student-side reopen of a settled thread. Students may reopen only; pausing,
+ * settling and filing stay with the desk.
+ */
+export async function reopenStudentConversation(
+  ticketId: string,
+): Promise<StudentSupportResult> {
+  try {
+    const student = await requireSessionStudent();
+    if (!ticketId) {
+      return { ok: false, message: "Conversation id is required." };
+    }
+
+    const supabase = await createServerSupabaseClient();
+    const { data: ticket } = await supabase
+      .from("support_tickets")
+      .select("id, status, reference, user_id")
+      .eq("id", ticketId)
+      .eq("user_id", student.id)
+      .maybeSingle();
+
+    if (!ticket) {
+      return { ok: false, message: "Conversation not found." };
+    }
+    if (ticket.status !== "resolved" && ticket.status !== "closed") {
+      return { ok: false, message: "This conversation is already open." };
+    }
+
+    // Status changes are desk-owned, so this update runs with elevated rights
+    // and stays pinned to the signed-in student's own ticket.
+    const service = createServiceSupabaseClient();
+    const { error } = await service
+      .from("support_tickets")
+      .update({
+        status: "open",
+        resolved_at: null,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", ticketId)
+      .eq("user_id", student.id);
+
+    if (error) {
+      console.error("reopenStudentConversation:", error.message);
+      return {
+        ok: false,
+        message: publicActionMessage(
+          error.message,
+          "Could not reopen this conversation. Please try again.",
+        ),
+      };
+    }
+
+    // Marker note so the desk sees why the thread came back rather than an
+    // unchanged transcript. Must run after the status flip — student replies
+    // are rejected while a ticket is settled.
+    const { error: noteError } = await supabase
+      .from("support_ticket_notes")
+      .insert({
+        ticket_id: ticketId,
+        author_id: null,
+        student_author_id: student.id,
+        body: "Reopened this conversation.",
+        is_internal: false,
+      });
+
+    if (noteError) {
+      console.error("reopenStudentConversation note:", noteError.message);
+    }
+
+    revalidateStudentSupport();
+    return {
+      ok: true,
+      message: "Conversation reopened. You can continue the chat below.",
+      reference: ticket.reference,
+    };
+  } catch (error) {
+    if (error instanceof Error && error.message === "Unauthorized") {
+      return { ok: false, message: "Please sign in again." };
+    }
+    console.error("reopenStudentConversation:", error);
     return {
       ok: false,
       message: publicActionMessage(error),

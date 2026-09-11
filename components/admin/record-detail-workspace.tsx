@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState, useTransition } from "react";
+import { useCallback, useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
@@ -15,14 +15,9 @@ import {
   type RecordActionResult,
 } from "@/app/admin/records/actions";
 import { RecordScorecard } from "@/components/admin/record-workspace";
-import { DeskLoader, DeskLoaderOverlay } from "@/components/ui/desk-loader";
-import { useToast } from "@/components/ui/toast";
+import { DeskLoaderOverlay } from "@/components/ui/desk-loader";
 import type { RecordBundle } from "@/lib/exams/records";
-
-type PendingConfirm =
-  | { kind: "email"; email: string }
-  | { kind: "deleteSession"; id: string; label: string }
-  | { kind: "deleteEntry"; id: string; label: string };
+import { deskConfirm, deskError, deskSuccess } from "@/lib/ui/desk-alert";
 
 type RecordDetailWorkspaceProps = {
   initialBundle: RecordBundle;
@@ -36,15 +31,16 @@ export function RecordDetailWorkspace({
   backHref,
 }: RecordDetailWorkspaceProps) {
   const router = useRouter();
-  const { success, error } = useToast();
   const [pending, startTransition] = useTransition();
   const [busyLabel, setBusyLabel] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [bundle, setBundle] = useState(initialBundle);
-  const [pendingConfirm, setPendingConfirm] = useState<PendingConfirm | null>(
-    null,
-  );
   const busy = pending || Boolean(busyLabel) || refreshing;
+
+  const studentName =
+    bundle.record.student_name?.trim() ||
+    bundle.record.student_email?.trim() ||
+    "this student";
 
   const reload = useCallback(async () => {
     setRefreshing(true);
@@ -57,118 +53,86 @@ export function RecordDetailWorkspace({
     }
   }, [recordId, router]);
 
-  useEffect(() => {
-    if (!pendingConfirm) return;
-    function onKey(event: KeyboardEvent) {
-      if (event.key === "Escape" && !busy) setPendingConfirm(null);
-    }
-    document.addEventListener("keydown", onKey);
-    document.body.style.overflow = "hidden";
-    return () => {
-      document.removeEventListener("keydown", onKey);
-      document.body.style.overflow = "";
-    };
-  }, [pendingConfirm, busy]);
-
   function run(
     action: () => Promise<RecordActionResult>,
     label: string,
-    options?: { refresh?: boolean },
+    options?: { refresh?: boolean; announce?: boolean },
   ) {
     setBusyLabel(label);
     startTransition(async () => {
       try {
         const next = await action();
         if (next.ok) {
-          success(next.message, "Records");
-          setPendingConfirm(null);
+          if (options?.announce) {
+            await deskSuccess({ text: next.message });
+          }
           if (options?.refresh !== false) {
             await reload();
           }
         } else {
-          error(next.message, "Records");
+          await deskError({ text: next.message });
         }
       } catch (err) {
         console.error("[record/detail]", err);
-        error("Something went wrong. Please try again.", "Records");
+        await deskError({
+          text: "Something went wrong. Please try again.",
+        });
       } finally {
         setBusyLabel(null);
       }
     });
   }
 
-  function confirmPendingAction() {
-    if (!pendingConfirm || busy) return;
-    switch (pendingConfirm.kind) {
-      case "email":
-        run(() => emailStudentScorecard(recordId), "Emailing scorecard…", {
-          refresh: false,
-        });
-        return;
-      case "deleteSession":
-        run(
-          () => deleteAttendanceSession(pendingConfirm.id),
-          "Removing session…",
-        );
-        return;
-      case "deleteEntry":
-        run(() => deleteRecordEntry(pendingConfirm.id), "Removing score…");
+  async function requestEmailScorecard() {
+    if (busy) return;
+    const email = bundle.record.student_email?.trim();
+    if (!email) {
+      await deskError({
+        text: "This student has no email on their profile.",
+      });
+      return;
     }
+    const ok = await deskConfirm({
+      title: "Send the formal scorecard?",
+      text: `Only ${studentName} (${email}) will receive it. Delivery uses the portal email service.`,
+      confirmLabel: "Send email",
+    });
+    if (!ok) return;
+    run(() => emailStudentScorecard(recordId), "Emailing scorecard…", {
+      refresh: false,
+      announce: true,
+    });
   }
 
-  const studentName =
-    bundle.record.student_name?.trim() ||
-    bundle.record.student_email?.trim() ||
-    "this student";
+  async function requestDeleteSession(id: string) {
+    if (busy) return;
+    const session = bundle.sessions.find((s) => s.id === id);
+    const label = session?.label || session?.session_date || "this session";
+    const ok = await deskConfirm({
+      title: "Remove this attendance session?",
+      text: `“${label}” will be deleted from ${studentName}’s scorecard. This cannot be undone.`,
+      confirmLabel: "Remove session",
+      danger: true,
+    });
+    if (!ok) return;
+    run(() => deleteAttendanceSession(id), "Removing session…", {
+      announce: true,
+    });
+  }
 
-  const confirmCopy = (() => {
-    if (!pendingConfirm) return null;
-    switch (pendingConfirm.kind) {
-      case "email":
-        return {
-          eyebrow: "Email scorecard",
-          title: "Send the formal scorecard?",
-          body: (
-            <>
-              Only{" "}
-              <span className="font-medium text-ink">{studentName}</span> (
-              {pendingConfirm.email}) will receive it. Delivery uses the portal
-              email service.
-            </>
-          ),
-          confirmLabel: "Send email",
-          destructive: false,
-        };
-      case "deleteSession":
-        return {
-          eyebrow: "Remove session",
-          title: "Remove this attendance session?",
-          body: (
-            <>
-              “{pendingConfirm.label}” will be deleted from{" "}
-              <span className="font-medium text-ink">{studentName}</span>’s
-              scorecard. This cannot be undone.
-            </>
-          ),
-          confirmLabel: "Remove session",
-          destructive: true,
-        };
-      case "deleteEntry":
-        return {
-          eyebrow: "Remove score",
-          title: "Remove this exam score?",
-          body: (
-            <>
-              “{pendingConfirm.label}” will be deleted from{" "}
-              <span className="font-medium text-ink">{studentName}</span>’s
-              scorecard. This cannot be undone.
-            </>
-          ),
-          confirmLabel: "Remove score",
-          destructive: true,
-        };
-    }
-  })();
+  async function requestDeleteEntry(id: string) {
+    if (busy) return;
+    const entry = bundle.entries.find((e) => e.id === id);
+    const label = entry?.label || "this score";
+    const ok = await deskConfirm({
+      title: "Remove this exam score?",
+      text: `“${label}” will be deleted from ${studentName}’s scorecard. This cannot be undone.`,
+      confirmLabel: "Remove score",
+      danger: true,
+    });
+    if (!ok) return;
+    run(() => deleteRecordEntry(id), "Removing score…", { announce: true });
+  }
 
   return (
     <div className="space-y-3">
@@ -181,7 +145,7 @@ export function RecordDetailWorkspace({
 
       <section className="relative border border-stone bg-mist/30">
         <DeskLoaderOverlay
-          active={busy && !pendingConfirm && !refreshing}
+          active={busy && !refreshing}
           label={busyLabel ?? "Working…"}
         />
         <RecordScorecard
@@ -192,14 +156,7 @@ export function RecordDetailWorkspace({
           backHref={backHref}
           onBusyLabel={setBusyLabel}
           onRefresh={() => void reload()}
-          onEmailScorecard={() => {
-            const email = bundle.record.student_email?.trim();
-            if (!email) {
-              error("This student has no email on their profile.", "Records");
-              return;
-            }
-            setPendingConfirm({ kind: "email", email });
-          }}
+          onEmailScorecard={() => void requestEmailScorecard()}
           onSaveDates={(dates) =>
             run(
               () =>
@@ -220,14 +177,7 @@ export function RecordDetailWorkspace({
               "Updating attendance…",
             )
           }
-          onDeleteSession={(id) => {
-            const session = bundle.sessions.find((s) => s.id === id);
-            setPendingConfirm({
-              kind: "deleteSession",
-              id,
-              label: session?.label || session?.session_date || "this session",
-            });
-          }}
+          onDeleteSession={(id) => void requestDeleteSession(id)}
           onAddEntry={(input) =>
             run(
               () =>
@@ -241,79 +191,9 @@ export function RecordDetailWorkspace({
           onToggleInclude={(id, include) =>
             run(() => setEntryInclude(id, include), "Updating score…")
           }
-          onDeleteEntry={(id) => {
-            const entry = bundle.entries.find((e) => e.id === id);
-            setPendingConfirm({
-              kind: "deleteEntry",
-              id,
-              label: entry?.label || "this score",
-            });
-          }}
+          onDeleteEntry={(id) => void requestDeleteEntry(id)}
         />
       </section>
-
-      {pendingConfirm && confirmCopy ? (
-        <div
-          className="fixed inset-0 z-[90] flex items-end justify-center bg-ink/45 p-4 sm:items-center"
-          role="presentation"
-          onClick={() => !busy && setPendingConfirm(null)}
-        >
-          <div
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="record-confirm-title"
-            className="relative w-full max-w-md border border-stone bg-mist p-6 text-ink shadow-[0_16px_48px_rgba(20,53,44,0.2)] sm:p-7"
-            onClick={(event) => event.stopPropagation()}
-          >
-            <DeskLoaderOverlay
-              active={busy}
-              label={busyLabel ?? "Working…"}
-            />
-            <p
-              className={`text-[0.65rem] font-medium uppercase tracking-[0.16em] ${
-                confirmCopy.destructive ? "text-red-800/80" : "text-celadon"
-              }`}
-            >
-              {confirmCopy.eyebrow}
-            </p>
-            <h3
-              id="record-confirm-title"
-              className="mt-3 font-display text-2xl tracking-[-0.02em] text-pine"
-            >
-              {confirmCopy.title}
-            </h3>
-            <p className="mt-3 text-sm leading-relaxed text-ink/70">
-              {confirmCopy.body}
-            </p>
-            <div className="mt-7 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
-              <button
-                type="button"
-                disabled={busy}
-                onClick={() => setPendingConfirm(null)}
-                className="border border-pine/25 px-4 py-2.5 text-sm font-medium text-pine transition-colors hover:border-pine disabled:opacity-60"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                disabled={busy}
-                onClick={confirmPendingAction}
-                className={`inline-flex min-h-[2.5rem] min-w-[9rem] items-center justify-center px-4 py-2.5 text-sm font-medium text-mist transition-colors disabled:opacity-60 ${
-                  confirmCopy.destructive
-                    ? "bg-[#5c2a2a] hover:bg-red-900"
-                    : "bg-pine hover:bg-celadon"
-                }`}
-              >
-                {busy ? (
-                  <DeskLoader label="Working…" tone="mist" />
-                ) : (
-                  confirmCopy.confirmLabel
-                )}
-              </button>
-            </div>
-          </div>
-        </div>
-      ) : null}
     </div>
   );
 }

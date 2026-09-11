@@ -26,10 +26,10 @@ import {
 } from "@/app/admin/parishes/sync-actions";
 import { ParishesInsight } from "@/components/admin/parishes-insight";
 import { DeskLoader, DeskLoaderOverlay } from "@/components/ui/desk-loader";
-import { useToast } from "@/components/ui/toast";
 import { isNationalAdmin, type AdminProfile } from "@/lib/admin/profile";
 import { formatBatchLabel, type Batch, type Parish } from "@/lib/parishes";
 import { DeskPagination } from "@/lib/ui/desk-pagination";
+import { deskConfirm, deskError, deskSuccess } from "@/lib/ui/desk-alert";
 
 const fieldClass =
   "w-full min-w-0 border border-stone bg-white/70 px-3 py-2 text-sm outline-none focus:border-pine disabled:opacity-50";
@@ -40,15 +40,6 @@ const BATCHES_PAGE_SIZE = 12;
 type PageView = "desk" | "manage" | "insight";
 type ManageFocus = "default" | "create-parish" | "sync" | "batches";
 type ManagePanel = "parish" | "batches" | "add-parish";
-
-type ParishPendingConfirm =
-  | { kind: "retireBatch"; batch: Batch }
-  | { kind: "deleteBatch"; batch: Batch }
-  | { kind: "deleteParish"; parish: Parish; nextParishId: string }
-  | { kind: "openEnrol"; batch: Batch }
-  | { kind: "closeEnrol"; batch: Batch }
-  | { kind: "syncBundled" }
-  | { kind: "syncUpload"; formData: FormData };
 
 type ParishesManagerProps = {
   profile: AdminProfile;
@@ -257,41 +248,25 @@ type SharedProps = ParishesManagerProps & {
 
 function useParishRun(onSelectParishId: (id: string) => void) {
   const router = useRouter();
-  const { success, error } = useToast();
   const [pending, startTransition] = useTransition();
   const [busyLabel, setBusyLabel] = useState<string | null>(null);
-  const [pendingConfirm, setPendingConfirm] =
-    useState<ParishPendingConfirm | null>(null);
   const busy = pending || Boolean(busyLabel);
-
-  useEffect(() => {
-    if (!pendingConfirm) return;
-    function onKey(event: KeyboardEvent) {
-      if (event.key === "Escape" && !busy) setPendingConfirm(null);
-    }
-    document.addEventListener("keydown", onKey);
-    document.body.style.overflow = "hidden";
-    return () => {
-      document.removeEventListener("keydown", onKey);
-      document.body.style.overflow = "";
-    };
-  }, [pendingConfirm, busy]);
 
   function run(
     action: () => Promise<ParishActionResult>,
     label = "Working…",
+    { successAlert = false }: { successAlert?: boolean } = {},
   ) {
     setBusyLabel(label);
     startTransition(async () => {
       try {
         const next = await action();
         if (next.ok) {
-          success(next.message, "Parishes");
-          setPendingConfirm(null);
           if (next.parishId) onSelectParishId(next.parishId);
           router.refresh();
+          if (successAlert) await deskSuccess({ text: next.message });
         } else {
-          error(next.message, "Parishes");
+          await deskError({ text: next.message });
         }
       } finally {
         setBusyLabel(null);
@@ -299,188 +274,105 @@ function useParishRun(onSelectParishId: (id: string) => void) {
     });
   }
 
-  function confirmPendingAction() {
-    if (!pendingConfirm || busy) return;
-    switch (pendingConfirm.kind) {
-      case "retireBatch":
-        run(() => retireBatch(pendingConfirm.batch.id), "Retiring batch…");
-        return;
-      case "deleteBatch":
-        run(() => deleteBatch(pendingConfirm.batch.id), "Deleting batch…");
-        return;
-      case "deleteParish":
-        run(async () => {
-          const result = await deleteParish(pendingConfirm.parish.id);
-          if (result.ok) {
-            onSelectParishId(pendingConfirm.nextParishId);
-          }
-          return result;
-        }, "Deleting parish…");
-        return;
-      case "openEnrol":
-        run(
-          () => setBatchEnrolmentOpen(pendingConfirm.batch.id, true),
-          "Opening enrolment…",
-        );
-        return;
-      case "closeEnrol":
-        run(
-          () => setBatchEnrolmentOpen(pendingConfirm.batch.id, false),
-          "Closing enrolment…",
-        );
-        return;
-      case "syncBundled":
-        run(() => syncParishesFromBundledFile(), "Syncing centres…");
-        return;
-      case "syncUpload":
-        run(
-          () => syncParishesFromUpload(pendingConfirm.formData),
-          "Syncing centres…",
-        );
-    }
+  async function requestRetireBatch(batch: Batch) {
+    if (busy) return;
+    const ok = await deskConfirm({
+      title: `Retire ${formatBatchLabel(batch)}?`,
+      text: "Closes enrolment and hides this batch from the enrol form. Students already enrolled keep portal access.",
+      confirmLabel: "Retire batch",
+    });
+    if (!ok) return;
+    run(() => retireBatch(batch.id), "Retiring batch…", { successAlert: true });
+  }
+
+  async function requestDeleteBatch(batch: Batch) {
+    if (busy) return;
+    const ok = await deskConfirm({
+      title: `Delete ${formatBatchLabel(batch)}?`,
+      text: "Only empty batches can be deleted. This cannot be undone.",
+      confirmLabel: "Delete permanently",
+      danger: true,
+    });
+    if (!ok) return;
+    run(() => deleteBatch(batch.id), "Deleting batch…", { successAlert: true });
+  }
+
+  async function requestDeleteParish(parish: Parish, nextParishId: string) {
+    if (busy) return;
+    const ok = await deskConfirm({
+      title: `Delete ${parish.name}?`,
+      text: "Only empty parishes can be deleted. Batches and desk admins must be cleared first. This cannot be undone.",
+      confirmLabel: "Delete permanently",
+      danger: true,
+    });
+    if (!ok) return;
+    run(
+      async () => {
+        const result = await deleteParish(parish.id);
+        if (result.ok) onSelectParishId(nextParishId);
+        return result;
+      },
+      "Deleting parish…",
+      { successAlert: true },
+    );
+  }
+
+  async function requestSetEnrolment(batch: Batch, open: boolean) {
+    if (busy) return;
+    const ok = await deskConfirm({
+      title: open
+        ? `Open enrolment for ${formatBatchLabel(batch)}?`
+        : `Close enrolment for ${formatBatchLabel(batch)}?`,
+      text: open
+        ? "Applicants will be able to choose this batch on the enrol form while it stays listed and open."
+        : "New applicants will no longer be able to choose this batch. Existing students keep access.",
+      confirmLabel: open ? "Open enrolment" : "Close enrolment",
+    });
+    if (!ok) return;
+    run(
+      () => setBatchEnrolmentOpen(batch.id, open),
+      open ? "Opening enrolment…" : "Closing enrolment…",
+      { successAlert: true },
+    );
+  }
+
+  async function requestSyncBundled() {
+    if (busy) return;
+    const ok = await deskConfirm({
+      title: "Sync from the bundled centres file?",
+      text: "Updates parish listings from the packaged workbook. Existing student seats are not removed.",
+      confirmLabel: "Sync centres",
+    });
+    if (!ok) return;
+    run(() => syncParishesFromBundledFile(), "Syncing centres…", {
+      successAlert: true,
+    });
+  }
+
+  async function requestSyncUpload(formData: FormData) {
+    if (busy) return;
+    const ok = await deskConfirm({
+      title: "Sync from the uploaded file?",
+      text: "Updates parish listings from your spreadsheet. Existing student seats are not removed.",
+      confirmLabel: "Sync centres",
+    });
+    if (!ok) return;
+    run(() => syncParishesFromUpload(formData), "Syncing centres…", {
+      successAlert: true,
+    });
   }
 
   return {
     pending: busy,
     busyLabel,
     run,
-    pendingConfirm,
-    setPendingConfirm,
-    confirmPendingAction,
+    requestRetireBatch,
+    requestDeleteBatch,
+    requestDeleteParish,
+    requestSetEnrolment,
+    requestSyncBundled,
+    requestSyncUpload,
   };
-}
-
-function ParishConfirmDialog({
-  confirm,
-  busy,
-  busyLabel,
-  onCancel,
-  onConfirm,
-}: {
-  confirm: ParishPendingConfirm;
-  busy: boolean;
-  busyLabel: string | null;
-  onCancel: () => void;
-  onConfirm: () => void;
-}) {
-  const copy = (() => {
-    switch (confirm.kind) {
-      case "retireBatch":
-        return {
-          eyebrow: "Retire batch",
-          title: `Retire ${formatBatchLabel(confirm.batch)}?`,
-          body: "Closes enrolment and hides this batch from the enrol form. Students already enrolled keep portal access.",
-          confirmLabel: "Retire batch",
-          destructive: false,
-        };
-      case "deleteBatch":
-        return {
-          eyebrow: "Delete batch",
-          title: `Delete ${formatBatchLabel(confirm.batch)}?`,
-          body: "Only empty batches can be deleted. This cannot be undone.",
-          confirmLabel: "Delete permanently",
-          destructive: true,
-        };
-      case "deleteParish":
-        return {
-          eyebrow: "Delete parish",
-          title: `Delete ${confirm.parish.name}?`,
-          body: "Only empty parishes can be deleted. Batches and desk admins must be cleared first. This cannot be undone.",
-          confirmLabel: "Delete permanently",
-          destructive: true,
-        };
-      case "openEnrol":
-        return {
-          eyebrow: "Open enrolment",
-          title: `Open enrolment for ${formatBatchLabel(confirm.batch)}?`,
-          body: "Applicants will be able to choose this batch on the enrol form while it stays listed and open.",
-          confirmLabel: "Open enrolment",
-          destructive: false,
-        };
-      case "closeEnrol":
-        return {
-          eyebrow: "Close enrolment",
-          title: `Close enrolment for ${formatBatchLabel(confirm.batch)}?`,
-          body: "New applicants will no longer be able to choose this batch. Existing students keep access.",
-          confirmLabel: "Close enrolment",
-          destructive: false,
-        };
-      case "syncBundled":
-        return {
-          eyebrow: "Sync centres",
-          title: "Sync from the bundled centres file?",
-          body: "Updates parish listings from the packaged workbook. Existing student seats are not removed.",
-          confirmLabel: "Sync centres",
-          destructive: false,
-        };
-      case "syncUpload":
-        return {
-          eyebrow: "Sync centres",
-          title: "Sync from the uploaded file?",
-          body: "Updates parish listings from your spreadsheet. Existing student seats are not removed.",
-          confirmLabel: "Sync centres",
-          destructive: false,
-        };
-    }
-  })();
-
-  return (
-    <div
-      className="fixed inset-0 z-[90] flex items-end justify-center bg-ink/45 p-4 sm:items-center"
-      role="presentation"
-      onClick={() => !busy && onCancel()}
-    >
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="parish-confirm-title"
-        className="relative w-full max-w-md border border-stone bg-mist p-6 text-ink shadow-[0_16px_48px_rgba(20,53,44,0.2)] sm:p-7"
-        onClick={(event) => event.stopPropagation()}
-      >
-        <DeskLoaderOverlay active={busy} label={busyLabel ?? "Working…"} />
-        <p
-          className={`text-[0.65rem] font-medium uppercase tracking-[0.16em] ${
-            copy.destructive ? "text-red-800/80" : "text-celadon"
-          }`}
-        >
-          {copy.eyebrow}
-        </p>
-        <h3
-          id="parish-confirm-title"
-          className="mt-3 font-display text-2xl tracking-[-0.02em] text-pine"
-        >
-          {copy.title}
-        </h3>
-        <p className="mt-3 text-sm leading-relaxed text-ink/70">{copy.body}</p>
-        <div className="mt-7 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
-          <button
-            type="button"
-            disabled={busy}
-            onClick={onCancel}
-            className="border border-pine/25 px-4 py-2.5 text-sm font-medium text-pine transition-colors hover:border-pine disabled:opacity-60"
-          >
-            Cancel
-          </button>
-          <button
-            type="button"
-            disabled={busy}
-            onClick={onConfirm}
-            className={`inline-flex min-h-[2.5rem] min-w-[9rem] items-center justify-center px-4 py-2.5 text-sm font-medium text-mist transition-colors disabled:opacity-60 ${
-              copy.destructive
-                ? "bg-[#5c2a2a] hover:bg-red-900"
-                : "bg-pine hover:bg-celadon"
-            }`}
-          >
-            {busy ? (
-              <DeskLoader label="Working…" tone="mist" />
-            ) : (
-              copy.confirmLabel
-            )}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
 }
 
 function ParishesDesk({
@@ -499,10 +391,7 @@ function ParishesDesk({
 }) {
   const {
     pending,
-    busyLabel,
-    pendingConfirm,
-    setPendingConfirm,
-    confirmPendingAction,
+    requestSetEnrolment,
   } = useParishRun(onSelectParishId);
   const [query, setQuery] = useState("");
   const [filterOpenOnly, setFilterOpenOnly] = useState(false);
@@ -847,12 +736,7 @@ function ParishesDesk({
                           : "Open enrolment"
                       }
                       onClick={() =>
-                        setPendingConfirm({
-                          kind: batch.enrolment_open
-                            ? "closeEnrol"
-                            : "openEnrol",
-                          batch,
-                        })
+                        void requestSetEnrolment(batch, !batch.enrolment_open)
                       }
                       className={`flex h-8 w-8 items-center justify-center border transition disabled:opacity-50 md:justify-self-end ${
                         batch.enrolment_open
@@ -904,16 +788,6 @@ function ParishesDesk({
           )}
         </section>
       </div>
-
-      {pendingConfirm ? (
-        <ParishConfirmDialog
-          confirm={pendingConfirm}
-          busy={pending}
-          busyLabel={busyLabel}
-          onCancel={() => setPendingConfirm(null)}
-          onConfirm={confirmPendingAction}
-        />
-      ) : null}
     </div>
   );
 }
@@ -930,7 +804,15 @@ function ParishesManage({
   initialFocus: ManageFocus;
   onFocusHandled: () => void;
 }) {
-  const { pending, busyLabel, run, pendingConfirm, setPendingConfirm, confirmPendingAction } =
+  const {
+    pending,
+    run,
+    requestRetireBatch,
+    requestDeleteBatch,
+    requestDeleteParish,
+    requestSyncBundled,
+    requestSyncUpload,
+  } =
     useParishRun(onSelectParishId);
   const [query, setQuery] = useState("");
   const [panel, setPanel] = useState<ManagePanel>("batches");
@@ -1029,7 +911,7 @@ function ParishesManage({
               onSubmit={(e) => {
                 e.preventDefault();
                 const fd = new FormData(e.currentTarget);
-                setPendingConfirm({ kind: "syncUpload", formData: fd });
+                void requestSyncUpload(fd);
               }}
               className="flex flex-wrap items-end gap-2"
             >
@@ -1055,7 +937,7 @@ function ParishesManage({
             <button
               type="button"
               disabled={pending}
-              onClick={() => setPendingConfirm({ kind: "syncBundled" })}
+              onClick={() => void requestSyncBundled()}
               className="inline-flex min-h-[2.75rem] items-center justify-center border border-stone px-4 py-2.5 text-sm font-medium text-pine hover:border-pine disabled:opacity-50"
             >
               Sync bundled file
@@ -1425,10 +1307,7 @@ function ParishesManage({
                                       type="button"
                                       disabled={pending}
                                       onClick={() =>
-                                        setPendingConfirm({
-                                          kind: "retireBatch",
-                                          batch,
-                                        })
+                                        void requestRetireBatch(batch)
                                       }
                                       className="border border-pine/30 px-4 py-2 text-sm font-medium text-pine disabled:opacity-60"
                                     >
@@ -1438,12 +1317,9 @@ function ParishesManage({
                                   <button
                                     type="button"
                                     disabled={pending}
-                                    onClick={() =>
-                                      setPendingConfirm({
-                                        kind: "deleteBatch",
-                                        batch,
-                                      })
-                                    }
+                                      onClick={() =>
+                                        void requestDeleteBatch(batch)
+                                      }
                                     className="border border-red-800/25 px-4 py-2 text-sm text-red-900 disabled:opacity-60"
                                   >
                                     Delete
@@ -1521,14 +1397,11 @@ function ParishesManage({
                           type="button"
                           disabled={pending}
                           onClick={() =>
-                            setPendingConfirm({
-                              kind: "deleteParish",
-                              parish: selectedParish,
-                              nextParishId:
-                                parishes.find(
-                                  (p) => p.id !== selectedParish.id,
-                                )?.id ?? "",
-                            })
+                            void requestDeleteParish(
+                              selectedParish,
+                              parishes.find((p) => p.id !== selectedParish.id)
+                                ?.id ?? "",
+                            )
                           }
                           className="border border-red-800/30 px-4 py-2.5 text-sm text-red-900 disabled:opacity-60"
                         >
@@ -1566,16 +1439,6 @@ function ParishesManage({
           )}
         </div>
       </div>
-
-      {pendingConfirm ? (
-        <ParishConfirmDialog
-          confirm={pendingConfirm}
-          busy={pending}
-          busyLabel={busyLabel}
-          onCancel={() => setPendingConfirm(null)}
-          onConfirm={confirmPendingAction}
-        />
-      ) : null}
     </div>
   );
 }

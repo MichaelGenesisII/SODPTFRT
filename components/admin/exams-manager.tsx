@@ -19,7 +19,6 @@ import { ExamUpload } from "@/components/admin/exam-upload";
 import { ExamMetaForm } from "@/components/admin/exam-workspace";
 import type { EvaluationAttemptRow } from "@/app/admin/evaluation/actions";
 import { DeskLoaderOverlay } from "@/components/ui/desk-loader";
-import { useToast } from "@/components/ui/toast";
 import { isNationalAdmin, type AdminProfile } from "@/lib/admin/profile";
 import { type Exam } from "@/lib/exams/types";
 import { type Batch, type Parish } from "@/lib/parishes";
@@ -27,6 +26,7 @@ import {
   FULL_EXAM_PACKS,
   downloadTemplatePack,
 } from "@/lib/exams/templates";
+import { deskError } from "@/lib/ui/desk-alert";
 import { DeskPagination } from "@/lib/ui/desk-pagination";
 
 const PAGE_SIZE = 8;
@@ -53,7 +53,6 @@ export function ExamsManager({
   initialTab = "compose",
 }: Props) {
   const router = useRouter();
-  const { success, error } = useToast();
   const [pending, startTransition] = useTransition();
   const [busyLabel, setBusyLabel] = useState<string | null>(null);
   const busy = pending || Boolean(busyLabel);
@@ -113,7 +112,6 @@ export function ExamsManager({
       try {
         const next = await action();
         if (next.ok) {
-          success(next.message, "Exams");
           then?.();
           router.refresh();
           if (next.examId) {
@@ -121,7 +119,7 @@ export function ExamsManager({
             router.push(examDetailHref(next.examId));
           }
         } else {
-          error(next.message, "Exams");
+          await deskError({ text: next.message });
         }
       } finally {
         setBusyLabel(null);

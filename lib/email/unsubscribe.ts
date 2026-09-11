@@ -82,3 +82,20 @@ export function campaignUnsubscribeOneClickUrl(email: string): string {
   const token = createCampaignUnsubscribeToken(email);
   return `${portalBaseUrl()}/api/email/unsubscribe?t=${encodeURIComponent(token)}`;
 }
+
+/**
+ * Both unsubscribe URLs against an explicit origin. Scripts run with a local
+ * NEXT_PUBLIC_APP_URL, so they must pass the production origin themselves
+ * rather than inherit it from the environment.
+ */
+export function unsubscribeUrlsForOrigin(
+  email: string,
+  origin: string,
+): { footerUrl: string; oneClickUrl: string } {
+  const base = origin.replace(/\/$/, "");
+  const token = encodeURIComponent(createCampaignUnsubscribeToken(email));
+  return {
+    footerUrl: `${base}/unsubscribe?t=${token}`,
+    oneClickUrl: `${base}/api/email/unsubscribe?t=${token}`,
+  };
+}

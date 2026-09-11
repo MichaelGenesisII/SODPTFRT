@@ -1,7 +1,6 @@
 "use client";
 
 import {
-  useEffect,
   useState,
   useTransition,
   type FormEvent,
@@ -12,16 +11,12 @@ import { useRouter } from "next/navigation";
 import { assignAlumniEmail } from "@/app/admin/alumni/actions";
 import { upgradeAlumniToStudent } from "@/app/admin/students/actions";
 import { DeskLoader, DeskLoaderOverlay } from "@/components/ui/desk-loader";
-import { useToast } from "@/components/ui/toast";
 import type { AlumniLegacyPerson } from "@/lib/alumni/types";
 import { formatGbp } from "@/lib/payments/fees";
+import { deskConfirm, deskError, deskSuccess } from "@/lib/ui/desk-alert";
 
 const fieldClass =
   "w-full min-w-0 border border-stone bg-white/70 px-3 py-2 text-sm outline-none focus:border-pine disabled:opacity-50";
-
-type PendingConfirm =
-  | { kind: "assignEmail"; email: string; sendMail: boolean }
-  | { kind: "upgrade"; userId: string };
 
 function formatAlumniDob(value: string | null | undefined): string | null {
   if (!value) return null;
@@ -67,32 +62,15 @@ export function AlumniDetailWorkspace({
   backHref?: string;
 }) {
   const router = useRouter();
-  const { success, error } = useToast();
   const [pending, startTransition] = useTransition();
   const [busyLabel, setBusyLabel] = useState<string | null>(null);
   const busy = pending || Boolean(busyLabel);
   const [emailDraft, setEmailDraft] = useState(person.email ?? "");
   const [sendMail, setSendMail] = useState(true);
-  const [pendingConfirm, setPendingConfirm] = useState<PendingConfirm | null>(
-    null,
-  );
 
   const avg = examAverage(person);
   const attendance = sessionsPresent(person);
   const displayName = person.display_name?.trim() || "this alumnus";
-
-  useEffect(() => {
-    if (!pendingConfirm) return;
-    function onKey(event: KeyboardEvent) {
-      if (event.key === "Escape" && !busy) setPendingConfirm(null);
-    }
-    document.addEventListener("keydown", onKey);
-    document.body.style.overflow = "hidden";
-    return () => {
-      document.removeEventListener("keydown", onKey);
-      document.body.style.overflow = "";
-    };
-  }, [pendingConfirm, busy]);
 
   function run(
     action: () => Promise<{ ok: boolean; message: string }>,
@@ -104,11 +82,10 @@ export function AlumniDetailWorkspace({
       try {
         const result = await action();
         if (result.ok) {
-          success(result.message);
-          setPendingConfirm(null);
           onOk?.();
+          await deskSuccess({ text: result.message });
         } else {
-          error(result.message);
+          await deskError({ text: result.message });
         }
       } finally {
         setBusyLabel(null);
@@ -116,67 +93,49 @@ export function AlumniDetailWorkspace({
     });
   }
 
-  function confirmPendingAction() {
-    if (!pendingConfirm || busy) return;
-    if (pendingConfirm.kind === "upgrade") {
-      run(
-        () => upgradeAlumniToStudent(pendingConfirm.userId),
-        "Upgrading to student…",
-        () => router.refresh(),
-      );
-      return;
-    }
+  async function requestUpgrade(userId: string) {
+    if (busy) return;
+    const ok = await deskConfirm({
+      title: "Upgrade to the student portal?",
+      text: `${displayName} will move from alumni login to a full student seat.`,
+      confirmLabel: "Upgrade to student",
+    });
+    if (!ok) return;
+    run(
+      () => upgradeAlumniToStudent(userId),
+      "Upgrading to student…",
+      () => router.refresh(),
+    );
+  }
+
+  async function requestAssignEmail(email: string, sendAccessEmail: boolean) {
+    if (busy) return;
+    const ok = await deskConfirm({
+      title: "Open alumni portal access?",
+      text: sendAccessEmail
+        ? `Creates portal access for ${displayName} at ${email}. Temporary access details will be emailed.`
+        : `Creates portal access for ${displayName} at ${email}. No access email will be sent.`,
+      confirmLabel: sendAccessEmail
+        ? "Save & email access"
+        : "Save & open portal",
+    });
+    if (!ok) return;
     run(
       () =>
         assignAlumniEmail({
           legacyId: person.id,
-          email: pendingConfirm.email,
-          sendAccessEmail: pendingConfirm.sendMail,
+          email,
+          sendAccessEmail,
         }),
       "Assigning email…",
       () => router.refresh(),
     );
   }
 
-  const confirmCopy =
-    pendingConfirm?.kind === "upgrade"
-      ? {
-          eyebrow: "Upgrade seat",
-          title: "Upgrade to the student portal?",
-          body: (
-            <>
-              <span className="font-medium text-ink">{displayName}</span> will
-              move from alumni login to a full student seat.
-            </>
-          ),
-          confirmLabel: "Upgrade to student",
-        }
-      : pendingConfirm?.kind === "assignEmail"
-        ? {
-            eyebrow: "Portal access",
-            title: "Open alumni portal access?",
-            body: (
-              <>
-                Creates portal access for{" "}
-                <span className="font-medium text-ink">{displayName}</span> at{" "}
-                <span className="font-medium text-ink">
-                  {pendingConfirm.email}
-                </span>
-                {pendingConfirm.sendMail
-                  ? ". Temporary access details will be emailed."
-                  : ". No access email will be sent."}
-              </>
-            ),
-            confirmLabel: pendingConfirm.sendMail
-              ? "Save & email access"
-              : "Save & open portal",
-          }
-        : null;
-
   return (
     <div className="relative" aria-busy={busy}>
       <DeskLoaderOverlay
-        active={busy && !pendingConfirm}
+        active={busy}
         label={busyLabel ?? "Working…"}
       />
 
@@ -378,10 +337,7 @@ export function AlumniDetailWorkspace({
                     type="button"
                     disabled={busy}
                     onClick={() =>
-                      setPendingConfirm({
-                        kind: "upgrade",
-                        userId: person.activated_user_id!,
-                      })
+                      void requestUpgrade(person.activated_user_id!)
                     }
                     className="inline-flex min-h-[2.5rem] w-full items-center justify-center border border-pine/30 px-4 py-2.5 text-sm font-medium text-pine hover:border-pine disabled:opacity-50"
                   >
@@ -399,11 +355,7 @@ export function AlumniDetailWorkspace({
                     e.preventDefault();
                     const email = emailDraft.trim();
                     if (!email) return;
-                    setPendingConfirm({
-                      kind: "assignEmail",
-                      email,
-                      sendMail,
-                    });
+                    void requestAssignEmail(email, sendMail);
                   }}
                 >
                   <label className="block text-sm">
@@ -448,61 +400,6 @@ export function AlumniDetailWorkspace({
           </div>
         </div>
       </div>
-
-      {pendingConfirm && confirmCopy ? (
-        <div
-          className="fixed inset-0 z-[90] flex items-end justify-center bg-ink/45 p-4 sm:items-center"
-          role="presentation"
-          onClick={() => !busy && setPendingConfirm(null)}
-        >
-          <div
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="alumni-confirm-title"
-            className="relative w-full max-w-md border border-stone bg-mist p-6 text-ink shadow-[0_16px_48px_rgba(20,53,44,0.2)] sm:p-7"
-            onClick={(event) => event.stopPropagation()}
-          >
-            <DeskLoaderOverlay
-              active={busy}
-              label={busyLabel ?? "Working…"}
-            />
-            <p className="text-[0.65rem] font-medium uppercase tracking-[0.16em] text-celadon">
-              {confirmCopy.eyebrow}
-            </p>
-            <h3
-              id="alumni-confirm-title"
-              className="mt-3 font-display text-2xl tracking-[-0.02em] text-pine"
-            >
-              {confirmCopy.title}
-            </h3>
-            <p className="mt-3 text-sm leading-relaxed text-ink/70">
-              {confirmCopy.body}
-            </p>
-            <div className="mt-7 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
-              <button
-                type="button"
-                disabled={busy}
-                onClick={() => setPendingConfirm(null)}
-                className="border border-pine/25 px-4 py-2.5 text-sm font-medium text-pine transition-colors hover:border-pine disabled:opacity-60"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                disabled={busy}
-                onClick={confirmPendingAction}
-                className="inline-flex min-h-[2.5rem] min-w-[9rem] items-center justify-center bg-pine px-4 py-2.5 text-sm font-medium text-mist transition-colors hover:bg-celadon disabled:opacity-60"
-              >
-                {busy ? (
-                  <DeskLoader label="Working…" tone="mist" />
-                ) : (
-                  confirmCopy.confirmLabel
-                )}
-              </button>
-            </div>
-          </div>
-        </div>
-      ) : null}
     </div>
   );
 }

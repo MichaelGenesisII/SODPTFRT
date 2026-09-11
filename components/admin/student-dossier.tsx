@@ -102,7 +102,7 @@ type Props = {
   onBack?: () => void;
   onRun: (
     action: () => Promise<StudentActionResult>,
-    options?: { clearPassword?: boolean; label?: string },
+    options?: { clearPassword?: boolean; label?: string; quiet?: boolean },
   ) => void;
   onRequestConfirm: (confirm: StudentPendingConfirm) => void;
   onCopyPassword: (value: string) => void;
@@ -636,7 +636,7 @@ function PathPane({
   busyLabel: string | null;
   onRun: (
     action: () => Promise<StudentActionResult>,
-    options?: { clearPassword?: boolean; label?: string },
+    options?: { clearPassword?: boolean; label?: string; quiet?: boolean },
   ) => void;
   onUnlocked: () => void;
 }) {
@@ -722,7 +722,7 @@ function PathPane({
                       if (result.ok) onUnlocked();
                       return result;
                     },
-                    { label: `Unlocking month ${n}…` },
+                    { label: `Unlocking month ${n}…`, quiet: true },
                   )
                 }
                 className={`min-w-[2.5rem] border px-2 py-1.5 text-xs font-medium disabled:opacity-50 ${

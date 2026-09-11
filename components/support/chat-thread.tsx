@@ -347,7 +347,7 @@ export function SupportChatComposer({
   maxLength: number;
   placeholder: string;
   submitLabel?: string;
-  settledHint?: string;
+  settledHint?: ReactNode;
   enableEmojiPicker?: boolean;
   /** When true, Enter sends (Shift+Enter still inserts a new line). */
   enterToSend?: boolean;
@@ -357,7 +357,9 @@ export function SupportChatComposer({
 
   if (disabled && settledHint) {
     return (
-      <div className="px-4 py-4 text-center text-sm text-ink/55">{settledHint}</div>
+      <div className="border-t border-stone bg-mist/60 px-4 py-4 text-center text-sm text-ink/60">
+        {settledHint}
+      </div>
     );
   }
 

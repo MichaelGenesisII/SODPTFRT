@@ -6,7 +6,7 @@ import {
   uploadDeskAttachment,
 } from "@/app/admin/desk-attachments/actions";
 import { DeskLoaderOverlay } from "@/components/ui/desk-loader";
-import { useToast } from "@/components/ui/toast";
+import { deskError } from "@/lib/ui/desk-alert";
 import {
   formatAttachmentSize,
   validateDeskAttachmentFile,
@@ -48,7 +48,6 @@ export function DeskAttachmentPicker({
   enableAccessMode = false,
   maxFiles,
 }: DeskAttachmentPickerProps) {
-  const { success, error } = useToast();
   const [pending, startTransition] = useTransition();
   const [busyLabel, setBusyLabel] = useState<string | null>(null);
   const [dragOver, setDragOver] = useState(false);
@@ -66,13 +65,15 @@ export function DeskAttachmentPicker({
         let next = value;
         for (const file of list) {
           if (maxFiles != null && next.length >= maxFiles) {
-            error(`You can attach at most ${maxFiles} files.`);
+            await deskError({
+              text: `You can attach at most ${maxFiles} files.`,
+            });
             break;
           }
 
           const invalid = validateDeskAttachmentFile(file);
           if (invalid) {
-            error(`${file.name}: ${invalid}`);
+            await deskError({ text: `${file.name}: ${invalid}` });
             continue;
           }
 
@@ -91,9 +92,8 @@ export function DeskAttachmentPicker({
               },
             ];
             onChange(next);
-            success(`${file.name} attached.`);
           } else {
-            error(result.message);
+            await deskError({ text: result.message });
           }
         }
       } finally {
@@ -111,10 +111,8 @@ export function DeskAttachmentPicker({
         const result = await deleteDeskAttachment(id);
         if (!result.ok) {
           onChange(previous);
-          error(result.message);
-          return;
+          await deskError({ text: result.message });
         }
-        success("Attachment removed.");
       } finally {
         setBusyLabel(null);
       }

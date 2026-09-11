@@ -16,17 +16,11 @@ import {
 import { GalleryInsight } from "@/components/admin/gallery-insight";
 import { useRefreshOnVisible } from "@/components/student/use-refresh-on-visible";
 import { DeskLoader, DeskLoaderOverlay } from "@/components/ui/desk-loader";
-import { useToast } from "@/components/ui/toast";
 import type { GraduationEligibility } from "@/lib/graduation/eligibility";
+import { deskConfirm, deskError, deskSuccess } from "@/lib/ui/desk-alert";
 import { DeskPagination } from "@/lib/ui/desk-pagination";
 
 type PageView = "desk" | "insight";
-
-type PendingConfirm =
-  | { kind: "flag"; userId: string; name: string; note: string }
-  | { kind: "takeDown"; userId: string; name: string; note: string }
-  | { kind: "restore"; userId: string; name: string }
-  | { kind: "delete"; userId: string; name: string; note: string };
 
 type Props = {
   items: AdminGalleryItem[];
@@ -81,11 +75,7 @@ export function AdminGalleryManager({
   const [eligibilityLoading, setEligibilityLoading] = useState(false);
   const [pending, startTransition] = useTransition();
   const [busyLabel, setBusyLabel] = useState<string | null>(null);
-  const [pendingConfirm, setPendingConfirm] = useState<PendingConfirm | null>(
-    null,
-  );
   const busy = pending || Boolean(busyLabel);
-  const { success, error } = useToast();
   const router = useRouter();
 
   useEffect(() => {
@@ -95,19 +85,6 @@ export function AdminGalleryManager({
   useEffect(() => {
     setQuery(search);
   }, [search]);
-
-  useEffect(() => {
-    if (!pendingConfirm) return;
-    function onKey(event: KeyboardEvent) {
-      if (event.key === "Escape" && !busy) setPendingConfirm(null);
-    }
-    document.addEventListener("keydown", onKey);
-    document.body.style.overflow = "hidden";
-    return () => {
-      document.removeEventListener("keydown", onKey);
-      document.body.style.overflow = "";
-    };
-  }, [pendingConfirm, busy]);
 
   const openItem = items.find((item) => item.userId === openId) ?? null;
 
@@ -154,153 +131,81 @@ export function AdminGalleryManager({
       try {
         const result = await action();
         if (!result.ok) {
-          error(result.message, "Gallery");
+          await deskError({ text: result.message });
           return;
         }
-        success(result.message, "Gallery");
-        setPendingConfirm(null);
+        await deskSuccess({ text: result.message });
         if (clearNote) setNote("");
         setOpenId(null);
         router.refresh();
       } catch (err) {
         console.error("[gallery/ui]", err);
-        error("Something went wrong. Please try again.", "Gallery");
+        await deskError({
+          text: "Something went wrong. Please try again.",
+        });
       } finally {
         setBusyLabel(null);
       }
     });
   }
 
-  function confirmPendingAction() {
-    if (!pendingConfirm || busy) return;
-    switch (pendingConfirm.kind) {
-      case "flag":
-        run(
-          () =>
-            flagGallerySelfie(pendingConfirm.userId, pendingConfirm.note),
-          "Flagging portrait…",
-        );
-        return;
-      case "takeDown":
-        run(
-          () =>
-            takeDownGallerySelfie(
-              pendingConfirm.userId,
-              pendingConfirm.note,
-            ),
-          "Taking down…",
-        );
-        return;
-      case "restore":
-        run(
-          () => restoreGallerySelfie(pendingConfirm.userId),
-          "Restoring…",
-          false,
-        );
-        return;
-      case "delete":
-        run(
-          () =>
-            deleteGallerySelfie(pendingConfirm.userId, pendingConfirm.note),
-          "Deleting…",
-        );
-    }
+  async function requestFlag(item: AdminGalleryItem) {
+    if (busy) return;
+    const reason = note.trim();
+    const ok = await deskConfirm({
+      title: "Flag this portrait?",
+      text: reason
+        ? `${item.displayName}’s portrait will be hidden from classmates while you investigate. Note: ${reason}`
+        : `${item.displayName}’s portrait will be hidden from classmates while you investigate.`,
+      confirmLabel: "Flag portrait",
+    });
+    if (!ok) return;
+    run(() => flagGallerySelfie(item.userId, note), "Flagging portrait…");
   }
 
-  const confirmCopy = (() => {
-    if (!pendingConfirm) return null;
-    switch (pendingConfirm.kind) {
-      case "flag":
-        return {
-          eyebrow: "Flag portrait",
-          title: "Flag this portrait?",
-          body: (
-            <>
-              <span className="font-medium text-ink">{pendingConfirm.name}</span>
-              ’s portrait will be hidden from classmates while you investigate.
-              {pendingConfirm.note.trim() ? (
-                <>
-                  {" "}
-                  Note:{" "}
-                  <span className="font-medium text-ink">
-                    {pendingConfirm.note.trim()}
-                  </span>
-                </>
-              ) : null}
-            </>
-          ),
-          confirmLabel: "Flag portrait",
-          destructive: false,
-        };
-      case "takeDown":
-        return {
-          eyebrow: "Take down",
-          title: "Take this portrait down?",
-          body: (
-            <>
-              <span className="font-medium text-ink">{pendingConfirm.name}</span>
-              ’s portrait leaves the gallery. They can upload again afterward.
-              {pendingConfirm.note.trim() ? (
-                <>
-                  {" "}
-                  Note:{" "}
-                  <span className="font-medium text-ink">
-                    {pendingConfirm.note.trim()}
-                  </span>
-                </>
-              ) : null}
-            </>
-          ),
-          confirmLabel: "Take down",
-          destructive: false,
-        };
-      case "restore":
-        return {
-          eyebrow: "Restore portrait",
-          title: "Restore this portrait?",
-          body: (
-            <>
-              <span className="font-medium text-ink">{pendingConfirm.name}</span>
-              ’s portrait returns to the visible gallery. Any moderation note on
-              file will be cleared.
-            </>
-          ),
-          confirmLabel: "Restore",
-          destructive: false,
-        };
-      case "delete":
-        return {
-          eyebrow: "Delete portrait",
-          title: "Delete this portrait permanently?",
-          body: (
-            <>
-              Removes{" "}
-              <span className="font-medium text-ink">{pendingConfirm.name}</span>
-              ’s graduation selfie from storage. This cannot be undone — they
-              would need to upload again if allowed.
-              {pendingConfirm.note.trim() ? (
-                <>
-                  {" "}
-                  Note:{" "}
-                  <span className="font-medium text-ink">
-                    {pendingConfirm.note.trim()}
-                  </span>
-                </>
-              ) : null}
-            </>
-          ),
-          confirmLabel: "Delete permanently",
-          destructive: true,
-        };
-    }
-  })();
+  async function requestTakeDown(item: AdminGalleryItem) {
+    if (busy) return;
+    const reason = note.trim();
+    const ok = await deskConfirm({
+      title: "Take this portrait down?",
+      text: reason
+        ? `${item.displayName}’s portrait leaves the gallery. They can upload again afterward. Note: ${reason}`
+        : `${item.displayName}’s portrait leaves the gallery. They can upload again afterward.`,
+      confirmLabel: "Take down",
+    });
+    if (!ok) return;
+    run(() => takeDownGallerySelfie(item.userId, note), "Taking down…");
+  }
+
+  async function requestRestore(item: AdminGalleryItem) {
+    if (busy) return;
+    const ok = await deskConfirm({
+      title: "Restore this portrait?",
+      text: `${item.displayName}’s portrait returns to the visible gallery. Any moderation note on file will be cleared.`,
+      confirmLabel: "Restore",
+    });
+    if (!ok) return;
+    run(() => restoreGallerySelfie(item.userId), "Restoring…", false);
+  }
+
+  async function requestDelete(item: AdminGalleryItem) {
+    if (busy) return;
+    const reason = note.trim();
+    const ok = await deskConfirm({
+      title: "Delete this portrait permanently?",
+      text: reason
+        ? `Removes ${item.displayName}’s graduation selfie from storage. This cannot be undone — they would need to upload again if allowed. Note: ${reason}`
+        : `Removes ${item.displayName}’s graduation selfie from storage. This cannot be undone — they would need to upload again if allowed.`,
+      confirmLabel: "Delete permanently",
+      danger: true,
+    });
+    if (!ok) return;
+    run(() => deleteGallerySelfie(item.userId, note), "Deleting…");
+  }
 
   return (
     <div className="relative space-y-3 sm:space-y-4" aria-busy={busy}>
-      <DeskLoaderOverlay
-        active={busy && !pendingConfirm}
-        label={busyLabel ?? "Working…"}
-      />
+      <DeskLoaderOverlay active={busy} label={busyLabel ?? "Working…"} />
 
       <nav
         data-tour="gallery-tabs"
@@ -598,14 +503,7 @@ export function AdminGalleryManager({
                                   <button
                                     type="button"
                                     disabled={busy}
-                                    onClick={() =>
-                                      setPendingConfirm({
-                                        kind: "flag",
-                                        userId: item.userId,
-                                        name: item.displayName,
-                                        note,
-                                      })
-                                    }
+                                    onClick={() => void requestFlag(item)}
                                     className="inline-flex min-h-[2.25rem] min-w-[4rem] items-center justify-center border border-[#c4a574] px-3 py-2 text-sm font-medium text-[#6b4f2a] disabled:opacity-60"
                                   >
                                     {busy &&
@@ -621,14 +519,7 @@ export function AdminGalleryManager({
                                   <button
                                     type="button"
                                     disabled={busy}
-                                    onClick={() =>
-                                      setPendingConfirm({
-                                        kind: "takeDown",
-                                        userId: item.userId,
-                                        name: item.displayName,
-                                        note,
-                                      })
-                                    }
+                                    onClick={() => void requestTakeDown(item)}
                                     className="inline-flex min-h-[2.25rem] min-w-[5.5rem] items-center justify-center border border-pine/30 px-3 py-2 text-sm font-medium text-pine disabled:opacity-60"
                                   >
                                     {busy &&
@@ -644,13 +535,7 @@ export function AdminGalleryManager({
                                   <button
                                     type="button"
                                     disabled={busy}
-                                    onClick={() =>
-                                      setPendingConfirm({
-                                        kind: "restore",
-                                        userId: item.userId,
-                                        name: item.displayName,
-                                      })
-                                    }
+                                    onClick={() => void requestRestore(item)}
                                     className="inline-flex min-h-[2.25rem] min-w-[5rem] items-center justify-center border border-stone px-3 py-2 text-sm font-medium text-ink/70 disabled:opacity-60"
                                   >
                                     {busy &&
@@ -664,14 +549,7 @@ export function AdminGalleryManager({
                                 <button
                                   type="button"
                                   disabled={busy}
-                                  onClick={() =>
-                                    setPendingConfirm({
-                                      kind: "delete",
-                                      userId: item.userId,
-                                      name: item.displayName,
-                                      note,
-                                    })
-                                  }
+                                  onClick={() => void requestDelete(item)}
                                   className="inline-flex min-h-[2.25rem] min-w-[4.5rem] items-center justify-center border border-red-800/30 px-3 py-2 text-sm font-medium text-red-900 disabled:opacity-60"
                                 >
                                   {busy &&
@@ -715,69 +593,6 @@ export function AdminGalleryManager({
           </section>
         </>
       )}
-
-      {pendingConfirm && confirmCopy ? (
-        <div
-          className="fixed inset-0 z-[90] flex items-end justify-center bg-ink/45 p-4 sm:items-center"
-          role="presentation"
-          onClick={() => !busy && setPendingConfirm(null)}
-        >
-          <div
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="gallery-confirm-title"
-            className="relative w-full max-w-md border border-stone bg-mist p-6 text-ink shadow-[0_16px_48px_rgba(20,53,44,0.2)] sm:p-7"
-            onClick={(event) => event.stopPropagation()}
-          >
-            <DeskLoaderOverlay
-              active={busy}
-              label={busyLabel ?? "Working…"}
-            />
-            <p
-              className={`text-[0.65rem] font-medium uppercase tracking-[0.16em] ${
-                confirmCopy.destructive ? "text-red-800/80" : "text-celadon"
-              }`}
-            >
-              {confirmCopy.eyebrow}
-            </p>
-            <h3
-              id="gallery-confirm-title"
-              className="mt-3 font-display text-2xl tracking-[-0.02em] text-pine"
-            >
-              {confirmCopy.title}
-            </h3>
-            <p className="mt-3 text-sm leading-relaxed text-ink/70">
-              {confirmCopy.body}
-            </p>
-            <div className="mt-7 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
-              <button
-                type="button"
-                disabled={busy}
-                onClick={() => setPendingConfirm(null)}
-                className="border border-pine/25 px-4 py-2.5 text-sm font-medium text-pine transition-colors hover:border-pine disabled:opacity-60"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                disabled={busy}
-                onClick={confirmPendingAction}
-                className={`inline-flex min-h-[2.5rem] min-w-[9rem] items-center justify-center px-4 py-2.5 text-sm font-medium text-mist transition-colors disabled:opacity-60 ${
-                  confirmCopy.destructive
-                    ? "bg-[#5c2a2a] hover:bg-red-900"
-                    : "bg-pine hover:bg-celadon"
-                }`}
-              >
-                {busy ? (
-                  <DeskLoader label="Working…" tone="mist" />
-                ) : (
-                  confirmCopy.confirmLabel
-                )}
-              </button>
-            </div>
-          </div>
-        </div>
-      ) : null}
     </div>
   );
 }

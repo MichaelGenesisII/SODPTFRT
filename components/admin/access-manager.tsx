@@ -12,7 +12,6 @@ import {
 } from "@/app/admin/actions";
 import { DeskLoader, DeskLoaderOverlay } from "@/components/ui/desk-loader";
 import { StaffAvatar } from "@/components/ui/staff-avatar";
-import { useToast } from "@/components/ui/toast";
 import {
   isNationalAdmin,
   isParishAdmin,
@@ -22,6 +21,7 @@ import { createTemporaryPassword } from "@/lib/enrol/reference";
 import { parishAdminEnabled } from "@/lib/admin/features";
 import type { Parish } from "@/lib/parishes";
 import { DeskPagination } from "@/lib/ui/desk-pagination";
+import { deskConfirm, deskError, deskSuccess } from "@/lib/ui/desk-alert";
 import { TeachersFinanceManager } from "@/components/admin/teachers-finance-manager";
 import { FinanceStaffManager } from "@/components/admin/finance-staff-manager";
 import type { TeacherProfile } from "@/lib/teacher/types";
@@ -33,20 +33,6 @@ const fieldClass =
 const DIRECTORY_PAGE_SIZE = 8;
 
 type PageView = "admins" | "teachers" | "finance" | "insight";
-
-type PendingConfirm =
-  | { kind: "delete"; admin: AdminProfile }
-  | { kind: "toggleActive"; admin: AdminProfile; activate: boolean }
-  | {
-      kind: "resetPassword";
-      admin: AdminProfile;
-      password: string;
-    }
-  | {
-      kind: "deskScope";
-      admin: AdminProfile;
-      parishId: string | null;
-    };
 
 type AccessManagerProps = {
   profile: AdminProfile;
@@ -126,7 +112,6 @@ export function AccessManager({
   financeStaff = [],
   initialStaffTab = "admins",
 }: AccessManagerProps) {
-  const { success, error, info } = useToast();
   const national = isNationalAdmin(profile);
   const parishDesk = isParishAdmin(profile);
   const parishInvitesEnabled = parishAdminEnabled();
@@ -142,9 +127,6 @@ export function AccessManager({
   const [busyLabel, setBusyLabel] = useState<string | null>(null);
   const busy = pending || Boolean(busyLabel);
   const [expandedId, setExpandedId] = useState<string | null>(null);
-  const [pendingConfirm, setPendingConfirm] = useState<PendingConfirm | null>(
-    null,
-  );
   const [resetPasswordDrafts, setResetPasswordDrafts] = useState<
     Record<string, string>
   >({});
@@ -204,19 +186,6 @@ export function AccessManager({
     setPage(1);
   }, [query]);
 
-  useEffect(() => {
-    if (!pendingConfirm) return;
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape" && !busy) setPendingConfirm(null);
-    };
-    document.addEventListener("keydown", onKey);
-    document.body.style.overflow = "hidden";
-    return () => {
-      document.removeEventListener("keydown", onKey);
-      document.body.style.overflow = "";
-    };
-  }, [pendingConfirm, busy]);
-
   function openInvite() {
     setInviting(true);
     setStaffInviting(false);
@@ -243,9 +212,10 @@ export function AccessManager({
     action: () => Promise<AdminActionResult>,
     options?: {
       form?: HTMLFormElement | null;
-      toastTitle?: string;
+      successTitle?: string;
       label?: string;
       closeInvite?: boolean;
+      resetAdminId?: string | null;
     },
   ) {
     const label = options?.label ?? "Working…";
@@ -256,17 +226,19 @@ export function AccessManager({
         if (next.ok) {
           const emailFailed = /welcome email failed/i.test(next.message);
           if (emailFailed) {
-            error(next.message, "Account created");
+            await deskError({
+              title: "Account created",
+              text: next.message,
+            });
           } else {
-            success(next.message, options?.toastTitle ?? "Access");
+            await deskSuccess({
+              title: options?.successTitle,
+              text: next.message,
+            });
           }
           options?.form?.reset();
           setInvitePassword("");
-          const resetAdminId =
-            pendingConfirm?.kind === "resetPassword"
-              ? pendingConfirm.admin.id
-              : null;
-          setPendingConfirm(null);
+          const resetAdminId = options?.resetAdminId ?? null;
           if (resetAdminId) {
             setResetPasswordDrafts((current) => {
               const nextDrafts = { ...current };
@@ -278,7 +250,10 @@ export function AccessManager({
             setInviting(false);
           }
         } else {
-          error(next.message, options?.toastTitle ?? "Access");
+          await deskError({
+            title: options?.successTitle,
+            text: next.message,
+          });
         }
       } finally {
         setBusyLabel(null);
@@ -286,49 +261,79 @@ export function AccessManager({
     });
   }
 
-  function confirmPendingAction() {
-    if (!pendingConfirm || busy) return;
+  async function requestDelete(admin: AdminProfile) {
+    if (busy) return;
+    const name = adminDisplayName(admin);
+    const ok = await deskConfirm({
+      title: "Remove this account?",
+      text: `This permanently deletes ${name} (${admin.email}). This cannot be undone.`,
+      confirmLabel: "Delete permanently",
+      cancelLabel: "Cancel",
+      danger: true,
+    });
+    if (!ok) return;
+    run(() => deleteAdminAccount(admin.id), {
+      label: "Removing account…",
+    });
+  }
 
-    switch (pendingConfirm.kind) {
-      case "delete":
-        run(() => deleteAdminAccount(pendingConfirm.admin.id), {
-          label: "Removing account…",
-        });
-        return;
-      case "toggleActive":
-        run(
-          () =>
-            setAdminActive(
-              pendingConfirm.admin.id,
-              pendingConfirm.activate,
-            ),
-          {
-            label: pendingConfirm.activate
-              ? "Reactivating…"
-              : "Deactivating…",
-          },
-        );
-        return;
-      case "resetPassword": {
-        const formData = new FormData();
-        formData.set("adminId", pendingConfirm.admin.id);
-        formData.set("password", pendingConfirm.password);
-        run(() => resetAdminPassword(formData), {
-          label: "Resetting password…",
-        });
-        return;
-      }
-      case "deskScope":
-        run(
-          () =>
-            setAdminParishScope(
-              pendingConfirm.admin.id,
-              pendingConfirm.parishId,
-            ),
-          { label: "Updating desk…" },
-        );
-        return;
-    }
+  async function requestToggleActive(admin: AdminProfile, activate: boolean) {
+    if (busy) return;
+    const name = adminDisplayName(admin);
+    const ok = await deskConfirm({
+      title: activate
+        ? "Reactivate this account?"
+        : "Deactivate this account?",
+      text: activate
+        ? `${name} will be able to sign in again.`
+        : `${name} will not be able to sign in until reactivated.`,
+      confirmLabel: activate ? "Reactivate" : "Deactivate",
+      cancelLabel: "Cancel",
+      danger: !activate,
+    });
+    if (!ok) return;
+    run(() => setAdminActive(admin.id, activate), {
+      label: activate ? "Reactivating…" : "Deactivating…",
+    });
+  }
+
+  async function requestResetPassword(admin: AdminProfile, password: string) {
+    if (busy || password.length < 8) return;
+    const name = adminDisplayName(admin);
+    const ok = await deskConfirm({
+      title: "Reset this password?",
+      text: `Set a new password for ${name}. They will need this password to sign in.\n\nNew password: ${password}`,
+      confirmLabel: "Reset password",
+      cancelLabel: "Cancel",
+    });
+    if (!ok) return;
+    const formData = new FormData();
+    formData.set("adminId", admin.id);
+    formData.set("password", password);
+    run(() => resetAdminPassword(formData), {
+      label: "Resetting password…",
+      resetAdminId: admin.id,
+    });
+  }
+
+  async function requestDeskScope(
+    admin: AdminProfile,
+    parishId: string | null,
+  ) {
+    if (busy) return;
+    const name = adminDisplayName(admin);
+    const fromLabel = deskScopeLabel(admin.parish_id ?? null, parishes);
+    const toLabel = deskScopeLabel(parishId, parishes);
+    const ok = await deskConfirm({
+      title: "Move to another desk?",
+      text: `${name} will move from ${fromLabel} to ${toLabel}.`,
+      confirmLabel: "Change desk",
+      cancelLabel: "Cancel",
+    });
+    if (!ok) return;
+    run(() => setAdminParishScope(admin.id, parishId), {
+      label: "Updating desk…",
+    });
   }
 
   return (
@@ -574,11 +579,10 @@ export function AccessManager({
                                               const current =
                                                 admin.parish_id ?? null;
                                               if (next === current) return;
-                                              setPendingConfirm({
-                                                kind: "deskScope",
+                                              void requestDeskScope(
                                                 admin,
-                                                parishId: next,
-                                              });
+                                                next,
+                                              );
                                             }}
                                             className={fieldClass}
                                           >
@@ -594,11 +598,10 @@ export function AccessManager({
                                           type="button"
                                           disabled={busy}
                                           onClick={() =>
-                                            setPendingConfirm({
-                                              kind: "toggleActive",
+                                            void requestToggleActive(
                                               admin,
-                                              activate: !admin.is_active,
-                                            })
+                                              !admin.is_active,
+                                            )
                                           }
                                           className="border border-pine/30 px-3 py-2.5 text-sm text-pine transition-colors hover:border-pine disabled:opacity-60 sm:shrink-0"
                                         >
@@ -641,11 +644,10 @@ export function AccessManager({
                                                   admin.id
                                                 ]?.trim() ?? "";
                                               if (password.length < 8) return;
-                                              setPendingConfirm({
-                                                kind: "resetPassword",
+                                              void requestResetPassword(
                                                 admin,
                                                 password,
-                                              });
+                                              );
                                             }}
                                             className="shrink-0 bg-pine px-3 py-2.5 text-sm font-medium text-mist hover:bg-celadon disabled:opacity-60"
                                           >
@@ -656,10 +658,7 @@ export function AccessManager({
                                           type="button"
                                           disabled={busy}
                                           onClick={() =>
-                                            setPendingConfirm({
-                                              kind: "delete",
-                                              admin,
-                                            })
+                                            void requestDelete(admin)
                                           }
                                           className="inline-flex h-10 w-10 items-center justify-center border border-red-900/20 text-red-800 transition-colors hover:border-red-800/50 hover:bg-red-50 disabled:opacity-60 sm:ml-auto"
                                           aria-label={`Delete ${adminDisplayName(admin)}`}
@@ -729,14 +728,14 @@ export function AccessManager({
                   () => createAdminAccount(new FormData(form)),
                   {
                     form,
-                    toastTitle: "Invite",
+                    successTitle: "Invite",
                     label: "Creating account…",
                   },
                 );
               }}
             >
               <DeskLoaderOverlay
-                active={busy && !pendingConfirm}
+                active={busy}
                 label="Opening the desk…"
               />
                 <div className="sm:col-span-2">
@@ -781,9 +780,7 @@ export function AccessManager({
                       type="button"
                       disabled={busy}
                       onClick={() => {
-                        const next = createTemporaryPassword(12);
-                        setInvitePassword(next);
-                        info("Temporary password ready.", "Generated");
+                        setInvitePassword(createTemporaryPassword(12));
                       }}
                       className="text-xs font-medium text-pine underline decoration-pine/30 underline-offset-4 disabled:opacity-50"
                     >
@@ -894,175 +891,6 @@ export function AccessManager({
           </div>
         </div>
       )}
-
-      {pendingConfirm ? (
-        <AccessConfirmDialog
-          confirm={pendingConfirm}
-          parishes={parishes}
-          busy={busy}
-          busyLabel={busyLabel}
-          onCancel={() => !busy && setPendingConfirm(null)}
-          onConfirm={confirmPendingAction}
-        />
-      ) : null}
-    </div>
-  );
-}
-
-function AccessConfirmDialog({
-  confirm,
-  parishes,
-  busy,
-  busyLabel,
-  onCancel,
-  onConfirm,
-}: {
-  confirm: PendingConfirm;
-  parishes: Pick<Parish, "id" | "name">[];
-  busy: boolean;
-  busyLabel: string | null;
-  onCancel: () => void;
-  onConfirm: () => void;
-}) {
-  const admin = confirm.admin;
-  const name = adminDisplayName(admin);
-
-  const copy =
-    confirm.kind === "delete"
-      ? {
-          eyebrow: "Delete admin",
-          title: "Remove this account?",
-          body: (
-            <>
-              This permanently deletes{" "}
-              <span className="font-medium text-ink">{name}</span> (
-              {admin.email}). This cannot be undone.
-            </>
-          ),
-          confirmLabel: "Delete permanently",
-          destructive: true,
-          loaderLabel: "Removing account…",
-        }
-      : confirm.kind === "toggleActive"
-        ? confirm.activate
-          ? {
-              eyebrow: "Reactivate",
-              title: "Reactivate this account?",
-              body: (
-                <>
-                  <span className="font-medium text-ink">{name}</span> will be
-                  able to sign in again.
-                </>
-              ),
-              confirmLabel: "Reactivate",
-              destructive: false,
-              loaderLabel: "Reactivating…",
-            }
-          : {
-              eyebrow: "Deactivate",
-              title: "Deactivate this account?",
-              body: (
-                <>
-                  <span className="font-medium text-ink">{name}</span> will not
-                  be able to sign in until reactivated.
-                </>
-              ),
-              confirmLabel: "Deactivate",
-              destructive: true,
-              loaderLabel: "Deactivating…",
-            }
-        : confirm.kind === "resetPassword"
-          ? {
-              eyebrow: "Reset password",
-              title: "Reset this password?",
-              body: (
-                <>
-                  Set a new password for{" "}
-                  <span className="font-medium text-ink">{name}</span>. They
-                  will need this password to sign in.
-                </>
-              ),
-              confirmLabel: "Reset password",
-              destructive: false,
-              loaderLabel: "Resetting password…",
-            }
-          : {
-              eyebrow: "Change desk",
-              title: "Move to another desk?",
-              body: (
-                <>
-                  <span className="font-medium text-ink">{name}</span> will
-                  move from{" "}
-                  <span className="font-medium text-ink">
-                    {deskScopeLabel(admin.parish_id ?? null, parishes)}
-                  </span>{" "}
-                  to{" "}
-                  <span className="font-medium text-ink">
-                    {deskScopeLabel(confirm.parishId, parishes)}
-                  </span>
-                  .
-                </>
-              ),
-              confirmLabel: "Change desk",
-              destructive: false,
-              loaderLabel: "Updating desk…",
-            };
-
-  return (
-    <div
-      className="fixed inset-0 z-[90] flex items-end justify-center bg-ink/45 p-4 sm:items-center"
-      role="presentation"
-      onClick={onCancel}
-    >
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="access-confirm-title"
-        className="relative w-full max-w-md border border-stone bg-mist p-6 text-ink shadow-[0_16px_48px_rgba(20,53,44,0.2)] sm:p-7"
-        onClick={(event) => event.stopPropagation()}
-      >
-        <DeskLoaderOverlay active={busy} label={busyLabel ?? copy.loaderLabel} />
-        <p
-          className={`text-[0.65rem] font-medium uppercase tracking-[0.16em] ${
-            copy.destructive ? "text-red-800/80" : "text-celadon"
-          }`}
-        >
-          {copy.eyebrow}
-        </p>
-        <h3
-          id="access-confirm-title"
-          className="mt-3 font-display text-2xl tracking-[-0.02em] text-pine"
-        >
-          {copy.title}
-        </h3>
-        <p className="mt-3 text-sm leading-relaxed text-ink/70">{copy.body}</p>
-        <div className="mt-7 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
-          <button
-            type="button"
-            disabled={busy}
-            onClick={onCancel}
-            className="border border-pine/25 px-4 py-2.5 text-sm font-medium text-pine transition-colors hover:border-pine disabled:opacity-60"
-          >
-            Cancel
-          </button>
-          <button
-            type="button"
-            disabled={busy}
-            onClick={onConfirm}
-            className={`inline-flex min-h-[2.5rem] min-w-[9rem] items-center justify-center px-4 py-2.5 text-sm font-medium transition-colors disabled:opacity-60 ${
-              copy.destructive
-                ? "bg-[#5c2a2a] text-mist hover:bg-red-900"
-                : "bg-pine text-mist hover:bg-celadon"
-            }`}
-          >
-            {busy ? (
-              <DeskLoader label={copy.loaderLabel} tone="mist" />
-            ) : (
-              copy.confirmLabel
-            )}
-          </button>
-        </div>
-      </div>
     </div>
   );
 }

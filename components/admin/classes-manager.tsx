@@ -17,8 +17,8 @@ import {
 } from "@/app/admin/classes/actions";
 import { ClassesInsight } from "@/components/admin/class-workspace";
 import { DeskLoader, DeskLoaderOverlay } from "@/components/ui/desk-loader";
-import { useToast } from "@/components/ui/toast";
 import { isNationalAdmin, type AdminProfile } from "@/lib/admin/profile";
+import { deskError } from "@/lib/ui/desk-alert";
 import {
   audienceLabel,
   DEFAULT_ATTENDANCE_THRESHOLD,
@@ -63,7 +63,6 @@ export function ClassesManager({
   zoomReady,
 }: Props) {
   const router = useRouter();
-  const { success, error } = useToast();
   const [pending, startTransition] = useTransition();
   const [busyLabel, setBusyLabel] = useState<string | null>(null);
   const busy = pending || Boolean(busyLabel);
@@ -124,7 +123,6 @@ export function ClassesManager({
       try {
         const next = await action();
         if (next.ok) {
-          success(next.message, "Classes");
           then?.();
           router.refresh();
           if (next.classId) {
@@ -132,16 +130,13 @@ export function ClassesManager({
             router.push(classDetailHref(next.classId));
           }
         } else {
-          error(next.message, "Classes");
+          await deskError({ text: next.message });
         }
       } catch (err) {
         console.error("[classes/ui]", err);
-        error(
-          err instanceof Error && err.message
-            ? err.message
-            : "Could not save the class. Please try again.",
-          "Classes",
-        );
+        await deskError({
+          text: "Could not save the class. Please try again.",
+        });
       } finally {
         setBusyLabel(null);
       }
@@ -484,7 +479,6 @@ function CreateClassForm({
   const [verifyOpen, setVerifyOpen] = useState(false);
   const [preview, setPreview] = useState<ClassInvitePreview | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
-  const { error: toastError } = useToast();
 
   useEffect(() => {
     if (!verifyOpen) return;
@@ -586,33 +580,33 @@ function CreateClassForm({
   function submit(event: FormEvent) {
     event.preventDefault();
     if (!startLocal || !endLocal) {
-      toastError("Choose start and end times for the class.", "Classes");
+      void deskError({ text: "Choose start and end times for the class." });
       return;
     }
     const start = new Date(startLocal);
     const end = new Date(endLocal);
     if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
-      toastError("Those schedule times are not valid.", "Classes");
+      void deskError({ text: "Those schedule times are not valid." });
       return;
     }
     if (end <= start) {
-      toastError("End must be after start.", "Classes");
+      void deskError({ text: "End must be after start." });
       return;
     }
     if (audience === "parish" && !parishId && national) {
-      toastError("Choose a parish for this class.", "Classes");
+      void deskError({ text: "Choose a parish for this class." });
       return;
     }
     if (audience === "batch" && !batchId) {
-      toastError("Choose a batch for this class.", "Classes");
+      void deskError({ text: "Choose a batch for this class." });
       return;
     }
     if (audience === "cohort" && !cohortId) {
-      toastError("Choose a cohort for this class.", "Classes");
+      void deskError({ text: "Choose a cohort for this class." });
       return;
     }
     if (audience === "year" && !programmeYear) {
-      toastError("Choose a programme year for this class.", "Classes");
+      void deskError({ text: "Choose a programme year for this class." });
       return;
     }
     if (!sendEmail) {

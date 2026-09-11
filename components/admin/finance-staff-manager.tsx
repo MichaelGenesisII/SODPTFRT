@@ -7,25 +7,20 @@ import {
   setFinanceUserActive,
   updateFinanceProfile,
 } from "@/app/admin/finance/staff/actions";
-import { DeskConfirmModal } from "@/components/ui/desk-confirm-modal";
 import { DeskLoader, DeskLoaderOverlay } from "@/components/ui/desk-loader";
 import { StaffAvatar } from "@/components/ui/staff-avatar";
-import { useToast } from "@/components/ui/toast";
 import { createTemporaryPassword } from "@/lib/enrol/reference";
 import {
   financeDisplayName,
   type FinanceProfile,
 } from "@/lib/finance/types";
+import { deskConfirm, deskError, deskSuccess } from "@/lib/ui/desk-alert";
 
 const fieldClass =
   "w-full border border-stone bg-white/70 px-4 py-3 text-sm outline-none transition-[border-color,background-color] duration-300 focus:border-pine focus:bg-mist";
 
 const editFieldClass =
   "mt-1.5 w-full border border-stone bg-white/70 px-3 py-2.5 text-sm outline-none focus:border-pine";
-
-type PendingConfirm =
-  | { kind: "delete"; user: FinanceProfile }
-  | { kind: "toggleActive"; user: FinanceProfile; activate: boolean };
 
 export function FinanceStaffManager({
   initialStaff,
@@ -34,7 +29,6 @@ export function FinanceStaffManager({
   initialStaff: FinanceProfile[];
   onInviteSurfaceChange?: (open: boolean) => void;
 }) {
-  const { success, error, info } = useToast();
   const [pending, startTransition] = useTransition();
   const [busyLabel, setBusyLabel] = useState<string | null>(null);
   const [staff, setStaff] = useState(initialStaff);
@@ -43,9 +37,6 @@ export function FinanceStaffManager({
   const [fullName, setFullName] = useState("");
   const [password, setPassword] = useState("");
   const [lastTemp, setLastTemp] = useState<string | null>(null);
-  const [pendingConfirm, setPendingConfirm] = useState<PendingConfirm | null>(
-    null,
-  );
   const [editTarget, setEditTarget] = useState<FinanceProfile | null>(null);
   const [editName, setEditName] = useState("");
   const [editEmail, setEditEmail] = useState("");
@@ -57,10 +48,9 @@ export function FinanceStaffManager({
   }, [initialStaff]);
 
   useEffect(() => {
-    if (!pendingConfirm && !editTarget) return;
+    if (!editTarget) return;
     function onKey(event: KeyboardEvent) {
       if (event.key === "Escape" && !busy) {
-        setPendingConfirm(null);
         setEditTarget(null);
       }
     }
@@ -70,7 +60,7 @@ export function FinanceStaffManager({
       document.removeEventListener("keydown", onKey);
       document.body.style.overflow = "";
     };
-  }, [pendingConfirm, editTarget, busy]);
+  }, [editTarget, busy]);
 
   function openInvite() {
     setInviting(true);
@@ -104,16 +94,21 @@ export function FinanceStaffManager({
         if (result.ok) {
           const emailFailed = /welcome email could not/i.test(result.message);
           if (emailFailed) {
-            error(result.message, "Finance Admin created");
+            await deskError({
+              title: "Finance Admin created",
+              text: result.message,
+            });
           } else {
-            success(result.message, "Finance");
+            await deskSuccess({ text: result.message });
           }
           onOk?.(result.message, result.temporaryPassword);
         } else {
-          error(result.message, "Finance");
+          await deskError({ text: result.message });
         }
       } catch {
-        error("Something went wrong. Please try again.", "Finance");
+        await deskError({
+          text: "Something went wrong. Please try again.",
+        });
       } finally {
         setBusyLabel(null);
       }
@@ -152,12 +147,12 @@ export function FinanceStaffManager({
     setEditEmail(user.email);
   }
 
-  function saveEdit() {
+  async function saveEdit() {
     if (!editTarget) return;
     const nextName = editName.trim();
     const nextEmail = editEmail.trim().toLowerCase();
     if (!nextEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(nextEmail)) {
-      error("Enter a valid email address.", "Finance");
+      await deskError({ text: "Enter a valid email address." });
       return;
     }
     const id = editTarget.id;
@@ -186,21 +181,41 @@ export function FinanceStaffManager({
     );
   }
 
-  function confirmPendingAction() {
-    if (!pendingConfirm || busy) return;
-    if (pendingConfirm.kind === "delete") {
-      const id = pendingConfirm.user.id;
-      run(
-        () => deleteFinanceUser({ financeId: id }),
-        () => {
-          setStaff((prev) => prev.filter((u) => u.id !== id));
-          setPendingConfirm(null);
-        },
-        "Deleting Finance Admin…",
-      );
-      return;
-    }
-    const { user, activate } = pendingConfirm;
+  async function requestDelete(user: FinanceProfile) {
+    if (busy) return;
+    const ok = await deskConfirm({
+      title: `Delete ${financeDisplayName(user)}?`,
+      text: "This removes their Finance portal access. No email is sent.",
+      confirmLabel: "Delete Finance Admin",
+      cancelLabel: "Cancel",
+      danger: true,
+    });
+    if (!ok) return;
+    const id = user.id;
+    run(
+      () => deleteFinanceUser({ financeId: id }),
+      () => {
+        setStaff((prev) => prev.filter((u) => u.id !== id));
+      },
+      "Deleting Finance Admin…",
+    );
+  }
+
+  async function requestToggleActive(user: FinanceProfile, activate: boolean) {
+    if (busy) return;
+    const name = financeDisplayName(user);
+    const ok = await deskConfirm({
+      title: activate
+        ? "Reactivate this Finance Admin?"
+        : "Deactivate this Finance Admin?",
+      text: activate
+        ? `${name} will be able to sign in to the Finance portal again.`
+        : `${name} will not be able to sign in until reactivated. Pay history stays on file.`,
+      confirmLabel: activate ? "Reactivate" : "Deactivate",
+      cancelLabel: "Cancel",
+      danger: !activate,
+    });
+    if (!ok) return;
     run(
       () =>
         setFinanceUserActive({
@@ -213,56 +228,10 @@ export function FinanceStaffManager({
             u.id === user.id ? { ...u, is_active: activate } : u,
           ),
         );
-        setPendingConfirm(null);
       },
       activate ? "Reactivating…" : "Deactivating…",
     );
   }
-
-  const confirmCopy =
-    pendingConfirm?.kind === "delete"
-      ? {
-          eyebrow: "Finance",
-          title: `Delete ${financeDisplayName(pendingConfirm.user)}?`,
-          body: "This removes their Finance portal access. No email is sent.",
-          confirmLabel: "Delete Finance Admin",
-          destructive: true,
-          busyLabel: "Deleting Finance Admin…",
-        }
-      : pendingConfirm?.kind === "toggleActive"
-        ? pendingConfirm.activate
-          ? {
-              eyebrow: "Reactivate",
-              title: "Reactivate this Finance Admin?",
-              body: (
-                <>
-                  <span className="font-medium text-ink">
-                    {financeDisplayName(pendingConfirm.user)}
-                  </span>{" "}
-                  will be able to sign in to the Finance portal again.
-                </>
-              ),
-              confirmLabel: "Reactivate",
-              destructive: false,
-              busyLabel: "Reactivating…",
-            }
-          : {
-              eyebrow: "Deactivate",
-              title: "Deactivate this Finance Admin?",
-              body: (
-                <>
-                  <span className="font-medium text-ink">
-                    {financeDisplayName(pendingConfirm.user)}
-                  </span>{" "}
-                  will not be able to sign in until reactivated. Pay history
-                  stays on file.
-                </>
-              ),
-              confirmLabel: "Deactivate",
-              destructive: true,
-              busyLabel: "Deactivating…",
-            }
-        : null;
 
   if (inviting) {
     return (
@@ -345,9 +314,7 @@ export function FinanceStaffManager({
                   type="button"
                   disabled={busy}
                   onClick={() => {
-                    const next = createTemporaryPassword(12);
-                    setPassword(next);
-                    info("Temporary password ready.", "Generated");
+                    setPassword(createTemporaryPassword(12));
                   }}
                   className="text-xs font-medium text-pine underline decoration-pine/30 underline-offset-4 disabled:opacity-50"
                 >
@@ -410,7 +377,7 @@ export function FinanceStaffManager({
   return (
     <div className="relative space-y-6">
       <DeskLoaderOverlay
-        active={busy && !pendingConfirm && !editTarget}
+        active={busy && !editTarget}
         label={busyLabel ?? "Working…"}
       />
 
@@ -484,11 +451,7 @@ export function FinanceStaffManager({
                     type="button"
                     disabled={busy}
                     onClick={() =>
-                      setPendingConfirm({
-                        kind: "toggleActive",
-                        user,
-                        activate: !user.is_active,
-                      })
+                      void requestToggleActive(user, !user.is_active)
                     }
                     className="border border-pine/25 px-3 py-2 text-sm text-pine hover:border-pine disabled:opacity-50"
                   >
@@ -497,9 +460,7 @@ export function FinanceStaffManager({
                   <button
                     type="button"
                     disabled={busy}
-                    onClick={() =>
-                      setPendingConfirm({ kind: "delete", user })
-                    }
+                    onClick={() => void requestDelete(user)}
                     className="border border-red-800/25 px-3 py-2 text-sm text-red-900 hover:border-red-800/50 disabled:opacity-50"
                   >
                     Delete
@@ -510,21 +471,6 @@ export function FinanceStaffManager({
           </ul>
         )}
       </section>
-
-      {confirmCopy ? (
-        <DeskConfirmModal
-          open={Boolean(pendingConfirm)}
-          onClose={() => !busy && setPendingConfirm(null)}
-          onConfirm={confirmPendingAction}
-          eyebrow={confirmCopy.eyebrow}
-          title={confirmCopy.title}
-          body={confirmCopy.body}
-          confirmLabel={confirmCopy.confirmLabel}
-          destructive={confirmCopy.destructive}
-          busy={busy}
-          busyLabel={busyLabel ?? confirmCopy.busyLabel}
-        />
-      ) : null}
 
       {editTarget ? (
         <div
@@ -591,7 +537,7 @@ export function FinanceStaffManager({
               <button
                 type="button"
                 disabled={busy}
-                onClick={saveEdit}
+                onClick={() => void saveEdit()}
                 className="inline-flex min-h-[2.5rem] min-w-[9rem] items-center justify-center bg-pine px-4 py-2.5 text-sm font-medium text-mist hover:bg-celadon disabled:opacity-60"
               >
                 {busy ? (

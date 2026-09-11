@@ -17,7 +17,6 @@ import {
 } from "@/app/admin/payments/actions";
 import { PaymentsInsight } from "@/components/admin/payments-insight";
 import { DeskLoader, DeskLoaderOverlay } from "@/components/ui/desk-loader";
-import { useToast } from "@/components/ui/toast";
 import {
   FEE_STATUS_META,
   feeDefinition,
@@ -26,11 +25,11 @@ import {
   type FeeType,
 } from "@/lib/payments/fees";
 import { DeskPagination } from "@/lib/ui/desk-pagination";
+import { deskConfirm, deskError, deskSuccess } from "@/lib/ui/desk-alert";
 
 type PageView = "desk" | "insight";
 type Lane = "pending" | "paid";
 type MobileSurface = "directory" | "workspace";
-type PendingConfirm = { kind: "approve" } | { kind: "reject" };
 
 const PAYMENTS_PAGE_SIZE = 10;
 
@@ -132,7 +131,6 @@ export function PaymentsManager({
   studentBackHref?: string;
 }) {
   const router = useRouter();
-  const { success, error } = useToast();
   const [pageView, setPageView] = useState<PageView>("desk");
   const [pendingAction, startTransition] = useTransition();
   const [busyLabel, setBusyLabel] = useState<string | null>(null);
@@ -169,9 +167,6 @@ export function PaymentsManager({
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewError, setPreviewError] = useState<string | null>(null);
-  const [pendingConfirm, setPendingConfirm] = useState<PendingConfirm | null>(
-    null,
-  );
 
   const tuitionPending = useMemo(
     () => pending.filter((row) => row.fee_type === "tuition").length,
@@ -312,19 +307,6 @@ export function PaymentsManager({
     };
   }, [selected?.id, selected?.proof_path]);
 
-  useEffect(() => {
-    if (!pendingConfirm) return;
-    function onKey(event: KeyboardEvent) {
-      if (event.key === "Escape" && !busy) setPendingConfirm(null);
-    }
-    document.addEventListener("keydown", onKey);
-    document.body.style.overflow = "hidden";
-    return () => {
-      document.removeEventListener("keydown", onKey);
-      document.body.style.overflow = "";
-    };
-  }, [pendingConfirm, busy]);
-
   function goToPage(next: number) {
     setPage(Math.min(totalPages, Math.max(1, next)));
   }
@@ -335,11 +317,10 @@ export function PaymentsManager({
       try {
         const next = await action();
         if (next.ok) {
-          success(next.message, "Payments");
-          setPendingConfirm(null);
           router.refresh();
+          await deskSuccess({ text: next.message });
         } else {
-          error(next.message, "Payments");
+          await deskError({ text: next.message });
         }
       } finally {
         setBusyLabel(null);
@@ -347,12 +328,26 @@ export function PaymentsManager({
     });
   }
 
-  function confirmPendingAction() {
-    if (!pendingConfirm || busy || !selected) return;
-    if (pendingConfirm.kind === "approve") {
-      run(() => approvePaymentProof(selected.id), "Approving payment…");
-      return;
-    }
+  async function requestApprove() {
+    if (busy || !selected) return;
+    const ok = await deskConfirm({
+      title: "Approve this bank transfer?",
+      text: `Marks ${feeLabel(selected.fee_type)} as paid for ${selected.student_name} (${formatGbp(selected.amount_gbp)}). The student is notified.`,
+      confirmLabel: "Approve payment",
+    });
+    if (!ok) return;
+    run(() => approvePaymentProof(selected.id), "Approving payment…");
+  }
+
+  async function requestReject() {
+    if (busy || !selected) return;
+    const ok = await deskConfirm({
+      title: "Return this proof to the student?",
+      text: `${selected.student_name} can upload again for ${feeLabel(selected.fee_type)}. The current file leaves the review queue.`,
+      confirmLabel: "Return to student",
+      danger: true,
+    });
+    if (!ok) return;
     run(() => rejectPaymentProof(selected.id), "Returning proof…");
   }
 
@@ -623,7 +618,7 @@ export function PaymentsManager({
               aria-busy={busy}
             >
               <DeskLoaderOverlay
-                active={busy && !pendingConfirm}
+                active={busy}
                 label={busyLabel ?? "Working…"}
               />
               {!selected ? (
@@ -778,9 +773,7 @@ export function PaymentsManager({
                           <button
                             type="button"
                             disabled={busy}
-                            onClick={() =>
-                              setPendingConfirm({ kind: "approve" })
-                            }
+                            onClick={() => void requestApprove()}
                             className="inline-flex min-h-[2.5rem] items-center justify-center bg-pine px-4 py-2.5 text-sm font-medium text-mist transition hover:bg-celadon disabled:opacity-60"
                           >
                             {busy && busyLabel?.startsWith("Approving") ? (
@@ -792,9 +785,7 @@ export function PaymentsManager({
                           <button
                             type="button"
                             disabled={busy}
-                            onClick={() =>
-                              setPendingConfirm({ kind: "reject" })
-                            }
+                            onClick={() => void requestReject()}
                             className="inline-flex min-h-[2.5rem] items-center justify-center border border-stone px-4 py-2.5 text-sm text-ink/70 transition hover:border-pine hover:text-pine disabled:opacity-60"
                           >
                             {busy && busyLabel?.startsWith("Returning") ? (
@@ -820,115 +811,6 @@ export function PaymentsManager({
           </div>
         </>
       )}
-
-      {pendingConfirm && selected ? (
-        <div
-          className="fixed inset-0 z-[90] flex items-end justify-center bg-ink/45 p-4 sm:items-center"
-          role="presentation"
-          onClick={() => !busy && setPendingConfirm(null)}
-        >
-          <div
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="payment-confirm-title"
-            className="relative w-full max-w-md border border-stone bg-mist p-6 text-ink shadow-[0_16px_48px_rgba(20,53,44,0.2)] sm:p-7"
-            onClick={(event) => event.stopPropagation()}
-          >
-            <DeskLoaderOverlay
-              active={busy}
-              label={busyLabel ?? "Working…"}
-            />
-            {(() => {
-              const copy =
-                pendingConfirm.kind === "approve"
-                  ? {
-                      eyebrow: "Approve payment",
-                      title: "Approve this bank transfer?",
-                      body: (
-                        <>
-                          Marks{" "}
-                          <span className="font-medium text-ink">
-                            {feeLabel(selected.fee_type)}
-                          </span>{" "}
-                          as paid for{" "}
-                          <span className="font-medium text-ink">
-                            {selected.student_name}
-                          </span>{" "}
-                          ({formatGbp(selected.amount_gbp)}). The student is
-                          notified.
-                        </>
-                      ),
-                      confirmLabel: "Approve payment",
-                      destructive: false,
-                    }
-                  : {
-                      eyebrow: "Return proof",
-                      title: "Return this proof to the student?",
-                      body: (
-                        <>
-                          <span className="font-medium text-ink">
-                            {selected.student_name}
-                          </span>{" "}
-                          can upload again for{" "}
-                          <span className="font-medium text-ink">
-                            {feeLabel(selected.fee_type)}
-                          </span>
-                          . The current file leaves the review queue.
-                        </>
-                      ),
-                      confirmLabel: "Return to student",
-                      destructive: true,
-                    };
-              return (
-                <>
-                  <p
-                    className={`text-[0.65rem] font-medium uppercase tracking-[0.16em] ${
-                      copy.destructive ? "text-red-800/80" : "text-celadon"
-                    }`}
-                  >
-                    {copy.eyebrow}
-                  </p>
-                  <h3
-                    id="payment-confirm-title"
-                    className="mt-3 font-display text-2xl tracking-[-0.02em] text-pine"
-                  >
-                    {copy.title}
-                  </h3>
-                  <p className="mt-3 text-sm leading-relaxed text-ink/70">
-                    {copy.body}
-                  </p>
-                  <div className="mt-7 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
-                    <button
-                      type="button"
-                      disabled={busy}
-                      onClick={() => setPendingConfirm(null)}
-                      className="border border-pine/25 px-4 py-2.5 text-sm font-medium text-pine transition-colors hover:border-pine disabled:opacity-60"
-                    >
-                      Cancel
-                    </button>
-                    <button
-                      type="button"
-                      disabled={busy}
-                      onClick={confirmPendingAction}
-                      className={`inline-flex min-h-[2.5rem] min-w-[9rem] items-center justify-center px-4 py-2.5 text-sm font-medium text-mist transition-colors disabled:opacity-60 ${
-                        copy.destructive
-                          ? "bg-[#5c2a2a] hover:bg-red-900"
-                          : "bg-pine hover:bg-celadon"
-                      }`}
-                    >
-                      {busy ? (
-                        <DeskLoader label="Working…" tone="mist" />
-                      ) : (
-                        copy.confirmLabel
-                      )}
-                    </button>
-                  </div>
-                </>
-              );
-            })()}
-          </div>
-        </div>
-      ) : null}
     </div>
   );
 }

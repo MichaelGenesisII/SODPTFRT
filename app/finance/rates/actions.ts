@@ -53,6 +53,7 @@ export async function createPayRate(
     revalidatePath("/finance/rates");
     revalidatePath("/finance");
     revalidatePath("/finance/periods");
+    revalidatePath("/finance/books");
     return { ok: true, message: "Rate saved." };
   } catch (error) {
     console.error("[finance/rates/create]", error);
@@ -104,6 +105,7 @@ export async function updatePayRate(
     revalidatePath("/finance/rates");
     revalidatePath("/finance");
     revalidatePath("/finance/periods");
+    revalidatePath("/finance/books");
     return { ok: true, message: "Rate updated." };
   } catch (error) {
     console.error("[finance/rates/update]", error);
@@ -143,19 +145,20 @@ export async function deletePayRate(
       console.error("[finance/rates/delete]", error.message);
       return {
         ok: false,
-        message: "Could not remove this rate. Please try again.",
+        message: "Could not delete this rate. Please try again.",
       };
     }
 
     revalidatePath("/finance/rates");
     revalidatePath("/finance");
     revalidatePath("/finance/periods");
-    return { ok: true, message: "Rate removed." };
+    revalidatePath("/finance/books");
+    return { ok: true, message: "Rate deleted." };
   } catch (error) {
     console.error("[finance/rates/delete]", error);
     return {
       ok: false,
-      message: publicActionMessage(error, "Could not remove this rate."),
+      message: publicActionMessage(error, "Could not delete this rate."),
     };
   }
 }

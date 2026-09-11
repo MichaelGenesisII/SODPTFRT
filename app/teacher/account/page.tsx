@@ -14,7 +14,5 @@ export default async function TeacherAccountPage() {
 
   const avatarUrl = await cachedSignStaffPhotoUrl(profile.avatar_path);
 
-  return (
-    <TeacherAccountForm profile={{ ...profile, avatarUrl }} />
-  );
+  return <TeacherAccountForm profile={{ ...profile, avatarUrl }} />;
 }

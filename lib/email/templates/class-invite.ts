@@ -44,7 +44,7 @@ export function buildClassInviteEmail(input: ClassInviteInput) {
   const year = new Date().getFullYear();
   const duration = Math.max(0, Math.floor(input.durationMinutes));
 
-  const subject = `${firstName}, you're invited: ${input.classTitle.trim()}`;
+  const subject = `${firstName}, your class: ${input.classTitle.trim()}`;
 
   const textParts = [
     `Dear ${firstName},`,

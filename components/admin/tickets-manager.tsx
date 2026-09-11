@@ -29,12 +29,12 @@ import {
   type SupportChatMessage,
 } from "@/components/support/chat-thread";
 import { DeskLoader, DeskLoaderOverlay } from "@/components/ui/desk-loader";
-import { useToast } from "@/components/ui/toast";
 import { defaultTicketEmailSubject } from "@/lib/email/subject";
 import {
   isNationalAdmin,
   type AdminProfile,
 } from "@/lib/admin/profile";
+import { deskConfirm, deskError, deskSuccess } from "@/lib/ui/desk-alert";
 import { DeskPagination } from "@/lib/ui/desk-pagination";
 import {
   formatTicketDay,
@@ -151,7 +151,6 @@ export function TicketsManager({
   const currentAdminId = profile.id;
   const national = isNationalAdmin(profile);
   const router = useRouter();
-  const { success, error, info } = useToast();
   const [pending, startTransition] = useTransition();
   const [busyLabel, setBusyLabel] = useState<string | null>(null);
   const busy = pending || Boolean(busyLabel);
@@ -175,23 +174,6 @@ export function TicketsManager({
   const [emailMessage, setEmailMessage] = useState("");
   const [inboxOpen, setInboxOpen] = useState(true);
   const [chatOpen, setChatOpen] = useState(false);
-  const [pendingConfirm, setPendingConfirm] = useState<
-    | { kind: "delete"; ticket: TicketWithMeta }
-    | {
-        kind: "sendEmail";
-        ticket: TicketWithMeta;
-        subject: string;
-        message: string;
-      }
-    | { kind: "sendReply"; ticket: TicketWithMeta; body: string }
-    | { kind: "status"; ticket: TicketWithMeta; status: TicketStatus }
-    | {
-        kind: "discardDrafts";
-        nextId: string | null;
-        closeSheet?: boolean;
-      }
-    | null
-  >(null);
   const [page, setPage] = useState(1);
 
   useEffect(() => {
@@ -285,8 +267,8 @@ export function TicketsManager({
         const diff = weight(a) - weight(b);
         if (diff !== 0) return diff;
       }
-      const at = new Date(a.created_at).getTime();
-      const bt = new Date(b.created_at).getTime();
+      const at = new Date(latestTicketActivityAt(a)).getTime();
+      const bt = new Date(latestTicketActivityAt(b)).getTime();
       return sort === "oldest" ? at - bt : bt - at;
     });
   }, [
@@ -370,21 +352,17 @@ export function TicketsManager({
   }
 
   useEffect(() => {
-    const locked = (sheetOpen && !isDesktop) || Boolean(pendingConfirm);
+    const locked = sheetOpen && !isDesktop;
     if (!locked) return;
     document.body.style.overflow = "hidden";
     return () => {
       document.body.style.overflow = "";
     };
-  }, [sheetOpen, isDesktop, pendingConfirm]);
+  }, [sheetOpen, isDesktop]);
 
   useEffect(() => {
     function onKey(event: KeyboardEvent) {
       if (event.key === "Escape") {
-        if (pendingConfirm) {
-          if (!busy) setPendingConfirm(null);
-          return;
-        }
         if (sheetOpen) closeSheet();
         return;
       }
@@ -396,7 +374,7 @@ export function TicketsManager({
       ) {
         return;
       }
-      if (pendingConfirm || filtered.length === 0) return;
+      if (filtered.length === 0) return;
 
       const isDown = event.key === "ArrowDown" || event.key === "j";
       const isUp = event.key === "ArrowUp" || event.key === "k";
@@ -408,7 +386,7 @@ export function TicketsManager({
         ? Math.min(filtered.length - 1, index + 1)
         : Math.max(0, index === -1 ? 0 : index - 1);
       const nextId = filtered[nextIndex]?.id;
-      if (nextId) openTicket(nextId);
+      if (nextId) void openTicket(nextId);
     }
 
     window.addEventListener("keydown", onKey);
@@ -416,10 +394,8 @@ export function TicketsManager({
   }, [
     filtered,
     selected,
-    pendingConfirm,
     sheetOpen,
     closeSheet,
-    busy,
     hasDrafts,
   ]);
 
@@ -433,11 +409,10 @@ export function TicketsManager({
       try {
         const next = await action();
         if (next.ok) {
-          if (!options?.quiet) success(next.message, "Desk");
-          setPendingConfirm(null);
+          if (!options?.quiet) await deskSuccess({ text: next.message });
           router.refresh();
         } else {
-          error(next.message, "Desk");
+          await deskError({ text: next.message });
         }
       } finally {
         setBusyLabel(null);
@@ -445,15 +420,7 @@ export function TicketsManager({
     });
   }
 
-  function openTicket(id: string) {
-    if (
-      hasDrafts &&
-      selected?.id &&
-      selected.id !== id
-    ) {
-      setPendingConfirm({ kind: "discardDrafts", nextId: id });
-      return;
-    }
+  function selectTicket(id: string) {
     setSelectedId(id);
     if (!isDesktop) setSheetOpen(true);
     else {
@@ -462,13 +429,41 @@ export function TicketsManager({
     }
   }
 
+  async function openTicket(id: string) {
+    if (hasDrafts && selected?.id && selected.id !== id) {
+      const ok = await deskConfirm({
+        title: "Leave without sending?",
+        text: "You have an unsaved reply or email draft. Leaving now discards it.",
+        confirmLabel: "Discard drafts",
+        cancelLabel: "Cancel",
+      });
+      if (!ok) return;
+      clearDrafts();
+    }
+    selectTicket(id);
+  }
+
+  async function requestCloseSheet() {
+    if (hasDrafts) {
+      const ok = await deskConfirm({
+        title: "Leave without sending?",
+        text: "You have an unsaved reply or email draft. Leaving now discards it.",
+        confirmLabel: "Discard drafts",
+        cancelLabel: "Cancel",
+      });
+      if (!ok) return;
+      clearDrafts();
+    }
+    closeSheet();
+  }
+
   function goToPage(next: number) {
     setPage(Math.min(totalPages, Math.max(1, next)));
   }
 
-  function onSubmitNote(event: FormEvent<HTMLFormElement>) {
+  async function onSubmitNote(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!selected) return;
+    if (!selected || busy) return;
     const body = noteDraft.trim();
     if (!body) return;
     const isInternal = tab === "margin";
@@ -480,114 +475,92 @@ export function TicketsManager({
       }, { label: "Saving margin note…" });
       return;
     }
-    setPendingConfirm({
-      kind: "sendReply",
-      ticket: selected,
-      body,
+
+    const ok = await deskConfirm({
+      title: "Send this reply?",
+      text: `Posts to the student portal thread for ${selected.name}. They will see it in Support.`,
+      confirmLabel: "Send reply",
+      cancelLabel: "Cancel",
     });
+    if (!ok) return;
+
+    run(async () => {
+      const result = await addTicketNote(selected.id, body, false);
+      if (result.ok) setNoteDraft("");
+      return result;
+    }, { label: "Sending reply…" });
   }
 
-  function onSubmitEmail(event: FormEvent<HTMLFormElement>) {
+  async function onSubmitEmail(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!selected) return;
+    if (!selected || busy) return;
     const subject = emailSubject.trim();
     const message = emailMessage.trim();
     if (!subject || !message) return;
-    setPendingConfirm({
-      kind: "sendEmail",
-      ticket: selected,
-      subject,
-      message,
+
+    const ok = await deskConfirm({
+      title: "Send this NoReply email?",
+      text: `Emails ${selected.email}. Subject: ${subject}`,
+      confirmLabel: "Send email",
+      cancelLabel: "Cancel",
     });
+    if (!ok) return;
+
+    run(async () => {
+      const result = await sendTicketEmailReply(selected.id, subject, message);
+      if (result.ok) {
+        setEmailMessage("");
+        setEmailSubject(
+          defaultTicketEmailSubject(selected.topic, selected.reference),
+        );
+      }
+      return result;
+    }, { label: "Sending NoReply email…" });
   }
 
-  function requestStatus(status: TicketStatus) {
-    if (!selected) return;
+  async function requestStatus(status: TicketStatus) {
+    if (!selected || busy) return;
     if (status === "resolved" || status === "closed") {
-      setPendingConfirm({ kind: "status", ticket: selected, status });
-      return;
+      const ok = await deskConfirm({
+        title: `Move to ${STATUS_META[status].label}?`,
+        text: `${STATUS_META[status].hint}. This settles the note for ${selected.name}.`,
+        confirmLabel: `Move to ${STATUS_META[status].label}`,
+        cancelLabel: "Cancel",
+      });
+      if (!ok) return;
     }
     run(() => updateTicketStatus(selected.id, status), {
       label: `Moving to ${STATUS_META[status].label}…`,
     });
   }
 
-  function confirmPendingAction() {
-    if (!pendingConfirm || busy) return;
+  async function requestDelete() {
+    if (!selected || busy) return;
+    const ticket = selected;
+    const ok = await deskConfirm({
+      title: `Delete ${ticket.reference}?`,
+      text: `This permanently removes the note from ${ticket.name} and any staff margin notes.`,
+      confirmLabel: "Delete forever",
+      cancelLabel: "Cancel",
+      danger: true,
+    });
+    if (!ok) return;
 
-    switch (pendingConfirm.kind) {
-      case "delete": {
-        const id = pendingConfirm.ticket.id;
-        run(async () => {
-          const result = await deleteTicket(id);
-          if (result.ok) {
-            setSheetOpen(false);
-            if (selectedId === id) setSelectedId(null);
-          }
-          return result;
-        }, { label: "Removing from desk…" });
-        return;
+    run(async () => {
+      const result = await deleteTicket(ticket.id);
+      if (result.ok) {
+        setSheetOpen(false);
+        if (selectedId === ticket.id) setSelectedId(null);
       }
-      case "sendEmail": {
-        const { ticket, subject, message } = pendingConfirm;
-        run(async () => {
-          const result = await sendTicketEmailReply(
-            ticket.id,
-            subject,
-            message,
-          );
-          if (result.ok) {
-            setEmailMessage("");
-            setEmailSubject(
-              defaultTicketEmailSubject(ticket.topic, ticket.reference),
-            );
-          }
-          return result;
-        }, { label: "Sending NoReply email…" });
-        return;
-      }
-      case "sendReply": {
-        const { ticket, body } = pendingConfirm;
-        run(async () => {
-          const result = await addTicketNote(ticket.id, body, false);
-          if (result.ok) setNoteDraft("");
-          return result;
-        }, { label: "Sending reply…" });
-        return;
-      }
-      case "status": {
-        const { ticket, status } = pendingConfirm;
-        run(() => updateTicketStatus(ticket.id, status), {
-          label: `Moving to ${STATUS_META[status].label}…`,
-        });
-        return;
-      }
-      case "discardDrafts": {
-        const { nextId, closeSheet: shouldClose } = pendingConfirm;
-        clearDrafts();
-        setPendingConfirm(null);
-        if (shouldClose) {
-          setSheetOpen(false);
-          return;
-        }
-        if (nextId) {
-          setSelectedId(nextId);
-          if (!isDesktop) setSheetOpen(true);
-          else {
-            setChatOpen(true);
-            window.localStorage.setItem(DESK_CHAT_KEY, "1");
-          }
-        }
-      }
-    }
+      return result;
+    }, { label: "Removing from desk…" });
   }
 
-  async function copyValue(value: string, label: string) {
+  async function copyValue(value: string, _label: string) {
     try {
       await navigator.clipboard.writeText(value);
-      info(`${label} copied to clipboard.`, "Desk");
     } catch {
-      error("Clipboard is unavailable in this browser.", "Desk");
+      await deskError({ text: "Clipboard is unavailable in this browser." });
     }
   }
 
@@ -652,9 +625,9 @@ export function TicketsManager({
       onRelease={() =>
         run(() => releaseTicket(selected.id), { label: "Releasing note…" })
       }
-      onDelete={() =>
-        setPendingConfirm({ kind: "delete", ticket: selected })
-      }
+      onDelete={() => {
+        void requestDelete();
+      }}
       onCopy={copyValue}
       onEditNote={(noteId, body) =>
         run(() => updateTicketNote(noteId, body), {
@@ -915,8 +888,8 @@ export function TicketsManager({
               className="border border-stone bg-white/70 px-2.5 py-1.5 text-sm outline-none focus:border-pine"
               aria-label="Sort tickets"
             >
-              <option value="newest">Newest first</option>
-              <option value="oldest">Oldest first</option>
+              <option value="newest">Latest activity</option>
+              <option value="oldest">Oldest activity</option>
               <option value="urgent">Urgent first</option>
             </select>
             <button
@@ -1074,15 +1047,7 @@ export function TicketsManager({
             <button
               type="button"
               onClick={() => {
-                if (hasDrafts) {
-                  setPendingConfirm({
-                    kind: "discardDrafts",
-                    nextId: null,
-                    closeSheet: true,
-                  });
-                  return;
-                }
-                closeSheet();
+                void requestCloseSheet();
               }}
               className="inline-flex h-9 w-9 shrink-0 items-center justify-center border border-stone text-pine"
               aria-label="Back to inbox"
@@ -1108,157 +1073,6 @@ export function TicketsManager({
           </div>
           <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
             {detail}
-          </div>
-        </div>
-      ) : null}
-
-      {pendingConfirm ? (
-        <div
-          className="fixed inset-0 z-[90] flex items-end justify-center bg-ink/45 p-4 sm:items-center"
-          role="presentation"
-          onClick={() => !busy && setPendingConfirm(null)}
-        >
-          <div
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="desk-confirm-title"
-            className="relative w-full max-w-md border border-stone bg-mist p-6 text-ink shadow-[0_16px_48px_rgba(20,53,44,0.2)] sm:p-7"
-            onClick={(event) => event.stopPropagation()}
-          >
-            <DeskLoaderOverlay
-              active={busy}
-              label={busyLabel ?? "Working…"}
-            />
-            {(() => {
-              const copy =
-                pendingConfirm.kind === "delete"
-                  ? {
-                      eyebrow: "Remove from desk",
-                      title: `Delete ${pendingConfirm.ticket.reference}?`,
-                      body: (
-                        <>
-                          This permanently removes the note from{" "}
-                          <span className="font-medium text-ink">
-                            {pendingConfirm.ticket.name}
-                          </span>{" "}
-                          and any staff margin notes.
-                        </>
-                      ),
-                      confirmLabel: "Delete forever",
-                      destructive: true,
-                    }
-                  : pendingConfirm.kind === "sendEmail"
-                    ? {
-                        eyebrow: "Send email",
-                        title: "Send this NoReply email?",
-                        body: (
-                          <>
-                            Emails{" "}
-                            <span className="font-medium text-ink">
-                              {pendingConfirm.ticket.email}
-                            </span>
-                            . Subject:{" "}
-                            <span className="font-medium text-ink">
-                              {pendingConfirm.subject}
-                            </span>
-                          </>
-                        ),
-                        confirmLabel: "Send email",
-                        destructive: false,
-                      }
-                    : pendingConfirm.kind === "sendReply"
-                      ? {
-                          eyebrow: "Portal reply",
-                          title: "Send this reply?",
-                          body: (
-                            <>
-                              Posts to the student portal thread for{" "}
-                              <span className="font-medium text-ink">
-                                {pendingConfirm.ticket.name}
-                              </span>
-                              . They will see it in Support.
-                            </>
-                          ),
-                          confirmLabel: "Send reply",
-                          destructive: false,
-                        }
-                      : pendingConfirm.kind === "status"
-                        ? {
-                            eyebrow: "Move on the path",
-                            title: `Move to ${STATUS_META[pendingConfirm.status].label}?`,
-                            body: (
-                              <>
-                                {STATUS_META[pendingConfirm.status].hint}. This
-                                settles the note for{" "}
-                                <span className="font-medium text-ink">
-                                  {pendingConfirm.ticket.name}
-                                </span>
-                                .
-                              </>
-                            ),
-                            confirmLabel: `Move to ${STATUS_META[pendingConfirm.status].label}`,
-                            destructive: false,
-                          }
-                        : {
-                            eyebrow: "Unsaved drafts",
-                            title: "Leave without sending?",
-                            body: (
-                              <>
-                                You have an unsaved reply or email draft. Leaving
-                                now discards it.
-                              </>
-                            ),
-                            confirmLabel: "Discard drafts",
-                            destructive: false,
-                          };
-
-              return (
-                <>
-                  <p
-                    className={`text-[0.65rem] font-medium uppercase tracking-[0.16em] ${
-                      copy.destructive ? "text-red-800/80" : "text-celadon"
-                    }`}
-                  >
-                    {copy.eyebrow}
-                  </p>
-                  <h3
-                    id="desk-confirm-title"
-                    className="mt-3 font-display text-2xl tracking-[-0.02em] text-pine"
-                  >
-                    {copy.title}
-                  </h3>
-                  <p className="mt-3 text-sm leading-relaxed text-ink/70">
-                    {copy.body}
-                  </p>
-                  <div className="mt-7 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
-                    <button
-                      type="button"
-                      disabled={busy}
-                      onClick={() => setPendingConfirm(null)}
-                      className="border border-pine/25 px-4 py-2.5 text-sm font-medium text-pine transition-colors hover:border-pine disabled:opacity-60"
-                    >
-                      Cancel
-                    </button>
-                    <button
-                      type="button"
-                      disabled={busy}
-                      onClick={confirmPendingAction}
-                      className={`inline-flex min-h-[2.5rem] min-w-[9rem] items-center justify-center px-4 py-2.5 text-sm font-medium text-mist transition-colors disabled:opacity-60 ${
-                        copy.destructive
-                          ? "bg-[#5c2a2a] hover:bg-red-900"
-                          : "bg-pine hover:bg-celadon"
-                      }`}
-                    >
-                      {busy ? (
-                        <DeskLoader label="Working…" tone="mist" />
-                      ) : (
-                        copy.confirmLabel
-                      )}
-                    </button>
-                  </div>
-                </>
-              );
-            })()}
           </div>
         </div>
       ) : null}

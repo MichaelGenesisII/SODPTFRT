@@ -18,10 +18,9 @@ import {
   submitBankProof,
 } from "@/app/student/payments/actions";
 import { PhotoUploadCard } from "@/components/student/photo-upload-card";
-import { DeskConfirmModal } from "@/components/ui/desk-confirm-modal";
 import { ImageFileField } from "@/components/student/image-file-field";
 import { DeskLoader, DeskLoaderOverlay } from "@/components/ui/desk-loader";
-import { useToast } from "@/components/ui/toast";
+import { deskConfirm, deskError, deskSuccess } from "@/lib/ui/desk-alert";
 import { BANK_TRANSFER, formatGbp } from "@/lib/enrol/payment";
 import {
   STUDENT_PAYMENT_CATALOGUE,
@@ -43,8 +42,6 @@ import {
 } from "@/lib/payments/fees";
 
 type PaymentsTab = "due" | "review" | "paid" | "history";
-
-type PendingPayConfirm = "card" | "proof";
 
 export function StudentPaymentsRefresh({ children }: { children: ReactNode }) {
   useRefreshOnVisible();
@@ -430,13 +427,9 @@ function FeeRow({
     feeType === "tuition" && paidSoFar > 0 && !passportUploaded;
   const [amount, setAmount] = useState("");
   const [mode, setMode] = useState<"idle" | "bank">("idle");
-  const [pendingConfirm, setPendingConfirm] =
-    useState<PendingPayConfirm | null>(null);
-  const [proofForm, setProofForm] = useState<HTMLFormElement | null>(null);
   const [pending, startTransition] = useTransition();
   const [busyLabel, setBusyLabel] = useState<string | null>(null);
   const busy = pending || Boolean(busyLabel);
-  const { success, error } = useToast();
   const router = useRouter();
 
   const needsPhoto =
@@ -451,10 +444,9 @@ function FeeRow({
       try {
         const result = await startStripeCheckout(feeType, amount);
         if (!result.ok || !result.url) {
-          error(result.message);
+          await deskError({ text: result.message });
           return;
         }
-        setPendingConfirm(null);
         window.location.href = result.url;
       } finally {
         setBusyLabel(null);
@@ -462,18 +454,24 @@ function FeeRow({
     });
   }
 
-  function requestCardCheckout() {
+  async function requestCardCheckout() {
     const parsed = Number(String(amount).trim().replace(/[£,]/g, ""));
     if (!Number.isFinite(parsed) || parsed <= 0) {
-      error("Enter a valid amount.");
+      await deskError({ text: "Enter a valid amount." });
       return;
     }
-    setPendingConfirm("card");
+    const ok = await deskConfirm({
+      title: `Pay ${formatGbp(parsed)} by card?`,
+      text: `You will leave the portal for secure Stripe checkout for ${fee.label}. Your balance updates when payment is confirmed.`,
+      confirmLabel: "Continue to checkout",
+      cancelLabel: "Cancel",
+    });
+    if (!ok) return;
+    payCard();
   }
 
-  function submitProof() {
-    if (!proofForm) return;
-    const formData = new FormData(proofForm);
+  function submitProof(form: HTMLFormElement) {
+    const formData = new FormData(form);
     formData.set("feeType", feeType);
     formData.set("amount", amount);
     setBusyLabel("Uploading bank proof…");
@@ -481,14 +479,15 @@ function FeeRow({
       try {
         const result = await submitBankProof(formData);
         if (!result.ok) {
-          error(result.message);
+          await deskError({ text: result.message });
           return;
         }
-        success(result.message);
+        await deskSuccess({
+          title: "Proof submitted",
+          text: result.message,
+        });
         setMode("idle");
-        setPendingConfirm(null);
-        proofForm.reset();
-        setProofForm(null);
+        form.reset();
         router.refresh();
       } finally {
         setBusyLabel(null);
@@ -496,10 +495,17 @@ function FeeRow({
     });
   }
 
-  function onProof(event: FormEvent<HTMLFormElement>) {
+  async function onProof(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    setProofForm(event.currentTarget);
-    setPendingConfirm("proof");
+    const form = event.currentTarget;
+    const ok = await deskConfirm({
+      title: "Submit this proof?",
+      text: `Your proof goes to the admin desk for review. Use reference ${referenceCompact} on the transfer. You cannot send another proof while one is in review.`,
+      confirmLabel: "Submit proof",
+      cancelLabel: "Cancel",
+    });
+    if (!ok) return;
+    submitProof(form);
   }
 
   return (
@@ -739,44 +745,6 @@ function FeeRow({
           ) : null}
         </div>
       ) : null}
-
-      <DeskConfirmModal
-        open={Boolean(pendingConfirm)}
-        onClose={() => !busy && setPendingConfirm(null)}
-        onConfirm={() => {
-          if (pendingConfirm === "card") payCard();
-          else if (pendingConfirm === "proof") submitProof();
-        }}
-        eyebrow={pendingConfirm === "proof" ? "Bank transfer" : "Card checkout"}
-        title={
-          pendingConfirm === "proof"
-            ? "Submit this proof?"
-            : `Pay ${formatGbp(Number(String(amount).replace(/[£,]/g, "")) || 0)} by card?`
-        }
-        body={
-          pendingConfirm === "proof" ? (
-            <>
-              Your proof goes to the admin desk for review. Use reference{" "}
-              <span className="font-mono font-medium text-ink">
-                {referenceCompact}
-              </span>{" "}
-              on the transfer. You cannot send another proof while one is in
-              review.
-            </>
-          ) : (
-            <>
-              You will leave the portal for secure Stripe checkout for{" "}
-              <span className="font-medium text-ink">{fee.label}</span>. Your
-              balance updates when payment is confirmed.
-            </>
-          )
-        }
-        confirmLabel={
-          pendingConfirm === "proof" ? "Submit proof" : "Continue to checkout"
-        }
-        busy={busy}
-        busyLabel={busyLabel ?? "Working…"}
-      />
     </li>
   );
 }

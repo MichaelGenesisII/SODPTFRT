@@ -7,25 +7,20 @@ import {
   setTeacherActive,
   updateTeacherProfile,
 } from "@/app/admin/finance/teachers/actions";
-import { DeskConfirmModal } from "@/components/ui/desk-confirm-modal";
 import { DeskLoader, DeskLoaderOverlay } from "@/components/ui/desk-loader";
 import { StaffAvatar } from "@/components/ui/staff-avatar";
-import { useToast } from "@/components/ui/toast";
 import { createTemporaryPassword } from "@/lib/enrol/reference";
 import {
   teacherDisplayName,
   type TeacherProfile,
 } from "@/lib/teacher/types";
+import { deskConfirm, deskError, deskSuccess } from "@/lib/ui/desk-alert";
 
 const fieldClass =
   "w-full border border-stone bg-white/70 px-4 py-3 text-sm outline-none transition-[border-color,background-color] duration-300 focus:border-pine focus:bg-mist";
 
 const editFieldClass =
   "mt-1.5 w-full border border-stone bg-white/70 px-3 py-2.5 text-sm outline-none focus:border-pine";
-
-type PendingConfirm =
-  | { kind: "delete"; teacher: TeacherProfile }
-  | { kind: "toggleActive"; teacher: TeacherProfile; activate: boolean };
 
 export function TeachersFinanceManager({
   initialTeachers,
@@ -34,7 +29,6 @@ export function TeachersFinanceManager({
   initialTeachers: TeacherProfile[];
   onInviteSurfaceChange?: (open: boolean) => void;
 }) {
-  const { success, error, info } = useToast();
   const [pending, startTransition] = useTransition();
   const [busyLabel, setBusyLabel] = useState<string | null>(null);
   const [teachers, setTeachers] = useState(initialTeachers);
@@ -43,9 +37,6 @@ export function TeachersFinanceManager({
   const [fullName, setFullName] = useState("");
   const [password, setPassword] = useState("");
   const [lastTemp, setLastTemp] = useState<string | null>(null);
-  const [pendingConfirm, setPendingConfirm] = useState<PendingConfirm | null>(
-    null,
-  );
   const [editTarget, setEditTarget] = useState<TeacherProfile | null>(null);
   const [editName, setEditName] = useState("");
   const [editEmail, setEditEmail] = useState("");
@@ -57,10 +48,9 @@ export function TeachersFinanceManager({
   }, [initialTeachers]);
 
   useEffect(() => {
-    if (!pendingConfirm && !editTarget) return;
+    if (!editTarget) return;
     function onKey(event: KeyboardEvent) {
       if (event.key === "Escape" && !busy) {
-        setPendingConfirm(null);
         setEditTarget(null);
       }
     }
@@ -70,7 +60,7 @@ export function TeachersFinanceManager({
       document.removeEventListener("keydown", onKey);
       document.body.style.overflow = "";
     };
-  }, [pendingConfirm, editTarget, busy]);
+  }, [editTarget, busy]);
 
   function openInvite() {
     setInviting(true);
@@ -104,16 +94,21 @@ export function TeachersFinanceManager({
         if (result.ok) {
           const emailFailed = /welcome email could not/i.test(result.message);
           if (emailFailed) {
-            error(result.message, "Teacher created");
+            await deskError({
+              title: "Teacher created",
+              text: result.message,
+            });
           } else {
-            success(result.message, "Teachers");
+            await deskSuccess({ text: result.message });
           }
           onOk?.(result.message, result.temporaryPassword);
         } else {
-          error(result.message, "Teachers");
+          await deskError({ text: result.message });
         }
       } catch {
-        error("Something went wrong. Please try again.", "Teachers");
+        await deskError({
+          text: "Something went wrong. Please try again.",
+        });
       } finally {
         setBusyLabel(null);
       }
@@ -152,12 +147,12 @@ export function TeachersFinanceManager({
     setEditEmail(teacher.email);
   }
 
-  function saveEdit() {
+  async function saveEdit() {
     if (!editTarget) return;
     const nextName = editName.trim();
     const nextEmail = editEmail.trim().toLowerCase();
     if (!nextEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(nextEmail)) {
-      error("Enter a valid email address.", "Teachers");
+      await deskError({ text: "Enter a valid email address." });
       return;
     }
     const id = editTarget.id;
@@ -186,21 +181,44 @@ export function TeachersFinanceManager({
     );
   }
 
-  function confirmPendingAction() {
-    if (!pendingConfirm || busy) return;
-    if (pendingConfirm.kind === "delete") {
-      const id = pendingConfirm.teacher.id;
-      run(
-        () => deleteTeacher({ teacherId: id }),
-        () => {
-          setTeachers((prev) => prev.filter((t) => t.id !== id));
-          setPendingConfirm(null);
-        },
-        "Deleting teacher…",
-      );
-      return;
-    }
-    const { teacher, activate } = pendingConfirm;
+  async function requestDelete(teacher: TeacherProfile) {
+    if (busy) return;
+    const ok = await deskConfirm({
+      title: `Delete ${teacherDisplayName(teacher)}?`,
+      text: "This removes their teacher portal access. No email is sent. If they have confirmed teaching history, deletion is blocked — deactivate instead.",
+      confirmLabel: "Delete teacher",
+      cancelLabel: "Cancel",
+      danger: true,
+    });
+    if (!ok) return;
+    const id = teacher.id;
+    run(
+      () => deleteTeacher({ teacherId: id }),
+      () => {
+        setTeachers((prev) => prev.filter((t) => t.id !== id));
+      },
+      "Deleting teacher…",
+    );
+  }
+
+  async function requestToggleActive(
+    teacher: TeacherProfile,
+    activate: boolean,
+  ) {
+    if (busy) return;
+    const name = teacherDisplayName(teacher);
+    const ok = await deskConfirm({
+      title: activate
+        ? "Reactivate this teacher?"
+        : "Deactivate this teacher?",
+      text: activate
+        ? `${name} will be able to sign in to the teacher portal again.`
+        : `${name} will not be able to sign in until reactivated. Their teaching history stays on file.`,
+      confirmLabel: activate ? "Reactivate" : "Deactivate",
+      cancelLabel: "Cancel",
+      danger: !activate,
+    });
+    if (!ok) return;
     run(
       () =>
         setTeacherActive({
@@ -213,56 +231,10 @@ export function TeachersFinanceManager({
             t.id === teacher.id ? { ...t, is_active: activate } : t,
           ),
         );
-        setPendingConfirm(null);
       },
       activate ? "Reactivating…" : "Deactivating…",
     );
   }
-
-  const confirmCopy =
-    pendingConfirm?.kind === "delete"
-      ? {
-          eyebrow: "Teachers",
-          title: `Delete ${teacherDisplayName(pendingConfirm.teacher)}?`,
-          body: "This removes their teacher portal access. No email is sent. If they have confirmed teaching history, deletion is blocked — deactivate instead.",
-          confirmLabel: "Delete teacher",
-          destructive: true,
-          busyLabel: "Deleting teacher…",
-        }
-      : pendingConfirm?.kind === "toggleActive"
-        ? pendingConfirm.activate
-          ? {
-              eyebrow: "Reactivate",
-              title: "Reactivate this teacher?",
-              body: (
-                <>
-                  <span className="font-medium text-ink">
-                    {teacherDisplayName(pendingConfirm.teacher)}
-                  </span>{" "}
-                  will be able to sign in to the teacher portal again.
-                </>
-              ),
-              confirmLabel: "Reactivate",
-              destructive: false,
-              busyLabel: "Reactivating…",
-            }
-          : {
-              eyebrow: "Deactivate",
-              title: "Deactivate this teacher?",
-              body: (
-                <>
-                  <span className="font-medium text-ink">
-                    {teacherDisplayName(pendingConfirm.teacher)}
-                  </span>{" "}
-                  will not be able to sign in until reactivated. Their teaching
-                  history stays on file.
-                </>
-              ),
-              confirmLabel: "Deactivate",
-              destructive: true,
-              busyLabel: "Deactivating…",
-            }
-        : null;
 
   if (inviting) {
     return (
@@ -345,9 +317,7 @@ export function TeachersFinanceManager({
                   type="button"
                   disabled={busy}
                   onClick={() => {
-                    const next = createTemporaryPassword(12);
-                    setPassword(next);
-                    info("Temporary password ready.", "Generated");
+                    setPassword(createTemporaryPassword(12));
                   }}
                   className="text-xs font-medium text-pine underline decoration-pine/30 underline-offset-4 disabled:opacity-50"
                 >
@@ -410,7 +380,7 @@ export function TeachersFinanceManager({
   return (
     <div className="relative space-y-6">
       <DeskLoaderOverlay
-        active={busy && !pendingConfirm && !editTarget}
+        active={busy && !editTarget}
         label={busyLabel ?? "Working…"}
       />
 
@@ -485,11 +455,7 @@ export function TeachersFinanceManager({
                     type="button"
                     disabled={busy}
                     onClick={() =>
-                      setPendingConfirm({
-                        kind: "toggleActive",
-                        teacher,
-                        activate: !teacher.is_active,
-                      })
+                      void requestToggleActive(teacher, !teacher.is_active)
                     }
                     className="border border-pine/25 px-3 py-2 text-sm text-pine hover:border-pine disabled:opacity-50"
                   >
@@ -498,9 +464,7 @@ export function TeachersFinanceManager({
                   <button
                     type="button"
                     disabled={busy}
-                    onClick={() =>
-                      setPendingConfirm({ kind: "delete", teacher })
-                    }
+                    onClick={() => void requestDelete(teacher)}
                     className="border border-red-800/25 px-3 py-2 text-sm text-red-900 hover:border-red-800/50 disabled:opacity-50"
                   >
                     Delete
@@ -511,21 +475,6 @@ export function TeachersFinanceManager({
           </ul>
         )}
       </section>
-
-      {confirmCopy ? (
-        <DeskConfirmModal
-          open={Boolean(pendingConfirm)}
-          onClose={() => !busy && setPendingConfirm(null)}
-          onConfirm={confirmPendingAction}
-          eyebrow={confirmCopy.eyebrow}
-          title={confirmCopy.title}
-          body={confirmCopy.body}
-          confirmLabel={confirmCopy.confirmLabel}
-          destructive={confirmCopy.destructive}
-          busy={busy}
-          busyLabel={busyLabel ?? confirmCopy.busyLabel}
-        />
-      ) : null}
 
       {editTarget ? (
         <div
@@ -592,7 +541,7 @@ export function TeachersFinanceManager({
               <button
                 type="button"
                 disabled={busy}
-                onClick={saveEdit}
+                onClick={() => void saveEdit()}
                 className="inline-flex min-h-[2.5rem] min-w-[9rem] items-center justify-center bg-pine px-4 py-2.5 text-sm font-medium text-mist hover:bg-celadon disabled:opacity-60"
               >
                 {busy ? (

@@ -13,7 +13,7 @@ import {
   type TakeActionResult,
 } from "@/app/exam/actions";
 import { ExamSubmitOverlay } from "@/components/exam/exam-submit-overlay";
-import { DeskConfirmModal } from "@/components/ui/desk-confirm-modal";
+import { deskConfirm } from "@/lib/ui/desk-alert";
 import type {
   Exam,
   ExamAnswer,
@@ -111,7 +111,6 @@ export function ExamRunner({
   const [index, setIndex] = useState(0);
   const [pending, startTransition] = useTransition();
   const [submitting, setSubmitting] = useState(false);
-  const [confirmSubmitOpen, setConfirmSubmitOpen] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [saveHint, setSaveHint] = useState<string | null>(null);
   const [answers, setAnswers] = useState<Record<string, Record<string, unknown>>>(
@@ -223,7 +222,6 @@ export function ExamRunner({
         setMessage(result.message);
         if (result.ok) {
           clearLocalDraft(attempt.id);
-          setConfirmSubmitOpen(false);
           onSubmitted?.(result);
           return;
         }
@@ -233,6 +231,19 @@ export function ExamRunner({
         setSubmitting(false);
       }
     });
+  }
+
+  function requestSubmit() {
+    if (submitting || pending || attempt.status !== "in_progress") return;
+    void (async () => {
+      const ok = await deskConfirm({
+        title: "Submit this exam?",
+        text: `You answered ${answeredCount} of ${questions.length} questions. After submission you cannot change answers unless a retake is still available.`,
+        confirmLabel: "Submit exam",
+      });
+      if (!ok) return;
+      doSubmit();
+    })();
   }
 
   useEffect(() => {
@@ -355,7 +366,7 @@ export function ExamRunner({
               <button
                 type="button"
                 disabled={submitting || attempt.status !== "in_progress"}
-                onClick={() => setConfirmSubmitOpen(true)}
+                onClick={requestSubmit}
                 className="bg-celadon px-5 py-2.5 text-sm font-medium text-pine transition hover:brightness-110 disabled:opacity-50"
               >
                 {submitting ? "Submitting…" : "Submit exam"}
@@ -364,24 +375,6 @@ export function ExamRunner({
           </div>
         </div>
       </main>
-
-      <DeskConfirmModal
-        open={confirmSubmitOpen}
-        onClose={() => !submitting && setConfirmSubmitOpen(false)}
-        onConfirm={doSubmit}
-        eyebrow="Finish sitting"
-        title="Submit this exam?"
-        body={
-          <>
-            You answered {answeredCount} of {questions.length} questions. After
-            submission you cannot change answers unless a retake is still
-            available.
-          </>
-        }
-        confirmLabel="Submit exam"
-        busy={submitting}
-        busyLabel="Submitting…"
-      />
     </div>
   );
 }

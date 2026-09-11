@@ -40,6 +40,7 @@ import {
   teacherClassPortalUrl,
 } from "@/lib/email/class-mail";
 import { portalBaseUrl } from "@/lib/email/backend";
+import { CAMPAIGN_MIN_GAP_MS } from "@/lib/email/dispatch";
 import { publicActionMessage } from "@/lib/safe-action-message";
 import { SOD_SITE } from "@/lib/site-nav";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
@@ -1136,7 +1137,6 @@ export async function setClassTeachingDelivery(input: {
   revalidatePath("/teacher");
   revalidatePath("/teacher/classes");
   revalidatePath(`/teacher/classes/${input.classId}`);
-  revalidatePath("/teacher/history");
   revalidatePath("/finance");
   revalidatePath("/finance/periods");
 
@@ -1806,7 +1806,11 @@ export async function createZoomClass(input: {
         .filter(Boolean)
         .join("\n\n") || undefined;
 
-    for (const recipient of recipients) {
+    for (let i = 0; i < recipients.length; i += 1) {
+      if (i > 0) {
+        await new Promise((resolve) => setTimeout(resolve, CAMPAIGN_MIN_GAP_MS));
+      }
+      const recipient = recipients[i]!;
       const sent = await sendClassInviteEmail({
         to: recipient.email,
         firstName: recipient.firstName,

@@ -21,8 +21,7 @@ import {
   StudentDossier,
   type StudentPendingConfirm,
 } from "@/components/admin/student-dossier";
-import { DeskLoader, DeskLoaderOverlay } from "@/components/ui/desk-loader";
-import { useToast } from "@/components/ui/toast";
+import { DeskLoaderOverlay } from "@/components/ui/desk-loader";
 import {
   ENROLMENT_STATUS_META,
   formatAdminDate,
@@ -34,6 +33,7 @@ import type { AdminProfile } from "@/lib/admin/profile";
 import { SATURDAY_SLOT_LABELS } from "@/lib/cohorts/saturday";
 import { formatGbp } from "@/lib/payments/fees";
 import { formatBatchPlacementLabel, type Batch, type Parish } from "@/lib/parishes";
+import { deskConfirm, deskError, deskSuccess } from "@/lib/ui/desk-alert";
 
 export type { StudentPendingConfirm };
 
@@ -56,27 +56,11 @@ export function StudentDetailWorkspace({
   backHref?: string;
 }) {
   const router = useRouter();
-  const { success, error, info } = useToast();
   const [pending, startTransition] = useTransition();
   const [busyLabel, setBusyLabel] = useState<string | null>(null);
   const busy = pending || Boolean(busyLabel);
   const [revealedPassword, setRevealedPassword] = useState<string | null>(null);
-  const [pendingConfirm, setPendingConfirm] =
-    useState<StudentPendingConfirm | null>(null);
   const [paymentEmptyOpen, setPaymentEmptyOpen] = useState(false);
-
-  useEffect(() => {
-    if (!pendingConfirm) return;
-    function onKey(event: KeyboardEvent) {
-      if (event.key === "Escape" && !busy) setPendingConfirm(null);
-    }
-    document.addEventListener("keydown", onKey);
-    document.body.style.overflow = "hidden";
-    return () => {
-      document.removeEventListener("keydown", onKey);
-      document.body.style.overflow = "";
-    };
-  }, [pendingConfirm, busy]);
 
   useEffect(() => {
     if (!paymentEmptyOpen) return;
@@ -93,31 +77,38 @@ export function StudentDetailWorkspace({
 
   function run(
     action: () => Promise<StudentActionResult>,
-    options?: { clearPassword?: boolean; label?: string; leaveAfter?: boolean },
+    options?: {
+      clearPassword?: boolean;
+      label?: string;
+      leaveAfter?: boolean;
+      quiet?: boolean;
+    },
   ) {
     setBusyLabel(options?.label ?? "Working…");
     startTransition(async () => {
       try {
         const next = await action();
         if (next.ok) {
-          success(next.message, "Students");
           if (next.temporaryPassword) {
             setRevealedPassword(next.temporaryPassword);
-            info(
-              `Temporary password: ${next.temporaryPassword}`,
-              "Share securely",
-            );
           } else if (options?.clearPassword) {
             setRevealedPassword(null);
           }
-          setPendingConfirm(null);
+          if (!options?.quiet && !next.temporaryPassword) {
+            await deskSuccess({ text: next.message });
+          }
           if (options?.leaveAfter) {
             router.push(backHref);
           }
           router.refresh();
         } else {
-          error(next.message, "Students");
+          await deskError({ text: next.message });
         }
+      } catch (err) {
+        console.error("[students/detail]", err);
+        await deskError({
+          text: "Something went wrong. Please try again.",
+        });
       } finally {
         setBusyLabel(null);
       }
@@ -127,105 +118,218 @@ export function StudentDetailWorkspace({
   async function copyPassword(value: string) {
     try {
       await navigator.clipboard.writeText(value);
-      success("Temporary password copied.", "Students");
     } catch {
-      error("Could not copy to clipboard.", "Students");
+      await deskError({ text: "Could not copy to clipboard." });
     }
   }
 
-  function confirmPendingAction() {
-    if (!pendingConfirm || busy) return;
-    switch (pendingConfirm.kind) {
-      case "delete":
+  async function requestConfirm(confirm: StudentPendingConfirm) {
+    if (busy) return;
+    const name = studentFullName(student);
+
+    switch (confirm.kind) {
+      case "delete": {
+        const ok = await deskConfirm({
+          title: `Remove ${name}?`,
+          text: `This permanently deletes their sign-in account, student seat, and enrolment record. Joined ${formatAdminDate(student.created_at)}. This cannot be undone.`,
+          confirmLabel: "Remove permanently",
+          danger: true,
+        });
+        if (!ok) return;
         run(() => deleteStudentAccount(student.id), {
           clearPassword: true,
           label: "Removing student…",
           leaveAfter: true,
+          quiet: true,
         });
         return;
-      case "pause":
+      }
+      case "pause": {
+        const ok = await deskConfirm({
+          title: "Pause this student seat?",
+          text: `${name} will not be able to sign in until you reactivate the seat. They are notified by email.`,
+          confirmLabel: "Pause seat",
+          danger: true,
+        });
+        if (!ok) return;
         run(() => setStudentActive(student.id, false), {
           label: "Pausing seat…",
         });
         return;
-      case "reactivate":
+      }
+      case "reactivate": {
+        const ok = await deskConfirm({
+          title: "Reactivate this student seat?",
+          text: `${name} will be able to sign in again.`,
+          confirmLabel: "Reactivate",
+        });
+        if (!ok) return;
         run(() => setStudentActive(student.id, true), {
           label: "Reactivating…",
         });
         return;
-      case "password":
+      }
+      case "password": {
+        const ok = await deskConfirm({
+          title: "Issue a new temporary password?",
+          text: `A new password will be generated for ${name}. Their current password will stop working. Share the new one securely.`,
+          confirmLabel: "Issue password",
+        });
+        if (!ok) return;
         run(() => resetStudentPassword(student.id), {
           label: "Resetting password…",
+          quiet: true,
         });
         return;
-      case "clearManuals":
+      }
+      case "clearManuals": {
+        const ok = await deskConfirm({
+          title: "Clear all manuals send marks?",
+          text: `This resets the sent status for parts 1–3 on ${name}’s file so you can send again. It does not recall emails already delivered.`,
+          confirmLabel: "Clear sends",
+        });
+        if (!ok) return;
         run(() => setManualsSent(student.id, false), {
           label: "Clearing manuals…",
         });
         return;
-      case "upgrade":
+      }
+      case "upgrade": {
+        const ok = await deskConfirm({
+          title: "Upgrade to active student?",
+          text: `${name} will move from the alumni portal to a full student seat.`,
+          confirmLabel: "Upgrade seat",
+        });
+        if (!ok) return;
         run(() => upgradeAlumniToStudent(student.id), {
           label: "Upgrading seat…",
         });
         return;
-      case "sendManuals":
-        run(() => sendManualsPart(student.id, pendingConfirm.part), {
-          label: `Sending manuals ${pendingConfirm.part}…`,
+      }
+      case "sendManuals": {
+        const ok = await deskConfirm({
+          title: `Send manuals part ${confirm.part} of 3?`,
+          text: `${name} will receive an email for this manuals part. Only send when the files are ready.`,
+          confirmLabel: `Send part ${confirm.part}`,
+        });
+        if (!ok) return;
+        run(() => sendManualsPart(student.id, confirm.part), {
+          label: `Sending manuals ${confirm.part}…`,
         });
         return;
-      case "savePlacement":
+      }
+      case "savePlacement": {
+        const parishName =
+          parishes.find((p) => p.id === confirm.parishId)?.name ??
+          "selected parish";
+        const batch =
+          batches.find((b) => b.id === confirm.batchId) ?? null;
+        const batchName = batch
+          ? formatBatchPlacementLabel(batch)
+          : "selected batch";
+        const saturdayOption = confirm.saturdayCohortId
+          ? saturdayOptions.find((o) => o.id === confirm.saturdayCohortId)
+          : null;
+        const saturdayLabel = saturdayOption
+          ? saturdayOption.label ||
+            SATURDAY_SLOT_LABELS[saturdayOption.saturday_slot]
+          : null;
+        const reasonBit = confirm.reason.trim()
+          ? ` Reason: ${confirm.reason.trim()}.`
+          : "";
+        const ok = await deskConfirm({
+          title: "Save this placement change?",
+          text: `${name} will move to ${parishName} · ${batchName}${
+            saturdayLabel ? ` · ${saturdayLabel}` : ""
+          }.${reasonBit} Previous scorecards are kept.`,
+          confirmLabel: "Save placement",
+        });
+        if (!ok) return;
         run(
           () =>
             reassignEnrolmentBatch(
-              pendingConfirm.enrolmentId,
-              pendingConfirm.parishId,
-              pendingConfirm.batchId,
+              confirm.enrolmentId,
+              confirm.parishId,
+              confirm.batchId,
               {
-                reason: pendingConfirm.reason,
-                saturdayCohortId: pendingConfirm.saturdayCohortId,
+                reason: confirm.reason,
+                saturdayCohortId: confirm.saturdayCohortId,
               },
             ),
           { label: "Saving placement…" },
         );
         return;
-      case "saveStatus":
-        run(async () => {
-          let last: StudentActionResult = {
-            ok: true,
-            message: "Status updated.",
-          };
-          if (pendingConfirm.enrolmentStatusChanged) {
-            last = await updateEnrolmentStatus(
-              pendingConfirm.enrolmentId,
-              pendingConfirm.enrolmentStatus,
-            );
-            if (!last.ok) return last;
-          }
-          if (pendingConfirm.paymentStatusChanged) {
-            last = await updatePaymentStatus(
-              pendingConfirm.enrolmentId,
-              pendingConfirm.paymentStatus,
-            );
-          }
-          return last;
-        }, {
-          label:
-            pendingConfirm.enrolmentStatusChanged &&
-            pendingConfirm.enrolmentStatus === "accepted"
+      }
+      case "saveStatus": {
+        const bits: string[] = [];
+        if (confirm.enrolmentStatusChanged) {
+          bits.push(
+            `enrolment to ${ENROLMENT_STATUS_META[confirm.enrolmentStatus].label}`,
+          );
+        }
+        if (confirm.paymentStatusChanged) {
+          bits.push(
+            `payment to ${PAYMENT_STATUS_META[confirm.paymentStatus].label}`,
+          );
+        }
+        const accepting =
+          confirm.enrolmentStatusChanged &&
+          confirm.enrolmentStatus === "accepted";
+        const paidNote =
+          confirm.paymentStatus === "paid" && confirm.paymentStatusChanged
+            ? " Marking payment paid syncs the programme fee."
+            : "";
+        const ok = await deskConfirm({
+          title: accepting
+            ? "Accept this student and send email?"
+            : "Save status changes?",
+          text: `This will update ${name}${
+            bits.length > 0 ? ` (${bits.join(" and ")})` : "."
+          }${
+            accepting
+              ? " An acceptance email will be sent — please wait until it finishes."
+              : ""
+          }${paidNote}`,
+          confirmLabel: accepting ? "Accept and email" : "Save changes",
+        });
+        if (!ok) return;
+        run(
+          async () => {
+            let last: StudentActionResult = {
+              ok: true,
+              message: "Status updated.",
+            };
+            if (confirm.enrolmentStatusChanged) {
+              last = await updateEnrolmentStatus(
+                confirm.enrolmentId,
+                confirm.enrolmentStatus,
+              );
+              if (!last.ok) return last;
+            }
+            if (confirm.paymentStatusChanged) {
+              last = await updatePaymentStatus(
+                confirm.enrolmentId,
+                confirm.paymentStatus,
+              );
+            }
+            return last;
+          },
+          {
+            label: accepting
               ? "Accepting and sending email…"
               : "Updating status…",
-        });
-        return;
-      case "saveContact":
-        run(
-          () =>
-            updateEnrolmentContact(
-              pendingConfirm.enrolmentId,
-              pendingConfirm.values,
-            ),
-          { label: "Saving contact…" },
+          },
         );
         return;
+      }
+      case "saveContact": {
+        run(
+          () =>
+            updateEnrolmentContact(confirm.enrolmentId, confirm.values),
+          { label: "Saving contact…", quiet: true },
+        );
+        return;
+      }
     }
   }
 
@@ -246,211 +350,10 @@ export function StudentDetailWorkspace({
     student.enrolment?.payment_status === "paid";
   const paymentsHref = `/admin/payments?user=${student.id}&from=${encodeURIComponent(relatedFrom)}`;
 
-  const confirmCopy = (() => {
-    if (!pendingConfirm) return null;
-    switch (pendingConfirm.kind) {
-      case "delete":
-        return {
-          eyebrow: "Remove student",
-          title: `Remove ${name}?`,
-          body: (
-            <>
-              This permanently deletes their sign-in account, student seat, and
-              enrolment record. Joined {formatAdminDate(student.created_at)}.
-              This cannot be undone.
-            </>
-          ),
-          confirmLabel: "Remove permanently",
-          destructive: true,
-        };
-      case "pause":
-        return {
-          eyebrow: "Pause seat",
-          title: "Pause this student seat?",
-          body: (
-            <>
-              <span className="font-medium text-ink">{name}</span> will not be
-              able to sign in until you reactivate the seat. They are notified by
-              email.
-            </>
-          ),
-          confirmLabel: "Pause seat",
-          destructive: true,
-        };
-      case "reactivate":
-        return {
-          eyebrow: "Reactivate",
-          title: "Reactivate this student seat?",
-          body: (
-            <>
-              <span className="font-medium text-ink">{name}</span> will be able
-              to sign in again.
-            </>
-          ),
-          confirmLabel: "Reactivate",
-          destructive: false,
-        };
-      case "password":
-        return {
-          eyebrow: "Temporary password",
-          title: "Issue a new temporary password?",
-          body: (
-            <>
-              A new password will be generated for{" "}
-              <span className="font-medium text-ink">{name}</span>. Their current
-              password will stop working. Share the new one securely.
-            </>
-          ),
-          confirmLabel: "Issue password",
-          destructive: false,
-        };
-      case "clearManuals":
-        return {
-          eyebrow: "Clear manuals",
-          title: "Clear all manuals send marks?",
-          body: (
-            <>
-              This resets the sent status for parts 1–3 on{" "}
-              <span className="font-medium text-ink">{name}</span>’s file so you
-              can send again. It does not recall emails already delivered.
-            </>
-          ),
-          confirmLabel: "Clear sends",
-          destructive: false,
-        };
-      case "upgrade":
-        return {
-          eyebrow: "Upgrade seat",
-          title: "Upgrade to active student?",
-          body: (
-            <>
-              <span className="font-medium text-ink">{name}</span> will move from
-              the alumni portal to a full student seat.
-            </>
-          ),
-          confirmLabel: "Upgrade seat",
-          destructive: false,
-        };
-      case "sendManuals":
-        return {
-          eyebrow: "Send manuals",
-          title: `Send manuals part ${pendingConfirm.part} of 3?`,
-          body: (
-            <>
-              <span className="font-medium text-ink">{name}</span> will receive an
-              email for this manuals part. Only send when the files are ready.
-            </>
-          ),
-          confirmLabel: `Send part ${pendingConfirm.part}`,
-          destructive: false,
-        };
-      case "savePlacement": {
-        const parishName =
-          parishes.find((p) => p.id === pendingConfirm.parishId)?.name ??
-          "selected parish";
-        const batch =
-          batches.find((b) => b.id === pendingConfirm.batchId) ?? null;
-        const batchName = batch
-          ? formatBatchPlacementLabel(batch)
-          : "selected batch";
-        const saturdayOption = pendingConfirm.saturdayCohortId
-          ? saturdayOptions.find((o) => o.id === pendingConfirm.saturdayCohortId)
-          : null;
-        const saturdayLabel = saturdayOption
-          ? saturdayOption.label ||
-            SATURDAY_SLOT_LABELS[saturdayOption.saturday_slot]
-          : null;
-        return {
-          eyebrow: "Change placement",
-          title: "Save this placement change?",
-          body: (
-            <>
-              <span className="font-medium text-ink">{name}</span> will move to{" "}
-              <span className="font-medium text-ink">{parishName}</span> ·{" "}
-              <span className="font-medium text-ink">{batchName}</span>
-              {saturdayLabel ? (
-                <>
-                  {" "}
-                  ·{" "}
-                  <span className="font-medium text-ink">{saturdayLabel}</span>
-                </>
-              ) : null}
-              {pendingConfirm.reason.trim()
-                ? `. Reason: ${pendingConfirm.reason.trim()}`
-                : "."}{" "}
-              Previous scorecards are kept.
-            </>
-          ),
-          confirmLabel: "Save placement",
-          destructive: false,
-        };
-      }
-      case "saveStatus": {
-        const bits: string[] = [];
-        if (pendingConfirm.enrolmentStatusChanged) {
-          bits.push(
-            `enrolment to ${ENROLMENT_STATUS_META[pendingConfirm.enrolmentStatus].label}`,
-          );
-        }
-        if (pendingConfirm.paymentStatusChanged) {
-          bits.push(
-            `payment to ${PAYMENT_STATUS_META[pendingConfirm.paymentStatus].label}`,
-          );
-        }
-        const accepting =
-          pendingConfirm.enrolmentStatusChanged &&
-          pendingConfirm.enrolmentStatus === "accepted";
-        return {
-          eyebrow: "Update status",
-          title: accepting
-            ? "Accept this student and send email?"
-            : "Save status changes?",
-          body: (
-            <>
-              This will update{" "}
-              <span className="font-medium text-ink">{name}</span>
-              {bits.length > 0 ? (
-                <>
-                  {" "}
-                  ({bits.join(" and ")})
-                </>
-              ) : (
-                "."
-              )}
-              {accepting
-                ? " An acceptance email will be sent — please wait until it finishes."
-                : ""}
-              {pendingConfirm.paymentStatus === "paid" &&
-              pendingConfirm.paymentStatusChanged
-                ? " Marking payment paid syncs the programme fee."
-                : ""}
-            </>
-          ),
-          confirmLabel: accepting ? "Accept and email" : "Save changes",
-          destructive: false,
-        };
-      }
-      case "saveContact":
-        return {
-          eyebrow: "Edit contact",
-          title: "Save contact details?",
-          body: (
-            <>
-              This updates the contact details on{" "}
-              <span className="font-medium text-ink">{name}</span>
-              &apos;s enrolment file.
-            </>
-          ),
-          confirmLabel: "Save contact",
-          destructive: false,
-        };
-    }
-  })();
-
   return (
     <div className="relative space-y-4" aria-busy={busy}>
       <DeskLoaderOverlay
-        active={busy && !pendingConfirm}
+        active={busy}
         label={busyLabel ?? "Working…"}
       />
 
@@ -505,73 +408,10 @@ export function StudentDetailWorkspace({
           revealedPassword={revealedPassword}
           backHref={backHref}
           onRun={run}
-          onRequestConfirm={setPendingConfirm}
-          onCopyPassword={copyPassword}
+          onRequestConfirm={(confirm) => void requestConfirm(confirm)}
+          onCopyPassword={(value) => void copyPassword(value)}
         />
       </section>
-
-      {pendingConfirm && confirmCopy ? (
-        <div
-          className="fixed inset-0 z-[90] flex items-end justify-center bg-ink/45 p-4 sm:items-center"
-          role="presentation"
-          onClick={() => !busy && setPendingConfirm(null)}
-        >
-          <div
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="student-confirm-title"
-            className="relative w-full max-w-md border border-stone bg-mist p-6 text-ink shadow-[0_16px_48px_rgba(20,53,44,0.2)] sm:p-7"
-            onClick={(event) => event.stopPropagation()}
-          >
-            <DeskLoaderOverlay
-              active={busy}
-              label={busyLabel ?? "Working…"}
-            />
-            <p
-              className={`text-[0.65rem] font-medium uppercase tracking-[0.16em] ${
-                confirmCopy.destructive ? "text-red-800/80" : "text-celadon"
-              }`}
-            >
-              {confirmCopy.eyebrow}
-            </p>
-            <h3
-              id="student-confirm-title"
-              className="mt-3 font-display text-2xl tracking-[-0.02em] text-pine"
-            >
-              {confirmCopy.title}
-            </h3>
-            <p className="mt-3 text-sm leading-relaxed text-ink/70">
-              {confirmCopy.body}
-            </p>
-            <div className="mt-7 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
-              <button
-                type="button"
-                disabled={busy}
-                onClick={() => setPendingConfirm(null)}
-                className="border border-pine/25 px-4 py-2.5 text-sm font-medium text-pine transition-colors hover:border-pine disabled:opacity-60"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                disabled={busy}
-                onClick={confirmPendingAction}
-                className={`inline-flex min-h-[2.5rem] min-w-[9rem] items-center justify-center px-4 py-2.5 text-sm font-medium text-mist transition-colors disabled:opacity-60 ${
-                  confirmCopy.destructive
-                    ? "bg-[#5c2a2a] hover:bg-red-900"
-                    : "bg-pine hover:bg-celadon"
-                }`}
-              >
-                {busy ? (
-                  <DeskLoader label="Working…" tone="mist" />
-                ) : (
-                  confirmCopy.confirmLabel
-                )}
-              </button>
-            </div>
-          </div>
-        </div>
-      ) : null}
 
       {paymentEmptyOpen ? (
         <div

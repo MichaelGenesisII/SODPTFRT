@@ -6,7 +6,6 @@ import {
   useRef,
   useState,
   useTransition,
-  type ReactNode,
   type RefObject,
 } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
@@ -22,10 +21,8 @@ import {
   type AlumniActionResult,
 } from "@/app/admin/alumni/actions";
 import { AlumniListRow } from "@/components/admin/alumni-portrait-card";
-import { DeskConfirmModal } from "@/components/ui/desk-confirm-modal";
 import { DeskLoader, DeskLoaderOverlay } from "@/components/ui/desk-loader";
 import { useDebouncedValue } from "@/lib/ui/use-debounced-value";
-import { useToast } from "@/components/ui/toast";
 import {
   ALUMNI_PAGE_SIZE,
   alumniListQueriesEqual,
@@ -35,13 +32,13 @@ import {
 import {
   SHEET_COHORT_HINTS,
   type AlumniImportPreview,
-  type AlumniImportResult,
   type AlumniLegacyPerson,
   type AlumniPortalFilter,
 } from "@/lib/alumni/types";
 import type { Cohort } from "@/lib/cohorts";
 import { DeskPagination } from "@/lib/ui/desk-pagination";
 import { publicActionMessage } from "@/lib/safe-action-message";
+import { deskConfirm, deskError, deskSuccess } from "@/lib/ui/desk-alert";
 
 const fieldClass =
   "w-full min-w-0 border border-stone bg-white/70 px-3 py-2 text-sm outline-none focus:border-pine disabled:opacity-50";
@@ -49,18 +46,6 @@ const fieldClass =
 const ALUMNI_IMPORT_MAX_BYTES = 15 * 1024 * 1024;
 
 type DeskTab = "register" | "import";
-
-type ImportMetrics = Pick<
-  AlumniImportResult,
-  "imported" | "updated" | "skipped" | "matchedExisting" | "previewTotal" | "message"
->;
-
-type BulkConfirm =
-  | { kind: "delete" }
-  | { kind: "cohort"; cohortId: string | null }
-  | { kind: "manuals" }
-  | { kind: "portal"; sendMail: boolean }
-  | { kind: "upgrade" };
 
 function downloadAlumniCsv(rows: AlumniLegacyPerson[], filename: string) {
   const header = [
@@ -144,17 +129,9 @@ export function AlumniManager({
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
-  const { success, error, info } = useToast();
   const [pending, startTransition] = useTransition();
   const [busyLabel, setBusyLabel] = useState<string | null>(null);
-  const [confirmImport, setConfirmImport] = useState(false);
-  const [importMetrics, setImportMetrics] = useState<ImportMetrics | null>(
-    null,
-  );
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [pendingConfirm, setPendingConfirm] = useState<BulkConfirm | null>(
-    null,
-  );
   const [bulkCohortId, setBulkCohortId] = useState<string>("");
   const [bulkSendMail, setBulkSendMail] = useState(true);
   const [searching, setSearching] = useState(false);
@@ -183,22 +160,6 @@ export function AlumniManager({
   const fileRef = useRef<HTMLInputElement>(null);
   const skipInitialFetch = useRef(true);
   const skipInitialDebouncedSearch = useRef(true);
-
-  useEffect(() => {
-    if (!confirmImport && !importMetrics) return;
-    function onKey(event: KeyboardEvent) {
-      if (event.key === "Escape" && !busy) {
-        setConfirmImport(false);
-        setImportMetrics(null);
-      }
-    }
-    document.addEventListener("keydown", onKey);
-    document.body.style.overflow = "hidden";
-    return () => {
-      document.removeEventListener("keydown", onKey);
-      document.body.style.overflow = "";
-    };
-  }, [confirmImport, importMetrics, busy]);
 
   const selectedPeople = useMemo(
     () => rows.filter((person) => selected.has(person.id)),
@@ -280,7 +241,7 @@ export function AlumniManager({
       } catch (err) {
         if (requestId !== searchRequestId.current) return;
         console.error("[alumni] search", err);
-        error("Could not search the alumni register.");
+        await deskError({ text: "Could not search the alumni register." });
       } finally {
         if (requestId === searchRequestId.current) {
           setSearching(false);
@@ -318,34 +279,49 @@ export function AlumniManager({
           cohortBySheet,
         });
         if (!result.ok) {
-          error(result.message);
+          await deskError({ text: result.message });
           return;
         }
-        setConfirmImport(false);
         setPreview(null);
-        setImportMetrics({
-          imported: result.imported,
-          updated: result.updated,
-          skipped: result.skipped,
-          matchedExisting: result.matchedExisting,
-          previewTotal: result.previewTotal,
-          message: result.message,
-        });
         setTab("register");
         refreshList({ page: 1 });
         router.refresh();
+        await deskSuccess({ text: result.message });
       } catch (err) {
         console.error("[alumni] commit import", err);
-        error(publicActionMessage(err, "Could not import that file. Please try again."));
+        await deskError({
+          text: publicActionMessage(
+            err,
+            "Could not import that file. Please try again.",
+          ),
+        });
       } finally {
         setBusyLabel(null);
       }
     });
   }
 
+  async function requestCommitImport() {
+    if (!preview || preview.rows.length === 0 || busy) return;
+    const notes = preview.skipped.length
+      ? ` · ${preview.skipped.length} preview note${
+          preview.skipped.length === 1 ? "" : "s"
+        } will not be imported`
+      : "";
+    const ok = await deskConfirm({
+      title: `Save ${preview.rows.length} to the register?`,
+      text: `Existing people (same email, student ID, or name + centre in the batch year) are updated — not duplicated${notes}.`,
+      confirmLabel: "Save to register",
+    });
+    if (!ok) return;
+    commitImport();
+  }
+
   async function parseFile(file: File) {
     if (file.size > ALUMNI_IMPORT_MAX_BYTES) {
-      error("That file is too large. Maximum size is 15 MB.");
+      await deskError({
+        text: "That file is too large. Maximum size is 15 MB.",
+      });
       return;
     }
     const formData = new FormData();
@@ -355,7 +331,7 @@ export function AlumniManager({
       try {
         const result = await previewAlumniImport(formData);
         if (!result.ok || !("preview" in result)) {
-          error(result.message);
+          await deskError({ text: result.message });
           return;
         }
         setPreview(result.preview);
@@ -371,13 +347,14 @@ export function AlumniManager({
         }
         setCohortBySheet(initial);
         setTab("import");
-        info(
-          `${result.preview.rows.length} people ready · ${result.preview.skipped.length} notes`,
-          "Import preview",
-        );
       } catch (err) {
         console.error("[alumni] parse import", err);
-        error(publicActionMessage(err, "Could not read that file. Please check the format and try again."));
+        await deskError({
+          text: publicActionMessage(
+            err,
+            "Could not read that file. Please check the format and try again.",
+          ),
+        });
       } finally {
         setBusyLabel(null);
       }
@@ -434,15 +411,19 @@ export function AlumniManager({
           portal,
         });
         if (!result.ok || !("ids" in result)) {
-          error("message" in result ? result.message : "Could not select all.");
+          await deskError({
+            text:
+              "message" in result
+                ? result.message
+                : "Could not select all.",
+          });
           return;
         }
         setSelected(new Set(result.ids));
         if (result.ids.length < result.total) {
-          info(
-            `Selected ${result.ids.length} of ${result.total} (desk limit). Narrow filters to select more.`,
-            "Alumni",
-          );
+          await deskSuccess({
+            text: `Selected ${result.ids.length} of ${result.total} (desk limit). Narrow filters to select more.`,
+          });
         }
       } finally {
         setBusyLabel(null);
@@ -459,13 +440,12 @@ export function AlumniManager({
       try {
         const result = await action();
         if (result.ok) {
-          success(result.message, "Alumni");
-          setPendingConfirm(null);
           clearSelection();
           refreshList();
           router.refresh();
+          await deskSuccess({ text: result.message });
         } else {
-          error(result.message, "Alumni");
+          await deskError({ text: result.message });
         }
       } finally {
         setBusyLabel(null);
@@ -473,123 +453,88 @@ export function AlumniManager({
     });
   }
 
-  function confirmBulk() {
-    if (!pendingConfirm || busy) return;
-    const ids = [...selected];
-    switch (pendingConfirm.kind) {
-      case "delete":
-        runBulk(() => bulkDeleteLegacyAlumni(ids), "Removing rows…");
-        return;
-      case "cohort":
-        runBulk(
-          () =>
-            bulkSetLegacyAlumniCohort(
-              ids,
-              pendingConfirm.cohortId || null,
-            ),
-          "Updating cohort…",
-        );
-        return;
-      case "manuals":
-        runBulk(() => bulkSetLegacyManualsSent(ids, true), "Updating manuals…");
-        return;
-      case "portal":
-        runBulk(
-          () =>
-            bulkOpenAlumniPortal(ids, pendingConfirm.sendMail),
-          "Opening portal access…",
-        );
-        return;
-      case "upgrade":
-        runBulk(
-          () => bulkUpgradeAlumniToStudent(ids),
-          "Upgrading to student…",
-        );
-        return;
-    }
-  }
-
-  const confirmCopy = ((): {
-    eyebrow: string;
-    title: string;
-    body: ReactNode;
-    confirmLabel: string;
-    destructive?: boolean;
-  } | null => {
-    if (!pendingConfirm) return null;
+  async function requestBulkDelete() {
+    if (busy || selected.size === 0) return;
     const count = selected.size;
     const who = `${count} alumn${count === 1 ? "us" : "i"}`;
-    switch (pendingConfirm.kind) {
-      case "delete":
-        return {
-          eyebrow: "Remove from register",
-          title: `Delete ${who}?`,
-          body: (
-            <>
-              Removes legacy register rows only. People with portal access are
-              skipped — remove their portal seat from the student file first if
-              needed.
-            </>
-          ),
-          confirmLabel: count === 1 ? "Delete row" : "Delete rows",
-          destructive: true,
-        };
-      case "cohort":
-        return {
-          eyebrow: "Link cohort",
-          title: pendingConfirm.cohortId
-            ? `Set cohort on ${who}?`
-            : `Clear cohort on ${who}?`,
-          body: (
-            <>
-              Updates the programme cohort label on the selected register rows.
-            </>
-          ),
-          confirmLabel: "Update cohort",
-        };
-      case "manuals":
-        return {
-          eyebrow: "Manuals",
-          title: `Mark manuals sent for ${who}?`,
-          body: <>Updates the manuals flag on the selected register rows.</>,
-          confirmLabel: "Mark sent",
-        };
-      case "portal":
-        return {
-          eyebrow: "Portal access",
-          title: `Open alumni portal for ${who}?`,
-          body: (
-            <>
-              Only rows with an email and no portal yet are processed. Others
-              are skipped.
-              {pendingConfirm.sendMail
-                ? " Access details are emailed where possible."
-                : " No access emails will be sent."}
-            </>
-          ),
-          confirmLabel: pendingConfirm.sendMail
-            ? "Open & email access"
-            : "Open portal",
-        };
-      case "upgrade":
-        return {
-          eyebrow: "Upgrade seat",
-          title: `Upgrade ${who} to student portal?`,
-          body: (
-            <>
-              Only rows that already have portal access are upgraded. Others are
-              skipped.
-            </>
-          ),
-          confirmLabel: "Upgrade",
-        };
-    }
-  })();
+    const ok = await deskConfirm({
+      title: `Delete ${who}?`,
+      text: "Removes legacy register rows only. People with portal access are skipped — remove their portal seat from the student file first if needed.",
+      confirmLabel: count === 1 ? "Delete row" : "Delete rows",
+      danger: true,
+    });
+    if (!ok) return;
+    runBulk(() => bulkDeleteLegacyAlumni([...selected]), "Removing rows…");
+  }
+
+  async function requestBulkCohort() {
+    if (busy || selected.size === 0) return;
+    const count = selected.size;
+    const who = `${count} alumn${count === 1 ? "us" : "i"}`;
+    const cohortId = bulkCohortId || null;
+    const ok = await deskConfirm({
+      title: cohortId ? `Set cohort on ${who}?` : `Clear cohort on ${who}?`,
+      text: "Updates the programme cohort label on the selected register rows.",
+      confirmLabel: "Update cohort",
+    });
+    if (!ok) return;
+    runBulk(
+      () => bulkSetLegacyAlumniCohort([...selected], cohortId),
+      "Updating cohort…",
+    );
+  }
+
+  async function requestBulkManuals() {
+    if (busy || selected.size === 0) return;
+    const count = selected.size;
+    const who = `${count} alumn${count === 1 ? "us" : "i"}`;
+    const ok = await deskConfirm({
+      title: `Mark manuals sent for ${who}?`,
+      text: "Updates the manuals flag on the selected register rows.",
+      confirmLabel: "Mark sent",
+    });
+    if (!ok) return;
+    runBulk(
+      () => bulkSetLegacyManualsSent([...selected], true),
+      "Updating manuals…",
+    );
+  }
+
+  async function requestBulkPortal() {
+    if (busy || selected.size === 0) return;
+    const count = selected.size;
+    const who = `${count} alumn${count === 1 ? "us" : "i"}`;
+    const ok = await deskConfirm({
+      title: `Open alumni portal for ${who}?`,
+      text: bulkSendMail
+        ? "Only rows with an email and no portal yet are processed. Others are skipped. Access details are emailed where possible."
+        : "Only rows with an email and no portal yet are processed. Others are skipped. No access emails will be sent.",
+      confirmLabel: bulkSendMail ? "Open & email access" : "Open portal",
+    });
+    if (!ok) return;
+    runBulk(
+      () => bulkOpenAlumniPortal([...selected], bulkSendMail),
+      "Opening portal access…",
+    );
+  }
+
+  async function requestBulkUpgrade() {
+    if (busy || selected.size === 0) return;
+    const count = selected.size;
+    const who = `${count} alumn${count === 1 ? "us" : "i"}`;
+    const ok = await deskConfirm({
+      title: `Upgrade ${who} to student portal?`,
+      text: "Only rows that already have portal access are upgraded. Others are skipped.",
+      confirmLabel: "Upgrade",
+    });
+    if (!ok) return;
+    runBulk(() => bulkUpgradeAlumniToStudent([...selected]), "Upgrading to student…");
+  }
 
   return (
     <div className="relative space-y-5 sm:space-y-6" aria-busy={busy || registerLoading}>
       <DeskLoaderOverlay
-        active={deskBusy && !confirmImport && !importMetrics && !pendingConfirm}
+        active={deskBusy}
         label={busyLabel ?? "Working…"}
       />
 
@@ -663,11 +608,9 @@ export function AlumniManager({
           }
           onClearPreview={() => {
             setPreview(null);
-            setConfirmImport(false);
           }}
           onCommit={() => {
-            if (!preview || preview.rows.length === 0) return;
-            setConfirmImport(true);
+            void requestCommitImport();
           }}
         />
       ) : (
@@ -835,12 +778,7 @@ export function AlumniManager({
                       <button
                         type="button"
                         disabled={busy}
-                        onClick={() =>
-                          setPendingConfirm({
-                            kind: "cohort",
-                            cohortId: bulkCohortId || null,
-                          })
-                        }
+                        onClick={() => void requestBulkCohort()}
                         className="shrink-0 border border-pine px-3 py-2 text-sm font-medium text-pine hover:bg-pine hover:text-mist disabled:opacity-50"
                       >
                         Apply
@@ -852,7 +790,7 @@ export function AlumniManager({
                     <button
                       type="button"
                       disabled={busy}
-                      onClick={() => setPendingConfirm({ kind: "manuals" })}
+                      onClick={() => void requestBulkManuals()}
                       className="border border-stone px-3 py-2 text-sm text-ink/75 hover:border-pine hover:text-pine disabled:opacity-50"
                     >
                       Manuals sent
@@ -860,12 +798,7 @@ export function AlumniManager({
                     <button
                       type="button"
                       disabled={busy}
-                      onClick={() =>
-                        setPendingConfirm({
-                          kind: "portal",
-                          sendMail: bulkSendMail,
-                        })
-                      }
+                      onClick={() => void requestBulkPortal()}
                       className="border border-stone px-3 py-2 text-sm text-ink/75 hover:border-pine hover:text-pine disabled:opacity-50"
                     >
                       Open portal
@@ -883,7 +816,7 @@ export function AlumniManager({
                     <button
                       type="button"
                       disabled={busy}
-                      onClick={() => setPendingConfirm({ kind: "upgrade" })}
+                      onClick={() => void requestBulkUpgrade()}
                       className="border border-stone px-3 py-2 text-sm text-ink/75 hover:border-pine hover:text-pine disabled:opacity-50"
                     >
                       Upgrade to student
@@ -896,10 +829,6 @@ export function AlumniManager({
                           selectedPeople,
                           `sod-alumni-${new Date().toISOString().slice(0, 10)}.csv`,
                         );
-                        success(
-                          `Exported ${selectedPeople.length} row${selectedPeople.length === 1 ? "" : "s"}.`,
-                          "Alumni",
-                        );
                       }}
                       className="border border-stone px-3 py-2 text-sm text-ink/75 hover:border-pine hover:text-pine disabled:opacity-50"
                     >
@@ -908,7 +837,7 @@ export function AlumniManager({
                     <button
                       type="button"
                       disabled={busy}
-                      onClick={() => setPendingConfirm({ kind: "delete" })}
+                      onClick={() => void requestBulkDelete()}
                       className="inline-flex items-center justify-center border border-red-800/35 px-2.5 py-2 text-red-900/85 hover:border-red-800/60 hover:bg-red-50 disabled:opacity-50"
                       aria-label={`Delete ${selected.size} selected`}
                       title="Delete selected"
@@ -987,162 +916,6 @@ export function AlumniManager({
           </section>
         </div>
       )}
-
-      {confirmImport && preview ? (
-        <div
-          className="fixed inset-0 z-[90] flex items-end justify-center bg-ink/45 p-4 sm:items-center"
-          role="presentation"
-          onClick={() => !busy && setConfirmImport(false)}
-        >
-          <div
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="alumni-import-confirm-title"
-            className="relative w-full max-w-md border border-stone bg-mist p-6 text-ink shadow-[0_16px_48px_rgba(20,53,44,0.2)] sm:p-7"
-            onClick={(event) => event.stopPropagation()}
-          >
-            <DeskLoaderOverlay
-              active={busy}
-              label={busyLabel ?? "Working…"}
-            />
-            <p className="text-[0.65rem] font-medium uppercase tracking-[0.16em] text-celadon">
-              Import batches
-            </p>
-            <h3
-              id="alumni-import-confirm-title"
-              className="mt-3 font-display text-2xl tracking-[-0.02em] text-pine"
-            >
-              Save {preview.rows.length} to the register?
-            </h3>
-            <p className="mt-3 text-sm leading-relaxed text-ink/70">
-              Existing people (same email, student ID, or name + centre in the
-              batch year) are updated — not duplicated
-              {preview.skipped.length
-                ? ` · ${preview.skipped.length} preview note${
-                    preview.skipped.length === 1 ? "" : "s"
-                  } will not be imported`
-                : ""}
-              .
-            </p>
-            <div className="mt-7 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
-              <button
-                type="button"
-                disabled={busy}
-                onClick={() => setConfirmImport(false)}
-                className="border border-pine/25 px-4 py-2.5 text-sm font-medium text-pine transition-colors hover:border-pine disabled:opacity-60"
-              >
-                Back to preview
-              </button>
-              <button
-                type="button"
-                disabled={busy}
-                onClick={commitImport}
-                className="inline-flex min-h-[2.5rem] min-w-[9rem] items-center justify-center bg-pine px-4 py-2.5 text-sm font-medium text-mist transition-colors hover:bg-celadon disabled:opacity-60"
-              >
-                {busy && busyLabel?.startsWith("Importing") ? (
-                  <DeskLoader label="Importing…" tone="mist" />
-                ) : (
-                  "Save to register"
-                )}
-              </button>
-            </div>
-          </div>
-        </div>
-      ) : null}
-
-      {importMetrics ? (
-        <div
-          className="fixed inset-0 z-[90] flex items-end justify-center bg-ink/45 p-4 sm:items-center"
-          role="presentation"
-          onClick={() => setImportMetrics(null)}
-        >
-          <div
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="alumni-import-metrics-title"
-            className="relative w-full max-w-md border border-stone bg-mist p-6 text-ink shadow-[0_16px_48px_rgba(20,53,44,0.2)] sm:p-7"
-            onClick={(event) => event.stopPropagation()}
-          >
-            <p className="text-[0.65rem] font-medium uppercase tracking-[0.16em] text-celadon">
-              Import complete
-            </p>
-            <h3
-              id="alumni-import-metrics-title"
-              className="mt-3 font-display text-2xl tracking-[-0.02em] text-pine"
-            >
-              Register updated
-            </h3>
-            <p className="mt-2 text-sm leading-relaxed text-ink/65">
-              {importMetrics.message}
-            </p>
-            <dl className="mt-5 grid grid-cols-2 gap-2">
-              {[
-                {
-                  label: "In this file",
-                  value: importMetrics.previewTotal,
-                },
-                {
-                  label: "New",
-                  value: importMetrics.imported,
-                },
-                {
-                  label: "Updated",
-                  value: importMetrics.updated,
-                },
-                {
-                  label: "Skipped",
-                  value: importMetrics.skipped.length,
-                },
-              ].map((item) => (
-                <div
-                  key={item.label}
-                  className="border border-stone bg-white/60 px-3 py-2.5"
-                >
-                  <dt className="text-[0.65rem] font-medium uppercase tracking-[0.12em] text-ink/45">
-                    {item.label}
-                  </dt>
-                  <dd className="mt-1 font-display text-2xl tabular-nums text-pine">
-                    {item.value}
-                  </dd>
-                </div>
-              ))}
-            </dl>
-            {importMetrics.skipped.length > 0 ? (
-              <p className="mt-3 text-xs leading-relaxed text-ink/55">
-                Skipped rows could not be written (already matched awkwardly or
-                blocked). Check the register before re-importing.
-              </p>
-            ) : (
-              <p className="mt-3 text-xs leading-relaxed text-ink/55">
-                No duplicate rows were added. Matches were merged into existing
-                register people.
-              </p>
-            )}
-            <div className="mt-7 flex justify-end">
-              <button
-                type="button"
-                onClick={() => setImportMetrics(null)}
-                className="bg-pine px-4 py-2.5 text-sm font-medium text-mist hover:bg-celadon"
-              >
-                Done
-              </button>
-            </div>
-          </div>
-        </div>
-      ) : null}
-
-      <DeskConfirmModal
-        open={Boolean(pendingConfirm && confirmCopy)}
-        onClose={() => !busy && setPendingConfirm(null)}
-        onConfirm={confirmBulk}
-        eyebrow={confirmCopy?.eyebrow}
-        title={confirmCopy?.title ?? ""}
-        body={confirmCopy?.body}
-        confirmLabel={confirmCopy?.confirmLabel ?? "Confirm"}
-        destructive={confirmCopy?.destructive}
-        busy={busy}
-        busyLabel={busyLabel ?? "Working…"}
-      />
     </div>
   );
 }

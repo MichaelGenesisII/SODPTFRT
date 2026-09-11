@@ -19,14 +19,20 @@ const nav = [
   {
     href: "/finance",
     label: "Home",
-    hint: "This period",
+    hint: "This month & desk",
     icon: HomeIcon,
   },
   {
-    href: "/finance/periods",
-    label: "Periods",
-    hint: "Totals & export",
-    icon: PeriodIcon,
+    href: "/finance/books",
+    label: "Books",
+    hint: "Records & categories",
+    icon: LedgerIcon,
+  },
+  {
+    href: "/finance/payments",
+    label: "Payments",
+    hint: "Pay & approve",
+    icon: PaymentsIcon,
   },
   {
     href: "/finance/rates",
@@ -37,7 +43,7 @@ const nav = [
   {
     href: "/finance/teachers",
     label: "Teachers",
-    hint: "Read-only list",
+    hint: "Directory",
     icon: TeachersIcon,
   },
   {
@@ -175,7 +181,7 @@ export function FinanceShell({
                 Finance portal
               </p>
               <p className="mt-1 font-display text-2xl leading-none tracking-[-0.02em]">
-                Session pay
+                Finance desk
               </p>
             </div>
           </Link>
@@ -280,8 +286,8 @@ export function FinanceShell({
           </div>
         </header>
 
-        <main className="relative flex-1 px-4 py-6 sm:px-6 sm:py-8 lg:px-10 lg:py-10">
-          <div className="mx-auto max-w-4xl animate-fade-rise">{children}</div>
+          <main className="relative flex-1 px-4 py-6 sm:px-6 sm:py-8 lg:px-10 lg:py-10">
+          <div className="mx-auto max-w-5xl">{children}</div>
         </main>
       </div>
 
@@ -308,11 +314,43 @@ function HomeIcon({ className }: { className?: string }) {
   );
 }
 
-function PeriodIcon({ className }: { className?: string }) {
+function LedgerIcon({ className }: { className?: string }) {
   return (
     <svg className={className} viewBox="0 0 24 24" fill="none" aria-hidden>
-      <rect x="4" y="5" width="16" height="14" stroke="currentColor" strokeWidth="1.5" />
-      <path d="M4 9h16M8 5v2M16 5v2" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+      <path
+        d="M7 4.5h10v15H7z"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M10 8h4M10 12h4M10 16h2.5"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
+function PaymentsIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" aria-hidden>
+      <rect
+        x="3.75"
+        y="6.75"
+        width="16.5"
+        height="10.5"
+        rx="1.25"
+        stroke="currentColor"
+        strokeWidth="1.5"
+      />
+      <path
+        d="M3.75 10.5h16.5M8 14.25h3"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+      />
     </svg>
   );
 }

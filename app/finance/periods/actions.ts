@@ -7,6 +7,10 @@ import {
   payPeriodCsv,
   resolvePeriodInput,
 } from "@/lib/finance/pay";
+import {
+  listFinanceTeacherPaymentSummaries,
+  methodLabel,
+} from "@/lib/teacher/payment-details";
 import { publicActionMessage } from "@/lib/safe-action-message";
 import { createServiceSupabaseClient } from "@/lib/supabase/service";
 
@@ -20,7 +24,27 @@ export type FinancePeriodActionResult = {
 export async function getPayPeriodReport(periodKey?: string | null) {
   await requireSessionFinance();
   const period = resolvePeriodInput(periodKey);
-  return buildPayPeriodReport({ year: period.year, month: period.month });
+  const report = await buildPayPeriodReport({
+    year: period.year,
+    month: period.month,
+  });
+  try {
+    const summaries = await listFinanceTeacherPaymentSummaries(
+      report.teachers.map((t) => t.teacherId),
+    );
+    for (const teacher of report.teachers) {
+      const summary = summaries.get(teacher.teacherId);
+      teacher.hasPaymentDetails = Boolean(summary?.hasDetails);
+      teacher.paymentMethodLabel = summary?.preferredMethod
+        ? methodLabel(summary.preferredMethod)
+        : null;
+      teacher.paymentPayeeMask = summary?.payeeMask ?? null;
+      teacher.paymentRecentlyChanged = Boolean(summary?.recentlyChanged);
+    }
+  } catch (error) {
+    console.error("[finance/periods/payment-details]", error);
+  }
+  return report;
 }
 
 export async function exportPayPeriodCsv(
@@ -86,6 +110,7 @@ export async function markTeacherPaid(
     }
 
     revalidatePath("/finance/periods");
+    revalidatePath("/finance/books");
     revalidatePath("/finance");
     return { ok: true, message: "Marked as paid." };
   } catch (error) {
@@ -125,6 +150,7 @@ export async function clearTeacherPaid(
     }
 
     revalidatePath("/finance/periods");
+    revalidatePath("/finance/books");
     revalidatePath("/finance");
     return { ok: true, message: "Paid mark cleared." };
   } catch (error) {

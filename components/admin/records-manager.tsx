@@ -3,9 +3,10 @@
 import { useEffect, useMemo, useState, useTransition } from "react";
 import Link from "next/link";
 import { listRecordStudents } from "@/app/admin/records/actions";
-import { useToast } from "@/components/ui/toast";
 import { isNationalAdmin, type AdminProfile } from "@/lib/admin/profile";
 import { formatBatchLabel, type Batch, type Parish } from "@/lib/parishes";
+import { publicActionMessage } from "@/lib/safe-action-message";
+import { deskError } from "@/lib/ui/desk-alert";
 import { DeskPagination } from "@/lib/ui/desk-pagination";
 
 const PAGE_SIZE = 50;
@@ -33,7 +34,6 @@ export function RecordsManager({
   parishes: Pick<Parish, "id" | "name">[];
   batches: Batch[];
 }) {
-  const { error } = useToast();
   const [pending, startTransition] = useTransition();
   const national = isNationalAdmin(profile);
   const [parishId, setParishId] = useState(
@@ -62,10 +62,10 @@ export function RecordsManager({
         setStudents(next.items);
         setTotal(next.total);
       } catch (e) {
-        error(
-          e instanceof Error ? e.message : "Could not load students.",
-          "Records",
-        );
+        console.error("[records/list]", e);
+        void deskError({
+          text: publicActionMessage(e, "Could not load students. Please try again."),
+        });
       }
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps

@@ -8,10 +8,9 @@ import {
   requestTempCohortSwitch,
 } from "@/app/student/classes/temp-switch-actions";
 import { DeskLoader, DeskLoaderOverlay } from "@/components/ui/desk-loader";
-import { useToast } from "@/components/ui/toast";
+import { deskConfirm, deskError, deskSuccess } from "@/lib/ui/desk-alert";
 
 export function TempCohortSwitchCard() {
-  const { success, error } = useToast();
   const [pending, startTransition] = useTransition();
   const [busyLabel, setBusyLabel] = useState<string | null>(null);
   const busy = pending || Boolean(busyLabel);
@@ -26,7 +25,9 @@ export function TempCohortSwitchCard() {
         setData(await listMyTempSwitchOptions());
       } catch (err) {
         console.error("[temp switch load]", err);
-        error("Could not load Saturday switch options.");
+        await deskError({
+          text: "Could not load Saturday switch options.",
+        });
       } finally {
         setBusyLabel(null);
       }
@@ -72,18 +73,30 @@ export function TempCohortSwitchCard() {
             type="button"
             disabled={busy}
             onClick={() => {
-              setBusyLabel("Clearing…");
-              startTransition(async () => {
-                try {
-                  const result = await clearTempCohortSwitch();
-                  if (result.ok) {
-                    success(result.message);
-                    setData(await listMyTempSwitchOptions());
-                  } else error(result.message);
-                } finally {
-                  setBusyLabel(null);
-                }
-              });
+              if (busy) return;
+              void (async () => {
+                const ok = await deskConfirm({
+                  title: "Clear temporary switch?",
+                  text: `This removes your guest seat for ${data.existingGuestLabel} this month. Your home cohort stays ${data.homeLabel}.`,
+                  confirmLabel: "Clear switch",
+                  danger: true,
+                });
+                if (!ok) return;
+                setBusyLabel("Clearing…");
+                startTransition(async () => {
+                  try {
+                    const result = await clearTempCohortSwitch();
+                    if (result.ok) {
+                      await deskSuccess({ text: result.message });
+                      setData(await listMyTempSwitchOptions());
+                    } else {
+                      await deskError({ text: result.message });
+                    }
+                  } finally {
+                    setBusyLabel(null);
+                  }
+                });
+              })();
             }}
             className="text-sm font-medium text-pine underline decoration-pine/30 underline-offset-4 disabled:opacity-50"
           >
@@ -102,20 +115,31 @@ export function TempCohortSwitchCard() {
                 type="button"
                 disabled={busy || !opt.selectable}
                 onClick={() => {
-                  setBusyLabel("Saving switch…");
-                  startTransition(async () => {
-                    try {
-                      const result = await requestTempCohortSwitch({
-                        guestSaturdayCohortId: opt.id,
-                      });
-                      if (result.ok) {
-                        success(result.message);
-                        setData(await listMyTempSwitchOptions());
-                      } else error(result.message);
-                    } finally {
-                      setBusyLabel(null);
-                    }
-                  });
+                  if (busy || !opt.selectable) return;
+                  void (async () => {
+                    const ok = await deskConfirm({
+                      title: "Switch Saturday this month?",
+                      text: `Attend ${opt.label} instead of ${data.homeLabel} for ${data.forMonthLabel} only. Your home cohort stays the same.`,
+                      confirmLabel: "Confirm switch",
+                    });
+                    if (!ok) return;
+                    setBusyLabel("Saving switch…");
+                    startTransition(async () => {
+                      try {
+                        const result = await requestTempCohortSwitch({
+                          guestSaturdayCohortId: opt.id,
+                        });
+                        if (result.ok) {
+                          await deskSuccess({ text: result.message });
+                          setData(await listMyTempSwitchOptions());
+                        } else {
+                          await deskError({ text: result.message });
+                        }
+                      } finally {
+                        setBusyLabel(null);
+                      }
+                    });
+                  })();
                 }}
                 className="flex w-full flex-col items-start border border-pine/20 px-3 py-3 text-left text-sm transition-colors hover:border-pine disabled:cursor-not-allowed disabled:opacity-45"
               >

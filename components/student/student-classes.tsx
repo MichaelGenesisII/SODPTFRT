@@ -9,9 +9,7 @@ import {
 } from "@/app/student/classes/actions";
 import { InPortalZoom } from "@/components/classes/in-portal-zoom";
 import { useRefreshOnVisible } from "@/components/student/use-refresh-on-visible";
-import { DeskConfirmModal } from "@/components/ui/desk-confirm-modal";
 import { DeskLoaderOverlay } from "@/components/ui/desk-loader";
-import { useToast } from "@/components/ui/toast";
 import {
   audienceLabel,
   formatDuration,
@@ -19,6 +17,7 @@ import {
   type ZoomClassAttendance,
 } from "@/lib/classes/types";
 import type { StudentProfile } from "@/lib/student/types";
+import { deskConfirm, deskError } from "@/lib/ui/desk-alert";
 import type { InPortalZoomSession } from "@/lib/zoom/types";
 import {
   SOD_STUDENT_TOUR_TAB_EVENT,
@@ -49,7 +48,6 @@ export function StudentClassesClient({
   meetingSdkReady: boolean;
 }) {
   const router = useRouter();
-  const { success, error } = useToast();
   const [pending, startTransition] = useTransition();
   const [busyLabel, setBusyLabel] = useState<string | null>(null);
   const busy = pending || Boolean(busyLabel);
@@ -60,7 +58,6 @@ export function StudentClassesClient({
     useState<InPortalZoomSession | null>(null);
   const [joiningId, setJoiningId] = useState<string | null>(null);
   const [openClassId, setOpenClassId] = useState<string | null>(null);
-  const [confirmCheckInOpen, setConfirmCheckInOpen] = useState(false);
 
   useEffect(() => {
     function onTourTab(event: Event) {
@@ -100,30 +97,9 @@ export function StudentClassesClient({
       try {
         const next = await updateStudentZoomEmail(zoomEmail);
         if (next.ok) {
-          success(next.message, "Zoom seat");
           router.refresh();
         } else {
-          error(next.message, "Zoom seat");
-        }
-      } finally {
-        setBusyLabel(null);
-      }
-    });
-  }
-
-  function runCheckIn() {
-    setBusyLabel("Checking you in…");
-    startTransition(async () => {
-      try {
-        const next = await markAttendanceWithCode(checkInCode);
-        if (next.ok) {
-          success(next.message, "Check-in");
-          setCheckInCode("");
-          setConfirmCheckInOpen(false);
-          setTab("upcoming");
-          router.refresh();
-        } else {
-          error(next.message, "Check-in");
+          await deskError({ title: "Zoom seat", text: next.message });
         }
       } finally {
         setBusyLabel(null);
@@ -133,8 +109,31 @@ export function StudentClassesClient({
 
   function submitCode(event: FormEvent) {
     event.preventDefault();
-    if (checkInCode.trim().length < 4) return;
-    setConfirmCheckInOpen(true);
+    const code = checkInCode.trim();
+    if (code.length < 4 || busy) return;
+    void (async () => {
+      const ok = await deskConfirm({
+        title: "Mark present with this code?",
+        text: `This records you as present for the matching class and updates your Records attendance. Make sure the code came from your facilitator in the room.\n\nCode: ${code.toUpperCase()}`,
+        confirmLabel: "Mark present",
+      });
+      if (!ok) return;
+      setBusyLabel("Checking you in…");
+      startTransition(async () => {
+        try {
+          const next = await markAttendanceWithCode(checkInCode);
+          if (next.ok) {
+            setCheckInCode("");
+            setTab("upcoming");
+            router.refresh();
+          } else {
+            await deskError({ title: "Check-in", text: next.message });
+          }
+        } finally {
+          setBusyLabel(null);
+        }
+      });
+    })();
   }
 
   async function joinInPortal(classId: string) {
@@ -143,7 +142,7 @@ export function StudentClassesClient({
     try {
       const next = await getInPortalJoinSession(classId);
       if (!next.ok) {
-        error(next.message, "In-portal Zoom");
+        await deskError({ title: "In-portal Zoom", text: next.message });
         return;
       }
       setPortalSession(next.session);
@@ -340,26 +339,6 @@ export function StudentClassesClient({
         </Panel>
       ) : null}
 
-      <DeskConfirmModal
-        open={confirmCheckInOpen}
-        onClose={() => !busy && setConfirmCheckInOpen(false)}
-        onConfirm={runCheckIn}
-        eyebrow="Physical check-in"
-        title="Mark present with this code?"
-        body={
-          <>
-            This records you as present for the matching class and updates your
-            Records attendance. Make sure the code came from your facilitator in
-            the room.
-            <span className="mt-3 block font-mono text-sm tracking-[0.18em] text-ink">
-              {checkInCode.trim().toUpperCase()}
-            </span>
-          </>
-        }
-        confirmLabel="Mark present"
-        busy={busy}
-        busyLabel={busyLabel ?? "Checking you in…"}
-      />
     </div>
   );
 }
