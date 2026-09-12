@@ -45,8 +45,9 @@ export function FinanceCustomPayoutForm({
   const [amountGbp, setAmountGbp] = useState("");
   const [categoryId, setCategoryId] = useState(categories[0]?.id ?? "");
   const [reason, setReason] = useState("");
+  const [linkTeacher, setLinkTeacher] = useState(false);
   const [teacherId, setTeacherId] = useState("");
-  const [periodKey, setPeriodKey] = useState(defaultPeriodKey ?? "");
+  const [periodKey, setPeriodKey] = useState("");
 
   const amount = Number(amountGbp);
   const amountOk = Number.isFinite(amount) && amount > 0;
@@ -54,7 +55,7 @@ export function FinanceCustomPayoutForm({
     provider === "outside" ||
     (paypalEmail.includes("@") && paypalEmail.trim().length > 3);
   const teacherLinkOk =
-    (!teacherId && !periodKey) || (Boolean(teacherId) && Boolean(periodKey));
+    !linkTeacher || (Boolean(teacherId) && Boolean(periodKey));
   const canSubmit =
     payeeName.trim().length > 0 &&
     amountOk &&
@@ -62,6 +63,18 @@ export function FinanceCustomPayoutForm({
     reason.trim().length > 0 &&
     paypalOk &&
     teacherLinkOk;
+
+  function onToggleLinkTeacher(next: boolean) {
+    setLinkTeacher(next);
+    if (!next) {
+      setTeacherId("");
+      setPeriodKey("");
+      return;
+    }
+    if (!periodKey && defaultPeriodKey) {
+      setPeriodKey(defaultPeriodKey);
+    }
+  }
 
   function submit() {
     setConfirmOpen(false);
@@ -73,8 +86,10 @@ export function FinanceCustomPayoutForm({
       form.set("amountGbp", amount.toFixed(2));
       form.set("categoryId", categoryId);
       form.set("reason", reason.trim());
-      if (teacherId) form.set("teacherId", teacherId);
-      if (periodKey) form.set("periodKey", periodKey);
+      if (linkTeacher && teacherId && periodKey) {
+        form.set("teacherId", teacherId);
+        form.set("periodKey", periodKey);
+      }
       const result = await prepareCustomPayout(form);
       if (!result.ok) {
         await deskError({ text: result.message });
@@ -85,7 +100,9 @@ export function FinanceCustomPayoutForm({
       setPaypalEmail("");
       setAmountGbp("");
       setReason("");
+      setLinkTeacher(false);
       setTeacherId("");
+      setPeriodKey("");
       if (result.payoutId && onPrepared) onPrepared(result.payoutId);
       else router.refresh();
     });
@@ -214,47 +231,57 @@ export function FinanceCustomPayoutForm({
           </label>
 
           <div className="sm:col-span-2 border-t border-stone/70 pt-4">
-            <p className="text-[0.65rem] font-medium uppercase tracking-[0.12em] text-celadon">
-              Optional — mark teacher paid
-            </p>
-            <p className="mt-1 text-sm text-ink/55">
-              Link a teacher and pay period if this payment should clear their
-              teacher-pay mark when released.
-            </p>
+            <label className="inline-flex items-start gap-3 text-sm text-ink">
+              <input
+                type="checkbox"
+                className="mt-1"
+                checked={linkTeacher}
+                onChange={(e) => onToggleLinkTeacher(e.target.checked)}
+              />
+              <span>
+                <span className="font-medium">Also mark a teacher as paid</span>
+                <span className="mt-0.5 block text-ink/55">
+                  Only when this payment should clear a teacher’s pay period.
+                </span>
+              </span>
+            </label>
           </div>
 
-          <label className="block text-sm">
-            <span className="text-ink/70">Teacher</span>
-            <select
-              className={fieldClass}
-              value={teacherId}
-              onChange={(e) => setTeacherId(e.target.value)}
-            >
-              <option value="">None</option>
-              {teachers.map((t) => (
-                <option key={t.id} value={t.id}>
-                  {t.label}
-                </option>
-              ))}
-            </select>
-          </label>
+          {linkTeacher ? (
+            <>
+              <label className="block text-sm">
+                <span className="text-ink/70">Teacher</span>
+                <select
+                  className={fieldClass}
+                  value={teacherId}
+                  onChange={(e) => setTeacherId(e.target.value)}
+                >
+                  <option value="">Choose teacher</option>
+                  {teachers.map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {t.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
 
-          <label className="block text-sm">
-            <span className="text-ink/70">Pay period</span>
-            <select
-              className={fieldClass}
-              value={periodKey}
-              onChange={(e) => setPeriodKey(e.target.value)}
-              disabled={!teacherId}
-            >
-              <option value="">None</option>
-              {periodOptions.map((p) => (
-                <option key={p.key} value={p.key}>
-                  {p.label}
-                </option>
-              ))}
-            </select>
-          </label>
+              <label className="block text-sm">
+                <span className="text-ink/70">Pay period</span>
+                <select
+                  className={fieldClass}
+                  value={periodKey}
+                  onChange={(e) => setPeriodKey(e.target.value)}
+                >
+                  <option value="">Choose period</option>
+                  {periodOptions.map((p) => (
+                    <option key={p.key} value={p.key}>
+                      {p.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </>
+          ) : null}
         </div>
 
         <div className="mt-6 flex flex-wrap items-center gap-3">
@@ -286,7 +313,7 @@ export function FinanceCustomPayoutForm({
               {provider === "paypal" ? "PayPal" : "Bank / outside"}
             </p>
             <p>{reason.trim() || "No reason"}</p>
-            {teacherId && periodKey ? (
+            {linkTeacher && teacherId && periodKey ? (
               <p>
                 When this payment settles, the linked teacher will be marked
                 paid for {periodKey}.
