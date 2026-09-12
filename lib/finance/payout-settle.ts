@@ -34,6 +34,81 @@ async function resolveTeacherPayCategoryId(
   return (anyActive?.id as string | undefined) ?? null;
 }
 
+/** Ensure a ledger row exists for this payout (Books auto-log). Idempotent. */
+export async function ensurePayoutLedgerEntry(input: {
+  payout: FinancePayout;
+  actorId: string | null;
+  settledAt?: string | null;
+}): Promise<{ ok: true; ledgerId: string } | { ok: false; message: string }> {
+  const service = createServiceSupabaseClient();
+  const payout = input.payout;
+
+  if (payout.ledger_entry_id) {
+    return { ok: true, ledgerId: payout.ledger_entry_id };
+  }
+
+  const incurredOn = payout.period_key
+    ? `${payout.period_key}-01`
+    : new Date().toISOString().slice(0, 10);
+  const periodKey = payout.period_key ?? periodKeyFromIncurredOn(incurredOn);
+  const now = new Date().toISOString();
+
+  if (await isPeriodLocked(periodKey)) {
+    return {
+      ok: false,
+      message: `${periodLabelFromKey(periodKey)} is locked. Unlock the books period before recording this payment.`,
+    };
+  }
+
+  const categoryId =
+    payout.category_id ?? (await resolveTeacherPayCategoryId(service));
+  if (!categoryId) {
+    return {
+      ok: false,
+      message: "Payments are temporarily unavailable. Please try again later.",
+    };
+  }
+
+  const { data: entry, error: entryError } = await service
+    .from("finance_ledger_entries")
+    .insert({
+      direction: "out",
+      category_id: categoryId,
+      payee: payout.payee_name,
+      amount_gbp: payout.amount_gbp,
+      currency: payout.currency,
+      incurred_on: incurredOn,
+      settled_at: input.settledAt ?? now,
+      reason: payout.reason,
+      status: "recorded",
+      source: "portal_payout",
+      created_by: input.actorId,
+      period_key: periodKey,
+    })
+    .select("id")
+    .single();
+
+  if (entryError || !entry) {
+    console.error("[finance/payouts/ledger]", entryError?.message);
+    return {
+      ok: false,
+      message:
+        "Payment was accepted, but the books could not be updated. Please try again.",
+    };
+  }
+
+  const ledgerId = entry.id as string;
+  await service
+    .from("finance_payouts")
+    .update({
+      ledger_entry_id: ledgerId,
+      updated_at: now,
+    })
+    .eq("id", payout.id);
+
+  return { ok: true, ledgerId };
+}
+
 /** Record ledger + mark paid once provider (or outside) confirms settlement. */
 export async function settlePayoutAsPaid(input: {
   payout: FinancePayout;
@@ -82,58 +157,27 @@ export async function settlePayoutAsPaid(input: {
     };
   }
 
-  const categoryId =
-    payout.category_id ?? (await resolveTeacherPayCategoryId(service));
-  if (!categoryId) {
-    return {
-      ok: false,
-      message: "Payments are temporarily unavailable. Please try again later.",
-    };
-  }
-
-  let ledgerId = payout.ledger_entry_id;
-  if (!ledgerId) {
-    const { data: entry, error: entryError } = await service
-      .from("finance_ledger_entries")
-      .insert({
-        direction: "out",
-        category_id: categoryId,
-        payee: payout.payee_name,
-        amount_gbp: payout.amount_gbp,
-        currency: payout.currency,
-        incurred_on: incurredOn,
-        settled_at: now,
-        reason: payout.reason,
-        status: "recorded",
-        source: "portal_payout",
-        created_by: input.actorId,
-        period_key: periodKey,
+  const ledger = await ensurePayoutLedgerEntry({
+    payout,
+    actorId: input.actorId,
+    settledAt: now,
+  });
+  if (!ledger.ok) {
+    await service
+      .from("finance_payouts")
+      .update({
+        status: "authorised",
+        authorised_at: payout.authorised_at ?? now,
+        updated_at: now,
+        provider: input.provider,
+        provider_status: input.providerStatus,
+        provider_batch_id: input.providerBatchId ?? null,
+        provider_raw: input.providerRaw ?? null,
       })
-      .select("id")
-      .single();
-
-    if (entryError || !entry) {
-      console.error("[finance/payouts/ledger]", entryError?.message);
-      await service
-        .from("finance_payouts")
-        .update({
-          status: "authorised",
-          authorised_at: payout.authorised_at ?? now,
-          updated_at: now,
-          provider: input.provider,
-          provider_status: input.providerStatus,
-          provider_batch_id: input.providerBatchId ?? null,
-          provider_raw: input.providerRaw ?? null,
-        })
-        .eq("id", payout.id);
-      return {
-        ok: false,
-        message:
-          "Payment was accepted, but the books could not be updated. Please try again.",
-      };
-    }
-    ledgerId = entry.id as string;
+      .eq("id", payout.id);
+    return { ok: false, message: ledger.message };
   }
+  const ledgerId = ledger.ledgerId;
 
   const { error: paidError } = await service
     .from("finance_payouts")

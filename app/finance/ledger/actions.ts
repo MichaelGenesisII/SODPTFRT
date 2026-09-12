@@ -315,6 +315,153 @@ export async function loadEntryAttachmentViews(entryId: string): Promise<
   return views;
 }
 
+/**
+ * Enrich an existing entry with proof and/or a note.
+ * Does not change amount, payee, direction, or category.
+ */
+export async function enrichLedgerEntry(
+  formData: FormData,
+): Promise<FinanceLedgerActionResult> {
+  const attachmentIds = parseAttachmentIds(formData).slice(
+    0,
+    FINANCE_ATTACHMENT_MAX_PER_ENTRY,
+  );
+  const note = String(formData.get("note") ?? "").trim();
+
+  try {
+    const finance = await requireSessionFinance();
+    const entryId = String(formData.get("entryId") ?? "").trim();
+    if (!entryId) {
+      await purgeUnlinkedFinanceAttachments(attachmentIds);
+      return { ok: false, message: "Entry not found." };
+    }
+    if (!note && attachmentIds.length === 0) {
+      return {
+        ok: false,
+        message: "Add a note or at least one proof file.",
+      };
+    }
+    if (note.length > 1500) {
+      return { ok: false, message: "Note must be 1500 characters or fewer." };
+    }
+
+    const service = createServiceSupabaseClient();
+    const { data: entry, error: loadError } = await service
+      .from("finance_ledger_entries")
+      .select("id, reason, status, reverses_entry_id, period_key")
+      .eq("id", entryId)
+      .maybeSingle();
+
+    if (loadError || !entry) {
+      await purgeUnlinkedFinanceAttachments(attachmentIds);
+      return { ok: false, message: "Entry not found." };
+    }
+    if (entry.status === "reversed") {
+      await purgeUnlinkedFinanceAttachments(attachmentIds);
+      return {
+        ok: false,
+        message: "Reversed entries cannot be updated. Use a new entry instead.",
+      };
+    }
+
+    const existing = await listAttachmentsForEntry(entryId);
+    const room = FINANCE_ATTACHMENT_MAX_PER_ENTRY - existing.length;
+    if (attachmentIds.length > room) {
+      await purgeUnlinkedFinanceAttachments(attachmentIds);
+      return {
+        ok: false,
+        message:
+          room <= 0
+            ? "This entry already has the maximum number of proof files."
+            : `You can add at most ${room} more proof file${room === 1 ? "" : "s"}.`,
+      };
+    }
+
+    if (note) {
+      const stamp = new Date().toLocaleString("en-GB", {
+        day: "numeric",
+        month: "short",
+        year: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+      });
+      const addition = `Note (${stamp}): ${note}`;
+      const prev = (entry.reason as string | null)?.trim() || "";
+      const nextReason = prev ? `${prev}\n\n${addition}` : addition;
+      if (nextReason.length > 2000) {
+        await purgeUnlinkedFinanceAttachments(attachmentIds);
+        return {
+          ok: false,
+          message:
+            "This entry’s comment is full. Reverse and re-record if you need a longer note.",
+        };
+      }
+      const { error: reasonError } = await service
+        .from("finance_ledger_entries")
+        .update({ reason: nextReason })
+        .eq("id", entryId);
+      if (reasonError) {
+        console.error("[finance/ledger/enrich reason]", reasonError.message);
+        await purgeUnlinkedFinanceAttachments(attachmentIds);
+        return {
+          ok: false,
+          message: "Could not save the note. Please try again.",
+        };
+      }
+    }
+
+    if (attachmentIds.length) {
+      try {
+        await linkFinanceAttachmentsToEntry(entryId, attachmentIds);
+      } catch (error) {
+        console.error("[finance/ledger/enrich attach]", error);
+        await purgeUnlinkedFinanceAttachments(attachmentIds).catch(
+          () => undefined,
+        );
+        return {
+          ok: false,
+          message: note
+            ? "Note saved, but proof could not be linked. Please try again."
+            : "Could not attach proof. Please try again.",
+        };
+      }
+    }
+
+    await writeFinanceAudit({
+      actorId: finance.id,
+      action: "ledger_enrich",
+      entityType: "finance_ledger_entry",
+      entityId: entryId,
+      summary: `Enriched entry · note=${Boolean(note)} · files=${attachmentIds.length}`,
+      after: {
+        note_added: Boolean(note),
+        attachment_count: attachmentIds.length,
+      },
+    });
+
+    await revalidateFinanceLedgerPaths();
+    return {
+      ok: true,
+      message:
+        note && attachmentIds.length
+          ? "Note and proof added."
+          : note
+            ? "Note added."
+            : "Proof added.",
+    };
+  } catch (error) {
+    console.error("[finance/ledger/enrich]", error);
+    await purgeUnlinkedFinanceAttachments(attachmentIds).catch(() => undefined);
+    return {
+      ok: false,
+      message: publicActionMessage(
+        error,
+        "Could not update this entry. Please try again.",
+      ),
+    };
+  }
+}
+
 export async function exportLedgerCsv(
   entryIds?: string[],
 ): Promise<FinanceLedgerActionResult> {

@@ -4,7 +4,6 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState, useTransition, type ReactNode } from "react";
 import {
-  clearTeacherPaid,
   exportPayPeriodCsv,
   markTeacherPaid,
 } from "@/app/finance/periods/actions";
@@ -52,9 +51,6 @@ export function FinancePeriodsWorkspace({
   const [markTarget, setMarkTarget] = useState<PayPeriodTeacherTotal | null>(
     null,
   );
-  const [clearTarget, setClearTarget] = useState<PayPeriodTeacherTotal | null>(
-    null,
-  );
   const [prepareTarget, setPrepareTarget] =
     useState<PayPeriodTeacherTotal | null>(null);
 
@@ -92,26 +88,9 @@ export function FinancePeriodsWorkspace({
     const form = new FormData();
     form.set("periodKey", report.periodKey);
     form.set("teacherId", teacher.teacherId);
+    form.set("amountGbp", String(teacher.grossGbp));
     startTransition(async () => {
       const result = await markTeacherPaid(form);
-      if (!result.ok) {
-        await deskError({ text: result.message });
-        return;
-      }
-      await deskSuccess({ text: result.message });
-      router.refresh();
-    });
-  }
-
-  function confirmClearPaid() {
-    if (!clearTarget) return;
-    const teacher = clearTarget;
-    setClearTarget(null);
-    const form = new FormData();
-    form.set("periodKey", report.periodKey);
-    form.set("teacherId", teacher.teacherId);
-    startTransition(async () => {
-      const result = await clearTeacherPaid(form);
       if (!result.ok) {
         await deskError({ text: result.message });
         return;
@@ -297,13 +276,9 @@ export function FinancePeriodsWorkspace({
                       )
                     ) : null}
                     {paid ? (
-                      <button
-                        type="button"
-                        onClick={() => setClearTarget(teacher)}
-                        className="border border-pine/25 px-3 py-2 text-sm font-medium text-pine hover:border-pine"
-                      >
-                        Clear paid mark
-                      </button>
+                      <span className="px-3 py-2 text-sm font-medium text-celadon">
+                        Paid
+                      </span>
                     ) : (
                       <button
                         type="button"
@@ -358,7 +333,8 @@ export function FinancePeriodsWorkspace({
                 {markTarget.sessionCount === 1 ? "" : "s"}
               </p>
               <p className="text-ink/55">
-                This only records that pay was settled outside the portal. It does not send money.
+                Records that pay was settled outside the portal and writes it
+                to the books. It does not send money.
               </p>
             </div>
           ) : (
@@ -369,31 +345,6 @@ export function FinancePeriodsWorkspace({
         busy={pending}
         onClose={() => setMarkTarget(null)}
         onConfirm={confirmMarkPaid}
-      />
-
-      <DeskConfirmModal
-        open={Boolean(clearTarget)}
-        title="Clear paid mark?"
-        body={
-          clearTarget ? (
-            <div className="space-y-2">
-              <p className="font-medium text-ink">
-                {clearTarget.teacherName} · {formatGbp(clearTarget.grossGbp)}
-              </p>
-              <p>{report.label}</p>
-              <p className="text-ink/55">
-                This teacher will show as unpaid again for this month.
-              </p>
-            </div>
-          ) : (
-            ""
-          )
-        }
-        confirmLabel="Clear paid mark"
-        destructive
-        busy={pending}
-        onClose={() => setClearTarget(null)}
-        onConfirm={confirmClearPaid}
       />
 
       <DeskConfirmModal

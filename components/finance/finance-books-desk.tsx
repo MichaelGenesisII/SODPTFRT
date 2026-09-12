@@ -4,6 +4,7 @@ import { useMemo, useState, useTransition, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import {
   createManualLedgerEntry,
+  enrichLedgerEntry,
   exportLedgerCsv,
   loadEntryAttachmentViews,
   reverseLedgerEntry,
@@ -90,7 +91,7 @@ export function FinanceBooksDesk({
   const [pending, startTransition] = useTransition();
   const [busyLabel, setBusyLabel] = useState("Working…");
 
-  const [entries] = useState(ledger.entries);
+  const entries = ledger.entries;
   const [query, setQuery] = useState("");
   const [filtersOpen, setFiltersOpen] = useState(
     () => dateSelectionIsActive(initialDateSelection),
@@ -130,6 +131,13 @@ export function FinanceBooksDesk({
       byteSize: number;
       url: string | null;
     }[]
+  >([]);
+  const [enrichTarget, setEnrichTarget] = useState<FinanceLedgerEntry | null>(
+    null,
+  );
+  const [enrichNote, setEnrichNote] = useState("");
+  const [enrichAttachments, setEnrichAttachments] = useState<
+    PendingFinanceAttachment[]
   >([]);
 
   function go(next: FinanceBooksPanel) {
@@ -422,6 +430,47 @@ export function FinanceBooksDesk({
     });
   }
 
+  function openEnrich(entry: FinanceLedgerEntry) {
+    setEnrichTarget(entry);
+    setEnrichNote("");
+    setEnrichAttachments([]);
+  }
+
+  function closeEnrich() {
+    setEnrichTarget(null);
+    setEnrichNote("");
+    setEnrichAttachments([]);
+  }
+
+  function submitEnrich() {
+    if (!enrichTarget) return;
+    const target = enrichTarget;
+    const note = enrichNote.trim();
+    const files = enrichAttachments;
+    if (!note && files.length === 0) {
+      void deskError({ text: "Add a note or at least one proof file." });
+      return;
+    }
+    setBusyLabel("Saving…");
+    startTransition(async () => {
+      const form = new FormData();
+      form.set("entryId", target.id);
+      form.set("note", note);
+      form.set(
+        "attachmentIds",
+        JSON.stringify(files.map((item) => item.id)),
+      );
+      const result = await enrichLedgerEntry(form);
+      if (!result.ok) {
+        await deskError({ text: result.message });
+        return;
+      }
+      await deskSuccess({ text: result.message });
+      closeEnrich();
+      router.refresh();
+    });
+  }
+
   const busy = pending || navPending;
 
   return (
@@ -480,8 +529,8 @@ export function FinanceBooksDesk({
                 Add a money entry
               </h3>
               <p className="mt-2 max-w-xl text-sm text-ink/60">
-                Entries cannot be edited later. If something is wrong, add a
-                reversing entry instead.
+                Amount and payee stay fixed. You can still add proof or a note
+                later. If the money figure is wrong, record a reversing entry.
               </p>
             </div>
             <button
@@ -964,6 +1013,15 @@ export function FinanceBooksDesk({
                                 {!isReversed && !isReversal ? (
                                   <button
                                     type="button"
+                                    onClick={() => openEnrich(entry)}
+                                    className="text-sm font-medium text-pine hover:underline"
+                                  >
+                                    Add proof
+                                  </button>
+                                ) : null}
+                                {!isReversed && !isReversal ? (
+                                  <button
+                                    type="button"
                                     onClick={() => {
                                       setReverseTarget(entry);
                                       setReverseReason("");
@@ -1091,7 +1149,21 @@ export function FinanceBooksDesk({
                   </ul>
                 )}
               </div>
-              <div className="mt-7 flex justify-end">
+              <div className="mt-7 flex justify-end gap-2">
+                {!proofEntry.reverses_entry_id &&
+                proofEntry.status !== "reversed" ? (
+                  <button
+                    type="button"
+                    disabled={pending}
+                    onClick={() => {
+                      setProofEntry(null);
+                      openEnrich(proofEntry);
+                    }}
+                    className="border border-pine/25 px-4 py-2.5 text-sm font-medium text-pine hover:border-pine disabled:opacity-60"
+                  >
+                    Add more
+                  </button>
+                ) : null}
                 <button
                   type="button"
                   disabled={pending}
@@ -1099,6 +1171,96 @@ export function FinanceBooksDesk({
                   className="border border-pine/25 px-4 py-2.5 text-sm font-medium text-pine hover:border-pine disabled:opacity-60"
                 >
                   Close
+                </button>
+              </div>
+            </div>
+          </div>
+        </DeskPortal>
+      ) : null}
+
+      {enrichTarget ? (
+        <DeskPortal>
+          <div
+            className="fixed inset-0 z-[200] flex items-end justify-center bg-ink/45 p-4 sm:items-center"
+            role="presentation"
+            onClick={() => !pending && closeEnrich()}
+          >
+            <div
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="finance-enrich-title"
+              className="max-h-[90vh] w-full max-w-lg overflow-y-auto border border-stone bg-mist p-6 text-ink shadow-[0_16px_48px_rgba(20,53,44,0.2)] sm:p-7"
+              onClick={(event) => event.stopPropagation()}
+            >
+              <p className="text-[0.65rem] font-medium uppercase tracking-[0.16em] text-celadon">
+                Enrich record
+              </p>
+              <h3
+                id="finance-enrich-title"
+                className="mt-3 font-display text-2xl tracking-[-0.02em] text-pine"
+              >
+                Add proof or a note
+              </h3>
+              <p className="mt-2 text-sm text-ink/65">
+                {enrichTarget.payee} · {formatGbp(enrichTarget.amount_gbp)} ·{" "}
+                {formatDay(enrichTarget.incurred_on)}
+              </p>
+              <p className="mt-2 text-sm text-ink/55">
+                Amount and payee stay the same. Up to{" "}
+                {Math.max(0, 5 - enrichTarget.attachment_count)} more file
+                {5 - enrichTarget.attachment_count === 1 ? "" : "s"} can be
+                added.
+              </p>
+
+              <label className="mt-5 block text-sm font-medium text-ink">
+                Note (optional)
+                <textarea
+                  value={enrichNote}
+                  onChange={(event) => setEnrichNote(event.target.value)}
+                  rows={3}
+                  maxLength={1500}
+                  placeholder="Extra context for this payment"
+                  className="mt-1.5 w-full border border-stone bg-white/70 px-3 py-2.5 text-sm outline-none focus:border-pine"
+                />
+              </label>
+
+              <div className="mt-4">
+                <p className="text-sm font-medium text-ink">Proof files</p>
+                <div className="mt-1.5">
+                  <FinanceAttachmentPicker
+                    value={enrichAttachments}
+                    onChange={setEnrichAttachments}
+                    maxFiles={Math.max(
+                      0,
+                      5 - enrichTarget.attachment_count,
+                    )}
+                    disabled={pending || enrichTarget.attachment_count >= 5}
+                  />
+                </div>
+              </div>
+
+              <div className="mt-7 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
+                <button
+                  type="button"
+                  disabled={pending}
+                  onClick={closeEnrich}
+                  className="border border-pine/25 px-4 py-2.5 text-sm font-medium text-pine hover:border-pine disabled:opacity-60"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  disabled={
+                    pending ||
+                    (!enrichNote.trim() && enrichAttachments.length === 0) ||
+                    (enrichTarget.attachment_count >= 5 &&
+                      !enrichNote.trim() &&
+                      enrichAttachments.length === 0)
+                  }
+                  onClick={submitEnrich}
+                  className="bg-pine px-4 py-2.5 text-sm font-semibold text-mist hover:bg-celadon disabled:opacity-60"
+                >
+                  Save
                 </button>
               </div>
             </div>

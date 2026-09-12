@@ -1,5 +1,6 @@
 import { writeFinanceAudit } from "@/lib/finance/audit";
 import {
+  ensurePayoutLedgerEntry,
   mapPaypalItemStatusToPayout,
   settlePayoutAsPaid,
 } from "@/lib/finance/payout-settle";
@@ -127,9 +128,23 @@ export async function dispatchPaypalPayout(input: {
     details.itemStatus ?? details.batchStatus,
   );
 
-  const fresh = await getFinancePayout(payout.id);
+  let fresh = await getFinancePayout(payout.id);
   if (!fresh) {
     return { ok: false, message: "Payment not found." };
+  }
+
+  // Auto-log to Books as soon as PayPal accepts the send (incl. UNCLAIMED).
+  if (!fresh.ledger_entry_id) {
+    const logged = await ensurePayoutLedgerEntry({
+      payout: fresh,
+      actorId,
+      settledAt: new Date().toISOString(),
+    });
+    if (!logged.ok) {
+      console.error("[finance/payouts/paypal-ledger]", logged.message);
+    } else {
+      fresh = (await getFinancePayout(payout.id)) ?? fresh;
+    }
   }
 
   if (mapped.payoutStatus === "paid") {
@@ -193,7 +208,7 @@ export async function dispatchPaypalPayout(input: {
   return {
     ok: true,
     message:
-      "Authorised and sent to PayPal. Status will update when PayPal confirms — use Refresh if it stays pending.",
+      "Authorised and sent to PayPal. Recorded on the books. Status will update when PayPal confirms — use Refresh if it stays pending.",
   };
 }
 
@@ -222,9 +237,21 @@ export async function refreshPaypalPayoutStatus(input: {
   );
   const service = createServiceSupabaseClient();
 
+  let fresh = await getFinancePayout(payout.id);
+  if (!fresh) return { ok: false, message: "Payment not found." };
+
+  if (!fresh.ledger_entry_id && mapped.payoutStatus !== "failed") {
+    const logged = await ensurePayoutLedgerEntry({
+      payout: fresh,
+      actorId,
+      settledAt: new Date().toISOString(),
+    });
+    if (logged.ok) {
+      fresh = (await getFinancePayout(payout.id)) ?? fresh;
+    }
+  }
+
   if (mapped.payoutStatus === "paid") {
-    const fresh = await getFinancePayout(payout.id);
-    if (!fresh) return { ok: false, message: "Payment not found." };
     return settlePayoutAsPaid({
       payout: fresh,
       actorId,
