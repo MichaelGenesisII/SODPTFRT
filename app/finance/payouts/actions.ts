@@ -14,6 +14,7 @@ import {
 import {
   FINANCE_PAYOUTS_UNAVAILABLE_MESSAGE,
 } from "@/lib/finance/payout-constants";
+import { enforcePayoutAmountLimit } from "@/lib/finance/payout-amount-limit";
 import { writeFinanceAudit } from "@/lib/finance/audit";
 import { requireSessionFinance } from "@/lib/finance/auth";
 import {
@@ -70,6 +71,93 @@ function revalidatePayoutPaths() {
   revalidatePath("/finance/books");
   revalidatePath("/finance");
   revalidatePath("/teacher/payments");
+}
+
+/** Authorise + send/settle a payout (no dual-factor). Shared by prepare + release. */
+async function completePayoutRelease(input: {
+  payoutId: string;
+  actorId: string;
+  previousStatus?: string;
+  finance?: Awaited<ReturnType<typeof requireSessionFinance>>;
+}): Promise<FinancePayoutActionResult> {
+  const payout = await getFinancePayout(input.payoutId);
+  if (!payout) return { ok: false, message: "Payment not found." };
+
+  if (input.finance) {
+    const limit = await enforcePayoutAmountLimit({
+      finance: input.finance,
+      amountGbp: payout.amount_gbp,
+      payeeName: payout.payee_name,
+      reason: payout.reason ?? "Payment",
+    });
+    if (!limit.ok) return limit;
+  }
+
+  const releasable = [
+    "draft",
+    "pending_authorisation",
+    "authorised",
+    "frozen",
+    "expired",
+  ];
+  if (!releasable.includes(payout.status)) {
+    return {
+      ok: false,
+      message: "This payment cannot be released in its current state.",
+    };
+  }
+
+  const verifiedAt = new Date().toISOString();
+  const service = createServiceSupabaseClient();
+  await service
+    .from("finance_payouts")
+    .update({
+      status: "authorised",
+      authorised_at: payout.authorised_at ?? verifiedAt,
+      updated_at: verifiedAt,
+      failure_reason: null,
+    })
+    .eq("id", input.payoutId)
+    .in("status", releasable);
+
+  const authorised = await getFinancePayout(input.payoutId);
+  if (!authorised) {
+    return { ok: false, message: "Payment not found." };
+  }
+
+  await writeFinanceAudit({
+    actorId: input.actorId,
+    action: "payout_released",
+    entityType: "finance_payout",
+    entityId: input.payoutId,
+    summary: `Released ${authorised.payee_name} ${authorised.amount_gbp.toFixed(2)}`,
+    before: { status: input.previousStatus ?? payout.status },
+    after: { status: "authorised" },
+  });
+
+  if (authorised.provider === "paypal") {
+    const { dispatchPaypalPayout } = await import(
+      "@/lib/finance/payout-paypal"
+    );
+    const sent = await dispatchPaypalPayout({
+      payout: authorised,
+      actorId: input.actorId,
+    });
+    revalidatePayoutPaths();
+    return { ...sent, payoutId: input.payoutId };
+  }
+
+  const { settlePayoutAsPaid } = await import("@/lib/finance/payout-settle");
+  const settled = await settlePayoutAsPaid({
+    payout: authorised,
+    actorId: input.actorId,
+    provider: "outside",
+    providerStatus: "outside",
+    auditAction: "payout_paid_outside",
+    summary: `Released ${authorised.payee_name} ${authorised.amount_gbp.toFixed(2)} (outside)`,
+  });
+  revalidatePayoutPaths();
+  return { ...settled, payoutId: input.payoutId };
 }
 
 async function countRecentAuthRequests(actorId: string): Promise<number> {
@@ -176,6 +264,19 @@ export async function prepareTeacherPeriodPayout(
       };
     }
 
+    const payeeName = teacherDisplayName(
+      teacher as { full_name: string | null; email: string },
+    );
+    const reason = `Teacher pay · ${periodLabelFromKey(periodKey)}`;
+
+    const limit = await enforcePayoutAmountLimit({
+      finance,
+      amountGbp: amount,
+      payeeName,
+      reason,
+    });
+    if (!limit.ok) return limit;
+
     const { getTeacherPaymentDetailsPublic, getTeacherPaypalEmailForPayout } =
       await import("@/lib/teacher/payment-details");
     const payment = await getTeacherPaymentDetailsPublic(teacherId);
@@ -204,10 +305,6 @@ export async function prepareTeacherPeriodPayout(
         : "bank";
     }
 
-    const payeeName = teacherDisplayName(
-      teacher as { full_name: string | null; email: string },
-    );
-    const reason = `Teacher pay · ${periodLabelFromKey(periodKey)}`;
     const idempotencyKey = `teacher-period:${periodKey}:${teacherId}:${randomUUID()}`;
 
     const { data: payout, error } = await service
@@ -239,10 +336,10 @@ export async function prepareTeacherPeriodPayout(
 
     await writeFinanceAudit({
       actorId: finance.id,
-      action: "payout_draft",
+      action: "payout_created",
       entityType: "finance_payout",
       entityId: payout.id as string,
-      summary: `Draft payment ${payeeName} ${amount.toFixed(2)}`,
+      summary: `Payment ${payeeName} ${amount.toFixed(2)}`,
       after: {
         status: "draft",
         amount_gbp: amount,
@@ -251,12 +348,12 @@ export async function prepareTeacherPeriodPayout(
       },
     });
 
-    revalidatePayoutPaths();
-    return {
-      ok: true,
-      message: "Payment drafted. Request authorisation when ready.",
+    return completePayoutRelease({
       payoutId: payout.id as string,
-    };
+      actorId: finance.id,
+      previousStatus: "draft",
+      finance,
+    });
   } catch (error) {
     console.error("[finance/payouts/prepare]", error);
     return {
@@ -305,6 +402,15 @@ export async function prepareCustomPayout(
     if (!reason || reason.length > 2000) {
       return { ok: false, message: "Enter a short reason for this payment." };
     }
+
+    const limit = await enforcePayoutAmountLimit({
+      finance,
+      amountGbp: amount,
+      payeeName,
+      reason,
+    });
+    if (!limit.ok) return limit;
+
     if (providerRaw === "paypal") {
       if (!paypalEmail.includes("@") || paypalEmail.length > 254) {
         return { ok: false, message: "Enter a valid PayPal email." };
@@ -388,10 +494,10 @@ export async function prepareCustomPayout(
 
     await writeFinanceAudit({
       actorId: finance.id,
-      action: "payout_draft_custom",
+      action: "payout_created_custom",
       entityType: "finance_payout",
       entityId: payout.id as string,
-      summary: `Draft custom payment ${resolvedPayeeName} ${amount.toFixed(2)}`,
+      summary: `Payment ${resolvedPayeeName} ${amount.toFixed(2)}`,
       after: {
         status: "draft",
         amount_gbp: amount,
@@ -402,12 +508,12 @@ export async function prepareCustomPayout(
       },
     });
 
-    revalidatePayoutPaths();
-    return {
-      ok: true,
-      message: "Payment drafted. Request authorisation when ready.",
+    return completePayoutRelease({
       payoutId: payout.id as string,
-    };
+      actorId: finance.id,
+      previousStatus: "draft",
+      finance,
+    });
   } catch (error) {
     console.error("[finance/payouts/prepare-custom]", error);
     return {
@@ -593,233 +699,17 @@ export async function releasePayout(
     }
 
     const payoutId = String(formData.get("payoutId") ?? "").trim();
-    const emailCode = String(formData.get("emailCode") ?? "").trim();
-    const totpCode = String(formData.get("totpCode") ?? "").trim();
-
     if (!payoutId) return { ok: false, message: "Payment not found." };
 
     const payout = await getFinancePayout(payoutId);
     if (!payout) return { ok: false, message: "Payment not found." };
-    if (payout.status !== "pending_authorisation") {
-      return {
-        ok: false,
-        message: "This payment is not waiting for authorisation.",
-      };
-    }
 
-    const challenge = await getLatestChallenge(payoutId);
-    if (!challenge || challenge.consumed_at || challenge.declined_at) {
-      return {
-        ok: false,
-        message: "Request authorisation again before releasing.",
-      };
-    }
-    if (new Date(challenge.expires_at).getTime() < Date.now()) {
-      const service = createServiceSupabaseClient();
-      await service
-        .from("finance_payouts")
-        .update({
-          status: "expired",
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", payoutId);
-      return {
-        ok: false,
-        message: "The emailed code has expired. Request authorisation again.",
-      };
-    }
-
-    if (
-      Number(challenge.amount_gbp) !== payout.amount_gbp ||
-      challenge.payee_hash !== hashPayeeBinding(payout.payee_name)
-    ) {
-      const service = createServiceSupabaseClient();
-      await service
-        .from("finance_payouts")
-        .update({
-          status: "draft",
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", payoutId);
-      return {
-        ok: false,
-        message:
-          "This payment changed after authorisation was requested. Request a new code.",
-      };
-    }
-
-    const totpSecret = financeApproverTotpSecret();
-    if (!totpSecret) {
-      return { ok: false, message: FINANCE_PAYOUTS_UNAVAILABLE_MESSAGE };
-    }
-
-    const emailOk = verifyPayoutEmailCode(
+    return completePayoutRelease({
       payoutId,
-      emailCode,
-      challenge.code_hash,
-    );
-    const totpStep = verifyTotp(totpSecret, totpCode);
-    const bothOk = emailOk && totpStep !== null;
-
-    const service = createServiceSupabaseClient();
-
-    if (!bothOk) {
-      const nextAttempts = challenge.attempt_count + 1;
-      await service
-        .from("finance_payout_challenges")
-        .update({ attempt_count: nextAttempts })
-        .eq("id", challenge.id);
-
-      if (nextAttempts >= challenge.max_attempts) {
-        await service
-          .from("finance_payouts")
-          .update({
-            status: "frozen",
-            updated_at: new Date().toISOString(),
-          })
-          .eq("id", payoutId);
-
-        const approver = financeApproverEmail();
-        if (approver) {
-          const {
-            sendFinancePayoutFreezeNoticeEmail,
-          } = await import("@/lib/email/backend");
-          await sendFinancePayoutFreezeNoticeEmail({
-            to: approver,
-            payeeName: payout.payee_name,
-            amountLabel: formatGbp(payout.amount_gbp),
-            siteUrl: portalBaseUrl(),
-          }).catch((error) => {
-            console.error("[finance/payouts/freeze-mail]", error);
-          });
-        }
-
-        if (finance.email) {
-          const {
-            sendFinancePayoutFreezeNoticeEmail,
-          } = await import("@/lib/email/backend");
-          await sendFinancePayoutFreezeNoticeEmail({
-            to: finance.email,
-            payeeName: payout.payee_name,
-            amountLabel: formatGbp(payout.amount_gbp),
-            siteUrl: portalBaseUrl(),
-          }).catch((error) => {
-            console.error("[finance/payouts/freeze-mail-finance]", error);
-          });
-        }
-
-        await writeFinanceAudit({
-          actorId: finance.id,
-          action: "payout_frozen",
-          entityType: "finance_payout",
-          entityId: payoutId,
-          summary: `Frozen after failed codes · ${payout.payee_name}`,
-          after: { status: "frozen", attempts: nextAttempts },
-        });
-
-        revalidatePayoutPaths();
-        return {
-          ok: false,
-          message:
-            "Too many incorrect codes. This payment is frozen. Request authorisation again to continue.",
-        };
-      }
-
-      await writeFinanceAudit({
-        actorId: finance.id,
-        action: "payout_release_failed",
-        entityType: "finance_payout",
-        entityId: payoutId,
-        summary: "Incorrect authorisation codes",
-        after: { attempts: nextAttempts },
-      });
-
-      return {
-        ok: false,
-        message: "Those codes could not be verified. Please try again.",
-      };
-    }
-
-    if (totpStep === null) {
-      return {
-        ok: false,
-        message: "Those codes could not be verified. Please try again.",
-      };
-    }
-
-    const { error: stepError } = await service
-      .from("finance_totp_consumed_steps")
-      .insert({
-        step: totpStep,
-        payout_id: payoutId,
-      });
-
-    if (stepError) {
-      if (/duplicate|unique/i.test(stepError.message)) {
-        return {
-          ok: false,
-          message: "Those codes could not be verified. Please try again.",
-        };
-      }
-      console.error("[finance/payouts/totp-step]", stepError.message);
-      return {
-        ok: false,
-        message: "Could not release this payment. Please try again.",
-      };
-    }
-
-    const verifiedAt = new Date().toISOString();
-    await service
-      .from("finance_payout_challenges")
-      .update({
-        consumed_at: verifiedAt,
-        email_verified_at: verifiedAt,
-        totp_verified_at: verifiedAt,
-      })
-      .eq("id", challenge.id);
-
-    await service
-      .from("finance_payouts")
-      .update({
-        status: "authorised",
-        authorised_at: verifiedAt,
-        updated_at: verifiedAt,
-      })
-      .eq("id", payoutId)
-      .eq("status", "pending_authorisation");
-
-    const authorised = await getFinancePayout(payoutId);
-    if (!authorised) {
-      return { ok: false, message: "Payment not found." };
-    }
-
-    // PayPal rail (Phase 4 sandbox) when the draft is a PayPal payout.
-    if (authorised.provider === "paypal") {
-      const { dispatchPaypalPayout } = await import(
-        "@/lib/finance/payout-paypal"
-      );
-      const sent = await dispatchPaypalPayout({
-        payout: authorised,
-        actorId: finance.id,
-      });
-      revalidatePayoutPaths();
-      return { ...sent, payoutId };
-    }
-
-    // Bank / outside settlement (no provider send).
-    const { settlePayoutAsPaid } = await import(
-      "@/lib/finance/payout-settle"
-    );
-    const settled = await settlePayoutAsPaid({
-      payout: authorised,
       actorId: finance.id,
-      provider: "outside",
-      providerStatus: "outside",
-      auditAction: "payout_paid_outside",
-      summary: `Released ${authorised.payee_name} ${authorised.amount_gbp.toFixed(2)} (outside)`,
+      previousStatus: payout.status,
+      finance,
     });
-    revalidatePayoutPaths();
-    return { ...settled, payoutId };
   } catch (error) {
     console.error("[finance/payouts/release]", error);
     return {
@@ -963,7 +853,7 @@ export async function cancelPayout(
     revalidatePayoutPaths();
     return {
       ok: true,
-      message: "Payment cancelled. Request authorisation again if needed.",
+      message: "Payment cancelled.",
       payoutId,
     };
   } catch (error) {

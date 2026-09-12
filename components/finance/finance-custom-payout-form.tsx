@@ -7,6 +7,7 @@ import { DeskConfirmModal } from "@/components/ui/desk-confirm-modal";
 import { DeskLoaderOverlay } from "@/components/ui/desk-loader";
 import { deskError, deskSuccess } from "@/lib/ui/desk-alert";
 import { formatGbp, monthPeriodKey } from "@/lib/finance/types";
+import { FINANCE_PAYOUT_MAX_GBP } from "@/lib/finance/payout-constants";
 
 const fieldClass =
   "mt-1.5 w-full border border-stone bg-white/70 px-3 py-2.5 text-sm outline-none focus:border-pine";
@@ -25,13 +26,14 @@ export function FinanceCustomPayoutForm({
   categories,
   teachers,
   defaultPeriodKey,
-  onPrepared,
+  onSent,
   embedded = false,
 }: {
   categories: CustomPayoutCategoryOption[];
   teachers: CustomPayoutTeacherOption[];
   defaultPeriodKey?: string;
-  onPrepared?: (payoutId: string) => void;
+  /** Called after a successful send (e.g. open the in-progress panel). */
+  onSent?: (payoutId: string) => void;
   /** Hide the standalone hero when nested in the Payments corridor. */
   embedded?: boolean;
 }) {
@@ -50,7 +52,10 @@ export function FinanceCustomPayoutForm({
   const [periodKey, setPeriodKey] = useState("");
 
   const amount = Number(amountGbp);
-  const amountOk = Number.isFinite(amount) && amount > 0;
+  const amountOk =
+    Number.isFinite(amount) && amount > 0 && amount <= FINANCE_PAYOUT_MAX_GBP;
+  const amountOverLimit =
+    Number.isFinite(amount) && amount > FINANCE_PAYOUT_MAX_GBP;
   const paypalOk =
     provider === "outside" ||
     (paypalEmail.includes("@") && paypalEmail.trim().length > 3);
@@ -103,7 +108,7 @@ export function FinanceCustomPayoutForm({
       setLinkTeacher(false);
       setTeacherId("");
       setPeriodKey("");
-      if (result.payoutId && onPrepared) onPrepared(result.payoutId);
+      if (result.payoutId && onSent) onSent(result.payoutId);
       else router.refresh();
     });
   }
@@ -122,18 +127,21 @@ export function FinanceCustomPayoutForm({
 
   return (
     <div className="relative space-y-6">
-      <DeskLoaderOverlay active={pending} label="Preparing payment…" />
+      <DeskLoaderOverlay
+        active={pending}
+        label={provider === "paypal" ? "Sending via PayPal…" : "Recording payment…"}
+      />
       {!embedded ? (
         <section className="relative overflow-hidden border border-stone/80 bg-white/55 px-5 py-6 sm:px-7">
           <p className="text-[0.65rem] font-medium uppercase tracking-[0.18em] text-celadon">
             Send payment
           </p>
           <h1 className="mt-2 font-display text-[clamp(1.75rem,5vw,2.55rem)] tracking-[-0.02em] text-pine">
-            Create a payment
+            Send a payment
           </h1>
           <p className="mt-2 max-w-xl text-sm leading-relaxed text-ink/65">
             Pay anyone by PayPal, or record a bank payment made outside the
-            portal. It still needs approval before money is sent.
+            portal. One confirm sends or records it.
           </p>
         </section>
       ) : null}
@@ -199,6 +207,14 @@ export function FinanceCustomPayoutForm({
               onChange={(e) => setAmountGbp(e.target.value)}
               placeholder="0.00"
             />
+            <span className="mt-1 block text-xs text-ink/45">
+              Maximum £2,000 per payment.
+            </span>
+            {amountOverLimit ? (
+              <span className="mt-1 block text-xs text-red-800">
+                This amount is over the £2,000 desk limit.
+              </span>
+            ) : null}
           </label>
 
           <label className="block text-sm">
@@ -291,18 +307,21 @@ export function FinanceCustomPayoutForm({
             onClick={() => setConfirmOpen(true)}
             className="bg-pine px-4 py-2.5 text-sm font-semibold text-mist hover:bg-celadon disabled:opacity-50"
           >
-            Prepare payment
+            {provider === "paypal" ? "Send payment" : "Record payment"}
           </button>
           <p className="text-sm text-ink/50">
-            Creates a draft under Approvals. You still need to approve it before
-            money is sent.
+            {provider === "paypal"
+              ? "Confirm once to send via PayPal and log it on the books."
+              : "Confirm once to record this outside payment on the books."}
           </p>
         </div>
       </section>
 
       <DeskConfirmModal
         open={confirmOpen}
-        title="Prepare this payment?"
+        title={
+          provider === "paypal" ? "Send this payment?" : "Record this payment?"
+        }
         body={
           <div className="space-y-2 text-sm text-ink/70">
             <p>
@@ -313,6 +332,11 @@ export function FinanceCustomPayoutForm({
               {provider === "paypal" ? "PayPal" : "Bank / outside"}
             </p>
             <p>{reason.trim() || "No reason"}</p>
+            <p className="text-ink/55">
+              {provider === "paypal"
+                ? "This sends money now. It will also appear on the books."
+                : "This marks the payment as paid outside the portal and writes it to the books. It does not move money online."}
+            </p>
             {linkTeacher && teacherId && periodKey ? (
               <p>
                 When this payment settles, the linked teacher will be marked
@@ -321,7 +345,9 @@ export function FinanceCustomPayoutForm({
             ) : null}
           </div>
         }
-        confirmLabel="Prepare payment"
+        confirmLabel={
+          provider === "paypal" ? "Send payment" : "Record payment"
+        }
         cancelLabel="Go back"
         onClose={() => setConfirmOpen(false)}
         onConfirm={submit}

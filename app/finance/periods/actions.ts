@@ -112,6 +112,27 @@ export async function markTeacherPaid(
       return { ok: false, message: "Teacher not found." };
     }
 
+    const { teacherDisplayName } = await import("@/lib/teacher/types");
+    const { periodLabelFromKey } = await import("@/lib/finance/periods-lock");
+    const { enforcePayoutAmountLimit } = await import(
+      "@/lib/finance/payout-amount-limit"
+    );
+    const payee = teacherDisplayName({
+      email: teacher.email as string,
+      full_name: (teacher.full_name as string | null) ?? null,
+    });
+    const reason = `Teacher pay · ${periodLabelFromKey(periodKey)} (marked paid)`;
+
+    if (!alreadyMarked) {
+      const limit = await enforcePayoutAmountLimit({
+        finance,
+        amountGbp: amount,
+        payeeName: payee,
+        reason,
+      });
+      if (!limit.ok) return limit;
+    }
+
     const now = new Date().toISOString();
     const { error } = await service.from("teacher_pay_period_marks").upsert(
       {
@@ -158,12 +179,6 @@ export async function markTeacherPaid(
         };
       }
 
-      const { teacherDisplayName } = await import("@/lib/teacher/types");
-      const { periodLabelFromKey } = await import("@/lib/finance/periods-lock");
-      const payee = teacherDisplayName({
-        email: teacher.email as string,
-        full_name: (teacher.full_name as string | null) ?? null,
-      });
       const { error: ledgerError } = await service
         .from("finance_ledger_entries")
         .insert({
@@ -174,7 +189,7 @@ export async function markTeacherPaid(
           currency: "GBP",
           incurred_on: `${periodKey}-01`,
           settled_at: now,
-          reason: `Teacher pay · ${periodLabelFromKey(periodKey)} (marked paid)`,
+          reason,
           status: "recorded",
           source: "portal_payout",
           created_by: finance.id,

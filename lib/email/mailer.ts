@@ -37,6 +37,10 @@ import {
   type FinancePayoutFreezeNoticeInput,
 } from "@/lib/email/templates/finance-payout-authorisation";
 import {
+  buildFinancePayoutLimitWarningEmail,
+  type FinancePayoutLimitWarningInput,
+} from "@/lib/email/templates/finance-payout-limit-warning";
+import {
   buildTeacherPaymentDetailsChangedEmail,
   type TeacherPaymentDetailsChangedInput,
 } from "@/lib/email/templates/teacher-payment-details-changed";
@@ -470,6 +474,18 @@ export async function sendFinancePayoutFreezeNoticeEmail(input: {
     to: input.to,
     ...built,
     channel: "finance-payout-freeze",
+  });
+}
+
+export async function sendFinancePayoutLimitWarningEmail(input: {
+  to: string;
+  template: FinancePayoutLimitWarningInput;
+}) {
+  const built = buildFinancePayoutLimitWarningEmail(input.template);
+  return dispatch({
+    to: input.to,
+    ...built,
+    channel: "finance-payout-limit-warning",
   });
 }
 

@@ -121,7 +121,7 @@ export function FinancePeriodsWorkspace({
         );
         return;
       }
-      router.push("/finance/payments?panel=releases");
+      router.refresh();
     });
   }
 
@@ -271,7 +271,7 @@ export function FinancePeriodsWorkspace({
                           onClick={() => setPrepareTarget(teacher)}
                           className="border border-pine/25 px-3 py-2 text-sm font-medium text-pine hover:border-pine"
                         >
-                          Prepare payment
+                          Pay now
                         </button>
                       )
                     ) : null}
@@ -349,7 +349,7 @@ export function FinancePeriodsWorkspace({
 
       <DeskConfirmModal
         open={Boolean(prepareTarget)}
-        title="Prepare payment?"
+        title="Send this payment?"
         body={
           prepareTarget ? (
             <div className="space-y-2">
@@ -362,7 +362,8 @@ export function FinancePeriodsWorkspace({
                 {prepareTarget.sessionCount === 1 ? "" : "s"}
               </p>
               <p className="text-ink/55">
-                Creates a draft under Approvals. You still need to approve it before money is sent.
+                Confirms once and sends via the teacher’s saved pay method
+                (PayPal or bank / outside), then logs it on the books.
                 {prepareTarget.paymentRecentlyChanged
                   ? " These payee details were changed in the last 30 days."
                   : ""}
@@ -372,7 +373,7 @@ export function FinancePeriodsWorkspace({
             ""
           )
         }
-        confirmLabel="Prepare payment"
+        confirmLabel="Send payment"
         busy={pending}
         onClose={() => setPrepareTarget(null)}
         onConfirm={confirmPreparePayout}

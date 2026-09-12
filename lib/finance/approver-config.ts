@@ -1,23 +1,20 @@
-/** Authoriser mailbox + TOTP seed — env only, never DB, never UI. */
+/** Payout rail config. Dual-factor authoriser was removed for swift finance release. */
 
-function trimEnv(name: string): string | undefined {
-  const value = process.env[name]?.trim();
+/** Always available once finance is signed in — no authoriser env required. */
+export function isFinancePayoutRailConfigured(): boolean {
+  return true;
+}
+
+/** Approver mailbox — used for over-limit payment warnings (not dual-factor). */
+export function financeApproverEmail(): string | undefined {
+  const value = process.env.FINANCE_APPROVER_EMAIL?.trim();
   return value || undefined;
 }
 
-export function financeApproverEmail(): string | undefined {
-  return trimEnv("FINANCE_APPROVER_EMAIL");
-}
-
+/** @deprecated Dual-factor authoriser removed. Kept for any leftover imports. */
 export function financeApproverTotpSecret(): string | undefined {
-  return trimEnv("FINANCE_APPROVER_TOTP_SECRET");
-}
-
-/** Both factors required before the payout rail is available. */
-export function isFinancePayoutRailConfigured(): boolean {
-  const email = financeApproverEmail();
-  const secret = financeApproverTotpSecret();
-  return Boolean(email && secret && secret.length >= 16);
+  const value = process.env.FINANCE_APPROVER_TOTP_SECRET?.trim();
+  return value || undefined;
 }
 
 export const FINANCE_EMAIL_CODE_TTL_MS = 10 * 60 * 1000;

@@ -31,9 +31,9 @@ type PeriodReport = {
 };
 
 const STAGE_HINT: Record<FinancePaymentsPanel, string> = {
-  teachers: "See what teachers are owed this month, and mark pay as settled.",
-  send: "Create a payment for a teacher or anyone else. It will wait for approval.",
-  releases: "Approve with both codes, then send the money.",
+  teachers: "See what teachers are owed this month, then pay or mark settled.",
+  send: "Send PayPal or record a bank payment in one confirm.",
+  releases: "Payments still sending, failed, or waiting — retry here.",
   reconcile: "Fix payments that got stuck, failed, or came back.",
 };
 
@@ -97,8 +97,8 @@ export function FinancePaymentsDesk({
       <DeskLoaderOverlay active={navPending} label="Loading…" />
       <FinanceDeskFlow
         kicker="Payments"
-        title="Pay teachers and track releases"
-        lead="Work through the steps in order: check what is owed, create a payment, approve it, then fix anything that gets stuck."
+        title="Pay teachers and follow up"
+        lead="Check what is owed, send or record a payment in one step, then follow up anything still open."
         activeId={panel}
         onStage={(id) => go(id as FinancePaymentsPanel)}
         stages={[
@@ -114,7 +114,7 @@ export function FinancePaymentsDesk({
           },
           {
             id: "releases",
-            label: "Approvals",
+            label: "In progress",
             hint: STAGE_HINT.releases,
             count: openReleaseCount,
           },
@@ -157,7 +157,7 @@ export function FinancePaymentsDesk({
             categories={categories}
             teachers={teachers}
             defaultPeriodKey={periodKey || undefined}
-            onPrepared={(payoutId) => go("releases", { payoutId })}
+            onSent={(payoutId) => go("releases", { payoutId })}
           />
         ) : null}
 

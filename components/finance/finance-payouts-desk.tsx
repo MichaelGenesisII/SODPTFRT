@@ -6,7 +6,6 @@ import {
   cancelPayout,
   refreshPaypalPayout,
   releasePayout,
-  requestPayoutAuthorisation,
   retryPaypalPayoutSend,
   type FinancePayoutDeskPayload,
 } from "@/app/finance/payouts/actions";
@@ -53,24 +52,16 @@ export function FinancePayoutsDesk({
       : initial.payouts[0]?.id ?? null,
   );
 
-  const [requestTarget, setRequestTarget] = useState<FinancePayout | null>(
-    null,
-  );
   const [cancelTarget, setCancelTarget] = useState<FinancePayout | null>(null);
   const [releaseTarget, setReleaseTarget] = useState<FinancePayout | null>(
     null,
   );
-  const [emailCode, setEmailCode] = useState("");
-  const [totpCode, setTotpCode] = useState("");
   const [amountConfirm, setAmountConfirm] = useState("");
 
   const selected = useMemo(
     () => initial.payouts.find((p) => p.id === selectedId) ?? null,
     [initial.payouts, selectedId],
   );
-  const challenge = selected
-    ? initial.challengesByPayoutId[selected.id]
-    : undefined;
 
   const needsAmountConfirm = Boolean(
     releaseTarget && releaseTarget.amount_gbp > FINANCE_PAYOUT_HIGH_VALUE_GBP,
@@ -95,32 +86,14 @@ export function FinancePayoutsDesk({
     (p) => !open.some((o) => o.id === p.id),
   );
 
-  function runRequest() {
-    if (!requestTarget) return;
-    const payout = requestTarget;
-    setRequestTarget(null);
-    setBusyLabel("Requesting authorisation…");
-    const form = new FormData();
-    form.set("payoutId", payout.id);
-    startTransition(async () => {
-      const result = await requestPayoutAuthorisation(form);
-      if (!result.ok) {
-        await deskError({ text: result.message });
-        return;
-      }
-      await deskSuccess({ text: result.message });
-      router.refresh();
-    });
-  }
-
   function runCancel() {
     if (!cancelTarget) return;
     const payout = cancelTarget;
     setCancelTarget(null);
     setBusyLabel("Cancelling…");
-    const form = new FormData();
-    form.set("payoutId", payout.id);
     startTransition(async () => {
+      const form = new FormData();
+      form.set("payoutId", payout.id);
       const result = await cancelPayout(form);
       if (!result.ok) {
         await deskError({ text: result.message });
@@ -131,27 +104,21 @@ export function FinancePayoutsDesk({
     });
   }
 
-  async function runRelease() {
+  function runRelease() {
     if (!releaseTarget) return;
-    if (!emailCode.trim() || !totpCode.trim()) {
-      await deskError({ text: "Enter both codes." });
-      return;
-    }
-    if (!amountConfirmOk) {
-      await deskError({ text: "Type the amount to confirm." });
+    if (needsAmountConfirm && !amountConfirmOk) {
+      void deskError({ text: "Type the amount exactly to confirm." });
       return;
     }
     const payout = releaseTarget;
     setReleaseTarget(null);
-    setBusyLabel("Releasing payment…");
-    const form = new FormData();
-    form.set("payoutId", payout.id);
-    form.set("emailCode", emailCode.trim());
-    form.set("totpCode", totpCode.trim());
-    setEmailCode("");
-    setTotpCode("");
     setAmountConfirm("");
+    setBusyLabel(
+      payout.provider === "paypal" ? "Sending via PayPal…" : "Releasing…",
+    );
     startTransition(async () => {
+      const form = new FormData();
+      form.set("payoutId", payout.id);
       const result = await releasePayout(form);
       if (!result.ok) {
         await deskError({ text: result.message });
@@ -162,27 +129,34 @@ export function FinancePayoutsDesk({
     });
   }
 
+  const releasableStatuses = [
+    "draft",
+    "pending_authorisation",
+    "frozen",
+    "expired",
+    "authorised",
+  ];
+
   return (
     <div className="relative space-y-6">
       <DeskLoaderOverlay active={pending} label={busyLabel} />
 
       {!embedded ? (
-        <section className="relative overflow-hidden border border-stone/80 bg-white/50 px-5 pb-6 pt-7 sm:px-7">
+        <section className="relative overflow-hidden border border-stone/80 bg-white/55 px-5 py-6 sm:px-7">
           <div
-            className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_top_left,_rgba(95,143,122,0.16),_transparent_50%),linear-gradient(135deg,rgba(20,53,44,0.03),transparent_40%)]"
+            className="pointer-events-none absolute -right-10 -top-16 h-40 w-40 rounded-full bg-pine/[0.06]"
             aria-hidden
           />
           <div className="relative">
             <p className="text-[0.65rem] font-medium uppercase tracking-[0.18em] text-celadon">
-              Approvals
+              In progress
             </p>
             <h1 className="mt-2 font-display text-[clamp(1.75rem,5vw,2.55rem)] tracking-[-0.02em] text-pine">
-              Approve and send
+              Open payments
             </h1>
             <p className="mt-2 max-w-xl text-sm leading-relaxed text-ink/65">
-              Request approval, then enter both codes. PayPal teachers
-              are sent{initial.paypalEnv === "live" ? "" : " in sandbox"} after
-              release; bank teachers settle outside.
+              Payments still sending, failed, or waiting on PayPal. Retry or
+              cancel here — new payments send from Teacher pay or Send payment.
             </p>
           </div>
         </section>
@@ -198,10 +172,10 @@ export function FinancePayoutsDesk({
       ) : null}
 
       {initial.payouts.length === 0 ? (
-        <div className="border border-dashed border-stone bg-white/40 px-5 py-12 text-center">
-          <p className="font-display text-lg text-pine">No payments waiting</p>
+        <div className="border border-stone/80 bg-white/55 px-5 py-12 text-center">
+          <p className="font-display text-lg text-pine">No payments yet</p>
           <p className="mt-2 text-sm text-ink/55">
-            Prepare a payment from Teacher pay or Send payment. Drafts appear here.
+            Nothing waiting. New payments send from Teacher pay or Send payment.
           </p>
         </div>
       ) : (
@@ -275,43 +249,31 @@ export function FinancePayoutsDesk({
             ) : null}
           </section>
 
-          <section className="border border-stone/80 bg-white/55 px-5 py-6 sm:px-6">
+          <section className="border border-stone/80 bg-white/55 px-5 py-5">
             {selected ? (
-              <div className="space-y-5">
+              <div className="space-y-4">
                 <div>
                   <p className="text-[0.65rem] font-medium uppercase tracking-[0.12em] text-celadon">
-                    {payoutStatusLabel(selected.status)}
+                    Detail
                   </p>
-                  <h2 className="mt-1 font-display text-2xl text-pine">
+                  <h2 className="mt-2 font-display text-2xl text-pine">
                     {selected.payee_name}
                   </h2>
-                  <p className="mt-2 text-lg tabular-nums text-ink">
-                    {formatGbp(selected.amount_gbp)}
+                  <p className="mt-1 text-sm text-ink/60">
+                    {formatGbp(selected.amount_gbp)} ·{" "}
+                    {payoutStatusLabel(selected.status)}
+                    {selected.provider === "paypal" ? " · PayPal" : " · Outside"}
                   </p>
-                  {selected.reason ? (
-                    <p className="mt-2 text-sm text-ink/65">{selected.reason}</p>
-                  ) : null}
+                  <p className="mt-3 text-sm text-ink/70">
+                    {selected.reason ?? "Payment"}
+                  </p>
                   <p className="mt-2 text-xs text-ink/45">
-                    Prepared {formatWhen(selected.created_at)}
+                    Created {formatWhen(selected.created_at)}
                     {selected.period_key
                       ? ` · Period ${selected.period_key}`
                       : ""}
-                    {selected.provider === "paypal" ? " · PayPal" : " · Outside"}
                   </p>
                 </div>
-
-                {selected.status === "pending_authorisation" ? (
-                  <p className="border border-pine/20 bg-pine/5 px-4 py-3 text-sm text-pine">
-                    Authorisation requested — waiting for the code. Ask the
-                    authoriser for the code.
-                    {challenge?.expiresAt ? (
-                      <>
-                        {" "}
-                        Code expires {formatWhen(challenge.expiresAt)}.
-                      </>
-                    ) : null}
-                  </p>
-                ) : null}
 
                 {selected.status === "sending" ? (
                   <p className="border border-pine/20 bg-pine/5 px-4 py-3 text-sm text-pine">
@@ -333,47 +295,23 @@ export function FinancePayoutsDesk({
                 {selected.status === "authorised" &&
                 selected.provider === "paypal" ? (
                   <p className="border border-amber-800/25 bg-amber-50 px-4 py-3 text-sm text-amber-950">
-                    Authorised but not yet sent. Retry send when the payout rail
-                    is ready.
-                  </p>
-                ) : null}
-
-                {selected.status === "frozen" ? (
-                  <p className="border border-red-800/20 bg-red-50 px-4 py-3 text-sm text-red-900">
-                    Frozen after incorrect codes. Request approval again to
-                    continue.
+                    Ready but not yet sent. Retry send when the payout rail is
+                    ready.
                   </p>
                 ) : null}
 
                 <div className="flex flex-wrap gap-2">
                   {initial.railConfigured &&
-                  ["draft", "frozen", "expired", "pending_authorisation"].includes(
-                    selected.status,
-                  ) ? (
-                    <button
-                      type="button"
-                      onClick={() => setRequestTarget(selected)}
-                      className="bg-pine px-3 py-2.5 text-sm font-medium text-mist hover:bg-celadon"
-                    >
-                      {selected.status === "pending_authorisation"
-                        ? "Send code again"
-                        : "Request approval"}
-                    </button>
-                  ) : null}
-
-                  {initial.railConfigured &&
-                  selected.status === "pending_authorisation" ? (
+                  releasableStatuses.includes(selected.status) ? (
                     <button
                       type="button"
                       onClick={() => {
-                        setEmailCode("");
-                        setTotpCode("");
                         setAmountConfirm("");
                         setReleaseTarget(selected);
                       }}
-                      className="border border-pine/25 px-3 py-2.5 text-sm font-medium text-pine hover:border-pine"
+                      className="bg-pine px-3 py-2.5 text-sm font-medium text-mist hover:bg-celadon"
                     >
-                      Enter codes
+                      Complete payment
                     </button>
                   ) : null}
 
@@ -452,32 +390,6 @@ export function FinancePayoutsDesk({
       )}
 
       <DeskConfirmModal
-        open={Boolean(requestTarget)}
-        title="Request approval?"
-        body={
-          requestTarget ? (
-            <div className="space-y-2">
-              <p className="font-medium text-ink">
-                {requestTarget.payee_name} ·{" "}
-                {formatGbp(requestTarget.amount_gbp)}
-              </p>
-              <p>{requestTarget.reason ?? "Teacher pay"}</p>
-              <p className="text-ink/55">
-                A one-time code goes to the authoriser. Ask them for it — their
-                identity is never shown here.
-              </p>
-            </div>
-          ) : (
-            ""
-          )
-        }
-        confirmLabel="Request approval"
-        busy={pending}
-        onClose={() => setRequestTarget(null)}
-        onConfirm={runRequest}
-      />
-
-      <DeskConfirmModal
         open={Boolean(cancelTarget)}
         title="Cancel this payment?"
         body={
@@ -488,7 +400,7 @@ export function FinancePayoutsDesk({
                 {formatGbp(cancelTarget.amount_gbp)}
               </p>
               <p className="text-ink/55">
-                You will need to request approval again if you prepare this payment later.
+                You can send a new payment later if needed.
               </p>
             </div>
           ) : (
@@ -504,7 +416,7 @@ export function FinancePayoutsDesk({
 
       <DeskConfirmModal
         open={Boolean(releaseTarget)}
-        title="Release this payment?"
+        title="Complete this payment?"
         body={
           releaseTarget ? (
             <div className="space-y-3">
@@ -512,31 +424,12 @@ export function FinancePayoutsDesk({
                 {releaseTarget.payee_name} ·{" "}
                 {formatGbp(releaseTarget.amount_gbp)}
               </p>
-              <p>{releaseTarget.reason ?? "Teacher pay"}</p>
-              <label className="block text-sm font-medium text-ink">
-                Emailed code
-                <input
-                  inputMode="numeric"
-                  autoComplete="one-time-code"
-                  maxLength={8}
-                  value={emailCode}
-                  onChange={(event) => setEmailCode(event.target.value)}
-                  className={fieldClass}
-                  placeholder="8-digit code"
-                />
-              </label>
-              <label className="block text-sm font-medium text-ink">
-                Authenticator code
-                <input
-                  inputMode="numeric"
-                  autoComplete="one-time-code"
-                  maxLength={6}
-                  value={totpCode}
-                  onChange={(event) => setTotpCode(event.target.value)}
-                  className={fieldClass}
-                  placeholder="6-digit code"
-                />
-              </label>
+              <p>{releaseTarget.reason ?? "Payment"}</p>
+              <p className="text-ink/55">
+                {releaseTarget.provider === "paypal"
+                  ? "This will send money via PayPal now."
+                  : "This will record the payment as settled outside the portal."}
+              </p>
               {needsAmountConfirm ? (
                 <label className="block text-sm font-medium text-ink">
                   Type the amount to confirm
@@ -548,28 +441,16 @@ export function FinancePayoutsDesk({
                   />
                 </label>
               ) : null}
-              <p className="text-ink/55">
-                Both codes are checked together.
-                {releaseTarget.provider === "paypal"
-                  ? " On success, PayPal is called to send the payment."
-                  : " This records settlement outside the portal."}
-              </p>
             </div>
           ) : (
             ""
           )
         }
-        confirmLabel="Release payment"
+        confirmLabel="Complete payment"
+        confirmDisabled={needsAmountConfirm && !amountConfirmOk}
         busy={pending}
-        confirmDisabled={
-          !emailCode.trim() ||
-          !totpCode.trim() ||
-          !amountConfirmOk
-        }
         onClose={() => {
           setReleaseTarget(null);
-          setEmailCode("");
-          setTotpCode("");
           setAmountConfirm("");
         }}
         onConfirm={runRelease}

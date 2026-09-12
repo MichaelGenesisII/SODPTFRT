@@ -108,7 +108,7 @@ export async function dispatchPaypalPayout(input: {
     return {
       ok: false,
       message:
-        "PayPal could not send this payment. You can retry from Authorisations — no duplicate will be created.",
+          "PayPal could not send this payment. You can retry from In progress — no duplicate will be created.",
     };
   }
 
@@ -188,7 +188,7 @@ export async function dispatchPaypalPayout(input: {
       message:
         mapped.payoutStatus === "returned"
           ? "PayPal returned this payment. Check the payee details and try again."
-          : "PayPal could not complete this payment. You can retry from Authorisations.",
+          : "PayPal could not complete this payment. You can retry from In progress.",
     };
   }
 
@@ -208,7 +208,7 @@ export async function dispatchPaypalPayout(input: {
   return {
     ok: true,
     message:
-      "Authorised and sent to PayPal. Recorded on the books. Status will update when PayPal confirms — use Refresh if it stays pending.",
+      "Sent to PayPal and recorded on the books. Status will update when PayPal confirms — use Refresh if it stays pending.",
   };
 }
 

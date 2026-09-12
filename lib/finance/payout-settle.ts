@@ -258,7 +258,7 @@ export async function settlePayoutAsPaid(input: {
     message:
       input.provider === "paypal"
         ? "Payment sent via PayPal and recorded."
-        : "Payment released and recorded as paid outside the portal.",
+        : "Payment recorded as paid outside the portal.",
     status: "paid",
   };
 }
