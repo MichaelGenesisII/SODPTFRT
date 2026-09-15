@@ -968,9 +968,9 @@ export function EnrolWizard({
               <FieldLabel
                 htmlFor={enrolFieldDomId("parishId")}
                 required
-                hint="Choose the parish or ministry running your School of Disciples course, or add yours if it is not listed."
+                hint="Select the parish, ministry, or church you belong to. If yours is not listed, choose that option and type the name."
               >
-                Parish / Ministry
+                Your parish
               </FieldLabel>
               <SelectInput
                 id={enrolFieldDomId("parishId")}
@@ -987,7 +987,7 @@ export function EnrolWizard({
                 placeholder={
                   parishes.length === 0
                     ? "No listed parishes yet — add yours below"
-                    : "Select parish / ministry"
+                    : "Select your parish"
                 }
                 options={(() => {
                   const listed = parishes.map((p) => ({
@@ -1010,9 +1010,9 @@ export function EnrolWizard({
                 <FieldLabel
                   htmlFor={enrolFieldDomId("parishOther")}
                   required
-                  hint="We will place you once the national desk confirms your parish or ministry."
+                  hint="Enter the name of your home parish, ministry, or church. The national desk will confirm it."
                 >
-                  Parish, ministry or church name
+                  Your parish name
                 </FieldLabel>
                 <TextInput
                   id={enrolFieldDomId("parishOther")}

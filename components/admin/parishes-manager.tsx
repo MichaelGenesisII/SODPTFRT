@@ -815,6 +815,7 @@ function ParishesManage({
   } =
     useParishRun(onSelectParishId);
   const [query, setQuery] = useState("");
+  const [page, setPage] = useState(1);
   const [panel, setPanel] = useState<ManagePanel>("batches");
   const [expandedBatchId, setExpandedBatchId] = useState<string | null>(null);
   const [addingBatch, setAddingBatch] = useState(false);
@@ -834,10 +835,29 @@ function ParishesManage({
     );
   }, [parishes, query]);
 
+  const parishTotalPages = Math.max(
+    1,
+    Math.ceil(filteredParishes.length / PARISHES_PAGE_SIZE),
+  );
+  const parishCurrentPage = Math.min(page, parishTotalPages);
+  const parishPageStart = (parishCurrentPage - 1) * PARISHES_PAGE_SIZE;
+  const pageParishes = filteredParishes.slice(
+    parishPageStart,
+    parishPageStart + PARISHES_PAGE_SIZE,
+  );
+
   const parishBatches = useMemo(
     () => batches.filter((b) => b.parish_id === selectedParishId),
     [batches, selectedParishId],
   );
+
+  useEffect(() => {
+    setPage(1);
+  }, [query]);
+
+  useEffect(() => {
+    if (page > parishTotalPages) setPage(parishTotalPages);
+  }, [page, parishTotalPages]);
 
   useEffect(() => {
     if (initialFocus === "create-parish") {
@@ -971,36 +991,52 @@ function ParishesManage({
             ) : null}
           </div>
           <ul className="max-h-[min(24rem,50vh)] divide-y divide-stone overflow-y-auto lg:max-h-none lg:flex-1">
-            {filteredParishes.map((parish) => {
-              const active =
-                parish.id === selectedParishId && panel !== "add-parish";
-              const batchCount = batches.filter(
-                (b) => b.parish_id === parish.id,
-              ).length;
-              return (
-                <li key={parish.id}>
-                  <button
-                    type="button"
-                    onClick={() => selectParish(parish.id)}
-                    disabled={pending}
-                    className={`flex w-full flex-col items-start gap-0.5 px-3 py-3 text-left transition sm:px-4 ${
-                      active
-                        ? "bg-pine/5 ring-1 ring-inset ring-pine/25"
-                        : "hover:bg-stone/30"
-                    } disabled:opacity-50`}
-                  >
-                    <span className="text-sm font-medium text-pine">
-                      {parish.name}
-                    </span>
-                    <span className="text-xs text-ink/50">
-                      {parish.region || "No region"} · {batchCount} batch
-                      {batchCount === 1 ? "" : "es"}
-                    </span>
-                  </button>
-                </li>
-              );
-            })}
+            {pageParishes.length === 0 ? (
+              <li className="px-3 py-8 text-center text-sm text-ink/50 sm:px-4">
+                {parishes.length === 0
+                  ? "No parishes yet."
+                  : "No matches for that search."}
+              </li>
+            ) : (
+              pageParishes.map((parish) => {
+                const active =
+                  parish.id === selectedParishId && panel !== "add-parish";
+                const batchCount = batches.filter(
+                  (b) => b.parish_id === parish.id,
+                ).length;
+                return (
+                  <li key={parish.id}>
+                    <button
+                      type="button"
+                      onClick={() => selectParish(parish.id)}
+                      disabled={pending}
+                      className={`flex w-full flex-col items-start gap-0.5 px-3 py-3 text-left transition sm:px-4 ${
+                        active
+                          ? "bg-pine/5 ring-1 ring-inset ring-pine/25"
+                          : "hover:bg-stone/30"
+                      } disabled:opacity-50`}
+                    >
+                      <span className="text-sm font-medium text-pine">
+                        {parish.name}
+                      </span>
+                      <span className="text-xs text-ink/50">
+                        {parish.region || "No region"} · {batchCount} batch
+                        {batchCount === 1 ? "" : "es"}
+                      </span>
+                    </button>
+                  </li>
+                );
+              })
+            )}
           </ul>
+          <DeskPagination
+            page={parishCurrentPage}
+            totalItems={filteredParishes.length}
+            pageSize={PARISHES_PAGE_SIZE}
+            onPageChange={(next) => setPage(next)}
+            className="px-3 pb-2.5"
+            itemLabel="parishes"
+          />
         </aside>
 
         <div className="min-w-0 space-y-4">
