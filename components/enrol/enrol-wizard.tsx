@@ -997,6 +997,7 @@ export function EnrolWizard({
                   const other = {
                     value: ENROL_PARISH_OTHER_VALUE,
                     label: "My parish, ministry or church isn’t listed",
+                    tone: "alert" as const,
                   };
                   // Keep “other” 2nd (not last): first listed parish, then other, then the rest.
                   if (listed.length === 0) return [other];

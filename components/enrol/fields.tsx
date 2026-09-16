@@ -143,7 +143,9 @@ export function SelectInput({
   id: string;
   value: string;
   onChange: (value: string) => void;
-  options: readonly string[] | readonly { value: string; label: string }[];
+  options:
+    | readonly string[]
+    | readonly { value: string; label: string; tone?: "alert" }[];
   placeholder: string;
   error?: string;
   /** Type to filter options. Defaults on when there are more than 8 choices. */
@@ -163,8 +165,8 @@ export function SelectInput({
       : option,
   );
   const allowSearch = searchable ?? normalized.length > 8;
-  const selectedLabel =
-    normalized.find((option) => option.value === value)?.label ?? "";
+  const selected = normalized.find((option) => option.value === value) ?? null;
+  const selectedLabel = selected?.label ?? "";
 
   const filtered = (() => {
     const q = query.trim().toLowerCase();
@@ -240,7 +242,13 @@ export function SelectInput({
           error
             ? "border-red-700/50 focus:border-red-700"
             : "border-stone focus:border-pine"
-        } ${selectedLabel ? "text-ink" : "text-ink/35"}`}
+        } ${
+          selectedLabel
+            ? selected?.tone === "alert"
+              ? "font-semibold text-red-700"
+              : "text-ink"
+            : "text-ink/35"
+        }`}
       >
         <span className="min-w-0 truncate">
           {selectedLabel || placeholder}
@@ -307,9 +315,15 @@ export function SelectInput({
                         closeMenu();
                       }}
                       className={`w-full px-4 py-2.5 text-left text-sm leading-snug transition-colors ${
+                        option.tone === "alert" ? "font-semibold" : ""
+                      } ${
                         active
-                          ? "bg-pine text-mist"
-                          : "text-ink hover:bg-white/80"
+                          ? option.tone === "alert"
+                            ? "bg-red-700 text-mist"
+                            : "bg-pine text-mist"
+                          : option.tone === "alert"
+                            ? "text-red-700 hover:bg-white/80"
+                            : "text-ink hover:bg-white/80"
                       }`}
                     >
                       {option.label}
